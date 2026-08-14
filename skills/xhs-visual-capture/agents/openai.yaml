@@ -1,0 +1,4 @@
+interface:
+  display_name: "小红书视觉采集"
+  short_description: "完整下载小红书帖子图片、视频和实况照片并送入本地批阅队列"
+  default_prompt: "完整采集指定的小红书帖子到本地批阅队列，先运行自动下载与校验，仅在失败时使用浏览器复核。"
