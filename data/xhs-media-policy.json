@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "platform": "xiaohongshu",
+  "rules": {
+    "note_gallery": {
+      "description": "图文/组图帖子；每一张实况照片都必须保留静态图与配对短视频",
+      "saveAtCapture": ["all_images", "all_live_photo_videos"],
+      "reviewUnit": "post_with_slide_level_save"
+    },
+    "note_video": {
+      "description": "单独的视频帖子；设计类两三分钟 showreel 仍属于普通视频",
+      "saveAtCapture": ["cover", "video"],
+      "reviewUnit": "video_post"
+    },
+    "h5_event": {
+      "description": "创作活动 H5；保存静态长图与可选的头部动态视频",
+      "saveAtCapture": ["full_page_image", "optional_hero_video"],
+      "reviewUnit": "h5_event"
+    }
+  },
+  "deferredException": {
+    "maxBytes": 314572800,
+    "maxDurationSeconds": 900,
+    "behavior": "仅超过 300MB 或 15 分钟时允许先存封面和原始链接；其余素材夜间采集时立即落本地"
+  },
+  "quality": {
+    "preferred": "source_original",
+    "fallback": "web_highest_available",
+    "requireHonestLabel": true,
+    "requireCarouselOrderVerification": true,
+    "blockReviewWhenValidationFails": true
+  }
+}
