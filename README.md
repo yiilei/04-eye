@@ -4,7 +4,7 @@
 
 ## 最快开始
 
-1. 下载 GitHub Release 中与你电脑芯片对应的应用包。
+1. Apple Silicon Mac（M1/M2/M3/M4）直接下载 [04-eye-macOS-arm64.zip](https://github.com/yiilei/04-eye/releases/latest/download/04-eye-macOS-arm64.zip)。
 2. 解压并把“04的眼.app”拖入“应用程序”。
 3. 启动 Eagle（可选）。
 4. 打开 Codex，把下面这句话发给它：
@@ -13,7 +13,7 @@
 帮我抓取最新的小红书创作服务活动
 ```
 
-Codex 会先提醒你在内置浏览器登录小红书，再执行抓取、清晰度校验和本地批阅。
+Codex 会先提醒你在内置浏览器登录小红书，再执行抓取、清晰度校验和本地批阅。需要完整迁移给另一位 Codex 时，下载 [完整移植包](https://github.com/yiilei/04-eye/releases/latest/download/04-eye-complete-v0.1.0.zip)。
 
 ## 第一次使用
 
@@ -21,6 +21,7 @@ Codex 会先提醒你在内置浏览器登录小红书，再执行抓取、清�
 - Eagle：启动 Eagle 后，应用通过 `127.0.0.1:41595` 检测本地连接。暂时不用 Eagle 也可以先抓取和批阅。
 - 埋点：设置页可搜索小红书用户，或直接粘贴账号主页链接并点击“埋点”。
 - 时间：设置页可选择每天抓取时间和批阅提醒时间。
+- Intel Mac：当前 Release 暂无 Intel 安装包，请按下方源码方式在本机构建。
 
 详细的 Codex 安装与接管说明见 [INSTALL_WITH_CODEX.md](INSTALL_WITH_CODEX.md)。
 
