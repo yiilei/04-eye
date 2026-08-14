@@ -4,7 +4,7 @@
 
 ## 最快开始
 
-1. Apple Silicon Mac（M1/M2/M3/M4）直接下载 [04-eye-macOS-arm64.zip](https://github.com/yiilei/04-eye/releases/latest/download/04-eye-macOS-arm64.zip)。
+1. 下载 GitHub Release 中与你电脑芯片对应的应用包。
 2. 解压并把“04的眼.app”拖入“应用程序”。
 3. 启动 Eagle（可选）。
 4. 打开 Codex，把下面这句话发给它：
@@ -13,15 +13,29 @@
 帮我抓取最新的小红书创作服务活动
 ```
 
-Codex 会先提醒你在内置浏览器登录小红书，再执行抓取、清晰度校验和本地批阅。需要完整迁移给另一位 Codex 时，下载 [完整移植包](https://github.com/yiilei/04-eye/releases/latest/download/04-eye-complete-v0.1.0.zip)。
+Codex 会先提醒你在内置浏览器登录小红书，再执行抓取、清晰度校验和本地批阅。
+
+从 v0.1.1 开始，抓取脚本和桌面应用共用同一个本地资料库。素材完成校验后，已经打开的应用会自动从首次设置页切换到批阅页，不需要刷新或重新启动。
 
 ## 第一次使用
 
 - 小红书：必须在执行抓取的 Codex 内置浏览器中扫码登录；仓库不保存账号密码。
-- Eagle：启动 Eagle 后，应用通过 `127.0.0.1:41595` 检测本地连接。暂时不用 Eagle 也可以先抓取和批阅。
+- Eagle：启动 Eagle 后，应用通过 `127.0.0.1:41595` 检测本地连接。点 YES 时才导入；“小红书”文件夹不存在时会自动创建。暂时不用 Eagle 也可以先抓取和批阅。
 - 埋点：设置页可搜索小红书用户，或直接粘贴账号主页链接并点击“埋点”。
-- 时间：设置页可选择每天抓取时间和批阅提醒时间。
-- Intel Mac：当前 Release 暂无 Intel 安装包，请按下方源码方式在本机构建。
+- 时间：设置页可选择每天抓取时间和批阅提醒时间，配置会写入本机资料库，供 Codex 创建每日自动任务时读取。
+
+## 完整闭环
+
+```text
+Codex 检查新增
+→ 脚本下载最高可用清晰度素材
+→ manifest / 顺序 / 尺寸 / Live Photo 配对校验
+→ 写入应用本地资料库
+→ 04的眼自动出现批阅内容
+→ YES 导入 Eagle；NO 移入可恢复回收区
+```
+
+`Command + Z` 可以撤回刚才的 NO：素材文件会从应用回收区恢复，而不是只恢复界面状态。应用资料库位于 `~/Library/Application Support/04的眼/`。
 
 详细的 Codex 安装与接管说明见 [INSTALL_WITH_CODEX.md](INSTALL_WITH_CODEX.md)。
 
@@ -33,7 +47,7 @@ pnpm run setup:downloader
 pnpm run desktop:package:public
 ```
 
-生成的 macOS 应用在 `release/desktop`。当前公开测试包使用临时签名，首次打开时如被 macOS 拦截，请在访达中右键应用并选择“打开”；正式分发版将补充 Apple Developer ID 签名与公证。
+生成的 macOS 应用在 `release/desktop`。当前公开测试包为 Apple Silicon 版并使用临时签名，首次打开时如被 macOS 拦截，请在访达中右键应用并选择“打开”；正式分发版将补充 Intel 构建、Apple Developer ID 签名与公证。
 
 ## 隐私
 

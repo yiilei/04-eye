@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import os from "node:os";
 
 const projectRoot = process.cwd();
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "04的眼"));
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) args.set(process.argv[index], process.argv[index + 1]);
 const required = (key) => {
@@ -19,7 +21,7 @@ const title = required("--title");
 const sourceUrl = required("--source-url");
 const captureDate = args.get("--date") || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
 const displayDate = args.get("--display-date") || captureDate;
-const targetDir = path.join(projectRoot, "public", "review", captureDate, slug);
+const targetDir = path.join(dataHome, "review", captureDate, slug);
 const imageName = "full-page-hd.jpg";
 const videoName = "preview.mp4";
 const coverName = "thumbnail.png";
@@ -57,9 +59,11 @@ const manifest = {
 };
 await writeFile(path.join(targetDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-const prefix = `/review/${captureDate}/${slug}`;
-const registryPath = path.join(projectRoot, "data", "generated-review-items.json");
-const registry = JSON.parse(await readFile(registryPath, "utf8"));
+const prefix = `/media/${captureDate}/${slug}`;
+const registryPath = path.join(dataHome, "data", "generated-review-items.json");
+await mkdir(path.dirname(registryPath), { recursive: true });
+let registry = [];
+try { registry = JSON.parse(await readFile(registryPath, "utf8")); } catch { /* first capture */ }
 const item = {
   id: slug,
   postId: slug,
@@ -80,4 +84,4 @@ const item = {
 };
 const nextRegistry = [item, ...registry.filter((existing) => existing.id !== slug && existing.postId !== slug)];
 await writeFile(registryPath, `${JSON.stringify(nextRegistry, null, 2)}\n`);
-console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: 1, width, height, manifest: path.relative(projectRoot, path.join(targetDir, "manifest.json")) }));
+console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: 1, width, height, manifest: path.join(targetDir, "manifest.json") }));

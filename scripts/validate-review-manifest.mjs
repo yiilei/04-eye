@@ -3,12 +3,20 @@ import { createHash } from "node:crypto";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import os from "node:os";
 
 const projectRoot = process.cwd();
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "04的眼"));
+const reviewRoot = path.join(dataHome, "review");
 const targets = process.argv.slice(2);
-const manifests = targets.length ? targets : (await readdir(path.join(projectRoot, "public/review"), { recursive: true }))
-  .filter((file) => file.endsWith("manifest.json"))
-  .map((file) => path.join("public/review", file));
+let manifests = targets;
+if (!targets.length) {
+  try {
+    manifests = (await readdir(reviewRoot, { recursive: true }))
+      .filter((file) => file.endsWith("manifest.json"))
+      .map((file) => path.join(reviewRoot, file));
+  } catch { manifests = []; }
+}
 
 function imageSize(file) {
   const output = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file], { encoding: "utf8" });

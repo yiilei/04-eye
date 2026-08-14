@@ -2,13 +2,15 @@ import { execFileSync } from "node:child_process";
 import { open, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import os from "node:os";
 
 const root = process.cwd();
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "04的眼"));
 const dataDir = path.join(root, "data");
 const queuePath = path.join(dataDir, "xhs-capture-queue.json");
 const pinsPath = path.join(dataDir, "xhs-account-pins.json");
 const policyPath = path.join(dataDir, "xhs-media-policy.json");
-const registryPath = path.join(dataDir, "generated-review-items.json");
+const registryPath = path.join(dataHome, "data", "generated-review-items.json");
 const reportsDir = path.join(dataDir, "reports");
 const lockPath = path.join(dataDir, "daily-pipeline.lock");
 const dryRun = process.argv.includes("--dry-run");
@@ -126,14 +128,11 @@ async function main() {
       report.validation = "failed";
       report.failed.push({ id: "validation", type: "pipeline", title: "素材校验", error: error instanceof Error ? error.message.split("\n").at(-1) : String(error) });
     }
-    if (!skipBuild && report.validation === "passed") {
-      try { run(path.join(root, "node_modules", ".bin", "vinext"), ["build"]); report.build = "passed"; }
-      catch (error) { report.build = "failed"; report.failed.push({ id: "build", type: "pipeline", title: "批阅页构建", error: error instanceof Error ? error.message.split("\n").at(-1) : String(error) }); }
-    }
+    report.build = skipBuild ? "skipped" : "not_required_runtime_refresh";
   }
 
   report.finishedAt = new Date().toISOString();
-  report.registryItems = (await readJson(registryPath)).length;
+  report.registryItems = await readJson(registryPath).then((items) => items.length).catch(() => 0);
   const reportBase = path.join(reportsDir, `${today}-daily`);
   await atomicJson(`${reportBase}.json`, report);
   const markdown = [`# ${today} 小红书视觉采集日报`, "",

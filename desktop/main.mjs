@@ -8,7 +8,7 @@ const appRoot = path.resolve(desktopDir, "..");
 let serverHandle;
 
 async function createWindow() {
-  if (!serverHandle) serverHandle = await startDesktopServer(appRoot);
+  if (!serverHandle) serverHandle = await startDesktopServer(appRoot, app.getPath("userData"));
   const window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1100, minHeight: 700,
     title: "04的眼", backgroundColor: "#151722", titleBarStyle: "hiddenInset",

@@ -249,6 +249,27 @@ async function validateReviewItem(item: ReviewItem) {
   }
 }
 
+async function ensureEagleFolder() {
+  let folderResponse: Response;
+  try {
+    folderResponse = await fetch(`${eagleBase}/folder/list`, { cache: "no-store" });
+  } catch {
+    throw new Error("无法连接 Eagle，请先启动 Eagle 后再点 YES");
+  }
+  const folderResult = await folderResponse.json() as EagleResponse<Array<{ id: string; name: string; children?: [] }>>;
+  if (folderResult.status !== "success" || !folderResult.data) throw new Error(folderResult.message || "无法读取 Eagle 文件夹");
+  const existing = findFolderId(folderResult.data, "小红书");
+  if (existing) return existing;
+  const createResponse = await fetch(`${eagleBase}/folder/create`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=UTF-8" },
+    body: JSON.stringify({ folderName: "小红书" }),
+  });
+  const created = await createResponse.json() as EagleResponse<{ id: string }>;
+  if (created.status !== "success" || !created.data?.id) throw new Error(created.message || "无法自动创建 Eagle / 小红书 文件夹");
+  return created.data.id;
+}
+
 async function importItemToEagle(item: (typeof items)[number], removedPositions: number[] = []) {
   await validateReviewItem(item);
   for (const [sourceIndex, source] of (item.gallery ?? [item.image]).entries()) {
@@ -259,11 +280,7 @@ async function importItemToEagle(item: (typeof items)[number], removedPositions:
     }
   }
 
-  const folderResponse = await fetch(`${eagleBase}/folder/list`, { cache: "no-store" });
-  const folderResult = await folderResponse.json() as EagleResponse<Array<{ id: string; name: string; children?: [] }>>;
-  if (folderResult.status !== "success" || !folderResult.data) throw new Error(folderResult.message || "无法读取 Eagle 文件夹");
-  const folderId = findFolderId(folderResult.data, "小红书");
-  if (!folderId) throw new Error("Eagle 中没有找到“小红书”文件夹");
+  const folderId = await ensureEagleFolder();
 
   const addFromPath = async (path: string, name: string, tags: string[]) => {
     const response = await fetch(`${eagleBase}/item/addFromPath`, {
@@ -331,9 +348,7 @@ async function importSingleToEagle(item: ReviewItem, position: number) {
   const expected = expectedImageSize(item, position);
   if (size.width !== expected.width || size.height !== expected.height) throw new Error("当前图片尺寸校验未通过，已阻止导入");
 
-  const folderResult = await (await fetch(`${eagleBase}/folder/list`, { cache: "no-store" })).json() as EagleResponse<Array<{ id: string; name: string; children?: [] }>>;
-  const folderId = folderResult.data && findFolderId(folderResult.data, "小红书");
-  if (folderResult.status !== "success" || !folderId) throw new Error("Eagle 中没有找到“小红书”文件夹");
+  const folderId = await ensureEagleFolder();
   const response = await fetch(`${eagleBase}/item/addFromPath`, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=UTF-8" },
@@ -365,6 +380,8 @@ async function importSingleToEagle(item: ReviewItem, position: number) {
 }
 
 export default function Home() {
+  const [runtimeItems, setRuntimeItems] = useState<ReviewItem[]>(items);
+  const [libraryStatus, setLibraryStatus] = useState("正在连接本地资料库…");
   const [index, setIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [eagleItems, setEagleItems] = useState<Record<string, string>>({});
@@ -392,6 +409,7 @@ export default function Home() {
   const [focusCanvasMode, setFocusCanvasMode] = useState(false);
   const [appVisible, setAppVisible] = useState(true);
   const [desktopAppMode, setDesktopAppMode] = useState(false);
+  const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [windowSize, setWindowSize] = useState<{ width: number; height: number }>();
@@ -411,7 +429,7 @@ export default function Home() {
     edge: string; x: number; y: number; width: number; height: number; offsetX: number; offsetY: number;
   } | null>(null);
   const viewer = useRef<HTMLDivElement>(null);
-  const reviewItems = useMemo(() => items.filter((item) => !dismissedIds.includes(item.id)), [dismissedIds]);
+  const reviewItems = useMemo(() => runtimeItems.filter((item) => !dismissedIds.includes(item.id)), [dismissedIds, runtimeItems]);
   const current = reviewItems[index] ?? emptyItem;
   const allPinAccounts = useMemo(() => [
     ...seededPinAccounts,
@@ -607,6 +625,58 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!desktopAppMode) return;
+    let active = true;
+    const refreshLibrary = async () => {
+      try {
+        const response = await fetch("/api/desktop/review-items", { cache: "no-store" });
+        if (!response.ok) throw new Error("本地资料库暂时不可用");
+        const payload = await response.json() as {
+          items?: ReviewItem[];
+          decisions?: Record<string, { decision?: Decision }>;
+        };
+        if (!active) return;
+        const nextItems = Array.isArray(payload.items) ? payload.items : [];
+        setRuntimeItems(nextItems);
+        setLibraryStatus(nextItems.length ? `已发现 ${nextItems.length} 组素材，正在进入批阅页` : "已连接，等待 Codex 完成首次抓取…");
+        if (payload.decisions) {
+          const persisted = Object.fromEntries(Object.entries(payload.decisions)
+            .filter(([, value]) => value?.decision === "kept" || value?.decision === "rejected")
+            .map(([id, value]) => [id, value.decision as Decision]));
+          setDecisions((currentDecisions) => ({ ...persisted, ...currentDecisions }));
+        }
+      } catch (error) {
+        if (active) setLibraryStatus(error instanceof Error ? error.message : "本地资料库暂时不可用");
+      }
+    };
+    void refreshLibrary();
+    const timer = window.setInterval(() => void refreshLibrary(), 1_500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [desktopAppMode]);
+
+  useEffect(() => {
+    if (!desktopAppMode) return;
+    let active = true;
+    void fetch("/api/desktop/preferences", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("preferences unavailable");
+        return response.json() as Promise<{
+          captureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
+        }>;
+      })
+      .then((preferences) => {
+        if (!active) return;
+        if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.captureTime ?? "")) setCaptureTime(preferences.captureTime!);
+        if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.pushTime ?? "")) setPushTime(preferences.pushTime!);
+        if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
+        if (Array.isArray(preferences.manualPinAccounts)) setManualPinAccounts(preferences.manualPinAccounts);
+      })
+      .catch(() => undefined)
+      .finally(() => { if (active) setDesktopPreferencesReady(true); });
+    return () => { active = false; };
+  }, [desktopAppMode]);
+
+  useEffect(() => {
     try { setDecisions(JSON.parse(localStorage.getItem(storageKey) || "{}")); } catch { /* ignore invalid local data */ }
     try { setEagleItems(JSON.parse(localStorage.getItem(eagleStorageKey) || "{}")); } catch { /* ignore invalid local data */ }
     try { setSavedSingles(JSON.parse(localStorage.getItem(singleStorageKey) || "{}")); } catch { /* ignore invalid local data */ }
@@ -661,6 +731,16 @@ export default function Home() {
   useEffect(() => {
     if (hydrated) localStorage.setItem(scheduleStorageKey, JSON.stringify({ captureTime, pushTime }));
   }, [captureTime, pushTime, hydrated]);
+  useEffect(() => {
+    if (!desktopAppMode || !desktopPreferencesReady) return;
+    const timer = window.setTimeout(() => {
+      void fetch("/api/desktop/preferences", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ captureTime, pushTime, pinnedAccountIds, manualPinAccounts }),
+      }).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [captureTime, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
 
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
@@ -810,6 +890,19 @@ export default function Home() {
     });
   }, [current.gallery, remainingGalleryPositions]);
 
+  const persistDecision = useCallback((id: string, decision: Decision | "pending") => {
+    if (!desktopAppMode) return;
+    void fetch("/api/desktop/review-decision", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision }),
+    }).then((response) => {
+      if (!response.ok) throw new Error("decision write failed");
+    }).catch(() => {
+      setEagleError(true);
+      setEagleMessage("本地资料库状态写入失败，请重试");
+    });
+  }, [desktopAppMode]);
+
   const saveCurrentSingle = useCallback(async () => {
     if (!current.gallery?.length) {
       setEagleError(true);
@@ -823,6 +916,7 @@ export default function Home() {
         setEagleItems((value) => ({ ...value, [current.id]: savedSingles[key] }));
         setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision: "kept", index }]);
         setDecisions(nextDecisions);
+        persistDecision(current.id, "kept");
         setEagleMessage("最后一张此前已保存，本篇已自动完成");
         const pending = reviewItems.findIndex((_item, offset) => !nextDecisions[reviewItems[(index + offset + 1) % reviewItems.length].id]);
         if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
@@ -844,6 +938,7 @@ export default function Home() {
         const nextDecisions = { ...decisions, [current.id]: "kept" as Decision };
         setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision: "kept", index }]);
         setDecisions(nextDecisions);
+        persistDecision(current.id, "kept");
         const pending = reviewItems.findIndex((_item, offset) => !nextDecisions[reviewItems[(index + offset + 1) % reviewItems.length].id]);
         if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
       } else {
@@ -854,18 +949,19 @@ export default function Home() {
       setEagleMessage(error instanceof Error ? error.message : "单张图片导入失败");
     }
     setSyncingId(undefined);
-  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, remainingGalleryPositions.length, reviewItems, savedSingles, syncingId]);
+  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, persistDecision, remainingGalleryPositions.length, reviewItems, savedSingles, syncingId]);
 
   const commitDecision = useCallback((decision: Decision) => {
     const next = { ...decisions, [current.id]: decision };
     setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision, index }]);
     setDecisions(next);
+    persistDecision(current.id, decision);
     const pending = reviewItems.findIndex((_item, offset) => {
       const candidate = (index + offset + 1) % reviewItems.length;
       return !next[reviewItems[candidate].id];
     });
     if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
-  }, [current.id, decisions, index, openItem, reviewItems]);
+  }, [current.id, decisions, index, openItem, persistDecision, reviewItems]);
 
   const removeCurrentSingle = useCallback(() => {
     if (!current.gallery?.length || syncingId) {
@@ -881,6 +977,7 @@ export default function Home() {
       setEagleMessage("全部图片都已移除，本篇已自动删除");
       const nextDecisions = { ...decisions, [current.id]: "rejected" as Decision };
       setDecisions(nextDecisions);
+      persistDecision(current.id, "rejected");
       const pending = reviewItems.findIndex((_item, offset) => !nextDecisions[reviewItems[(index + offset + 1) % reviewItems.length].id]);
       if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
       return;
@@ -889,7 +986,7 @@ export default function Home() {
     setGalleryIndex(nextPosition);
     setEagleError(false);
     setEagleMessage(`已移除第 ${galleryIndex + 1} 张；留下时只保存剩余 ${remaining.length} 张`);
-  }, [current, decisions, galleryIndex, index, openItem, removedCurrent, reviewItems, syncingId]);
+  }, [current, decisions, galleryIndex, index, openItem, persistDecision, removedCurrent, reviewItems, syncingId]);
 
   const decide = useCallback(async (decision: Decision) => {
     if (syncingId) return;
@@ -944,7 +1041,7 @@ export default function Home() {
     setHistory((value) => value.slice(0, -1));
     if (last.kind === "remove-item") {
       const nextDismissed = dismissedIds.filter((id) => id !== last.id);
-      const restoredItems = items.filter((item) => !nextDismissed.includes(item.id));
+      const restoredItems = runtimeItems.filter((item) => !nextDismissed.includes(item.id));
       const restoredIndex = restoredItems.findIndex((item) => item.id === last.id);
       setDismissedIds(nextDismissed);
       openItem(restoredIndex >= 0 ? restoredIndex : last.index);
@@ -960,6 +1057,7 @@ export default function Home() {
         else delete next[last.id];
         return next;
       });
+      persistDecision(last.id, last.previousDecision ?? "pending");
       openItem(last.index);
       setGalleryIndex(last.removedPosition);
       setEagleError(false);
@@ -972,12 +1070,13 @@ export default function Home() {
       else delete next[last.id];
       return next;
     });
+    persistDecision(last.id, last.previous ?? "pending");
     openItem(last.index);
     setEagleError(false);
     setEagleMessage(last.decision === "kept" && Boolean(eagleItems[last.id])
       ? "已撤回“留下”状态；为避免误删，已经导入 Eagle 的文件仍然保留"
       : "已撤回上一步");
-  }, [dismissedIds, eagleItems, history, openItem]);
+  }, [dismissedIds, eagleItems, history, openItem, persistDecision, runtimeItems]);
 
   const undoCurrent = useCallback(() => {
     if (!decisions[current.id]) return;
@@ -988,11 +1087,12 @@ export default function Home() {
       return next;
     });
     setHistory((value) => value.filter((entry) => entry.id !== current.id));
+    persistDecision(current.id, "pending");
     setEagleError(false);
     setEagleMessage(wasKeptInEagle
       ? "已撤回本条的“留下”状态；为避免误删，已经导入 Eagle 的文件仍然保留"
       : "已撤回本条，现在可以重新选择");
-  }, [current.id, decisions, eagleItems]);
+  }, [current.id, decisions, eagleItems, persistDecision]);
 
   const toggleAccountPin = useCallback((profileId: string) => {
     setPinnedAccountIds((value) => value.includes(profileId)
@@ -1087,7 +1187,7 @@ export default function Home() {
           <div className="first-run-step"><b>1</b><span><strong>登录小红书</strong><small>在 Codex 内置浏览器打开小红书并扫码登录。</small></span><button onClick={() => window.open("https://www.xiaohongshu.com/explore", "_blank", "noopener,noreferrer")}>打开登录页</button></div>
           <div className="first-run-step"><b>2</b><span><strong>连接 Eagle</strong><small>先启动 Eagle，再检测本机连接。也可以稍后设置。</small></span><button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info").then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("未连接，请先启动 Eagle")); }}>{eagleSetupStatus}</button></div>
           <div className="first-run-step prompt-step"><b>3</b><span><strong>把下面这句话发给 Codex</strong><code>{starterPrompt}</code></span><button onClick={() => void navigator.clipboard.writeText(starterPrompt).then(() => setSetupCopied(true))}>{setupCopied ? "已复制" : "复制"}</button></div>
-          <p>Codex 会读取仓库中的安装说明、打开创作服务中心、抓取最新活动并写入本地批阅页。</p>
+          <p>{libraryStatus}</p>
         </section>
       </main>
     );

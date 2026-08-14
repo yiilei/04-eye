@@ -17,7 +17,7 @@ await cp(electronApp, appPath, { recursive: true, verbatimSymlinks: true });
 await mkdir(packagedApp, { recursive: true });
 for (const entry of ["desktop", "dist"]) await cp(path.join(root, entry), path.join(packagedApp, entry), { recursive: true });
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });
-await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "sharp-eye-04", version: "0.1.0", type: "module", main: "desktop/main.mjs" }, null, 2));
+await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "sharp-eye-04", version: "0.1.1", type: "module", main: "desktop/main.mjs" }, null, 2));
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");
 await rename(path.join(appPath, "Contents", "MacOS", "Electron"), path.join(appPath, "Contents", "MacOS", "04的眼"));

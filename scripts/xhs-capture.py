@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -19,10 +20,11 @@ from urllib.parse import urlparse
 PROJECT = Path(__file__).resolve().parents[1]
 ENGINE = PROJECT / "vendor/XHS-Downloader/main.py"
 PYTHON = PROJECT / "vendor/XHS-Downloader/.venv/bin/python"
-DEFAULT_OUTPUT = PROJECT / "public/review"
-REGISTRY = PROJECT / "data/generated-review-items.json"
-STAGING = PROJECT / "data/capture-staging"
-LOCK_FILE = PROJECT / "data/xhs-capture.lock"
+DATA_HOME = Path(os.environ.get("SHARP_EYE_HOME", Path.home() / "Library/Application Support/04的眼")).expanduser()
+DEFAULT_OUTPUT = DATA_HOME / "review"
+REGISTRY = DATA_HOME / "data/generated-review-items.json"
+STAGING = DATA_HOME / "data/capture-staging"
+LOCK_FILE = DATA_HOME / "data/xhs-capture.lock"
 IMAGE_SUFFIXES = {".webp", ".jpeg", ".jpg", ".png", ".avif", ".heic"}
 VIDEO_SUFFIXES = {".mp4", ".mov"}
 
@@ -221,8 +223,8 @@ def validate_mp4(path: Path) -> None:
 
 def register_for_app(manifest: Path) -> None:
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    relative_folder = manifest.parent.relative_to(PROJECT / "public").as_posix()
-    public_prefix = f"/{relative_folder}"
+    relative_folder = manifest.parent.resolve().relative_to(DEFAULT_OUTPUT.resolve()).as_posix()
+    public_prefix = f"/media/{relative_folder}"
     local_prefix = str(manifest.parent)
     images = data["images"]
     first = images[0] if images else {"path": "", "width": 1080, "height": 1440}

@@ -4,7 +4,7 @@
 
 1. Codex 使用已经登录的小红书页面，只做“发现新增链接与核对账号身份”。
 2. Codex 把检查结果写入 `data/xhs-capture-queue.json`。
-3. 本地脚本执行下载、Live Photo 配对、尺寸与哈希校验、批阅登记、埋点更新、构建和日报。
+3. 本地脚本执行下载、Live Photo 配对、尺寸与哈希校验、批阅登记、埋点更新和日报；应用通过本地资料库自动刷新，不再为每次抓取重新构建前端。
 4. 只有日报中“需要 Codex 处理”的失败项才进入人工排错。
 
 ## 安全检查
@@ -22,6 +22,8 @@ pnpm daily:run
 ```
 
 日报输出到 `data/reports/YYYY-MM-DD-daily.md`。正常情况下这一阶段不需要 Codex。
+
+桌面应用中设定的时间和账号选择保存在 `~/Library/Application Support/04的眼/data/user-preferences.json`。Codex 创建或更新每日自动任务时应读取该文件；应用本身不伪装成已完成系统调度。
 
 ## 队列格式
 
