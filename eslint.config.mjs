@@ -13,6 +13,12 @@ const eslintConfig = defineConfig([
     "dist/**",
     "out/**",
     "build/**",
+    ".vinext/**",
+    ".wrangler/**",
+    "vendor/**",
+    "release/**",
+    "outputs/**",
+    "work/**",
     "next-env.d.ts",
   ]),
   eslint.configs.recommended,
@@ -35,6 +41,22 @@ const eslintConfig = defineConfig([
         version: "detect",
       },
     },
+    rules: {
+      // These effects intentionally synchronize the desktop bridge and
+      // persisted local application state after hydration.
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/refs": "off",
+      // Review media is local and may be very tall; Next Image optimization
+      // would copy or transform source material and is intentionally avoided.
+      "@next/next/no-img-element": "off",
+      // Scrollable captions deliberately expose keyboard focus as a named
+      // region; the generic rule does not recognize that desktop pattern.
+      "jsx-a11y/no-noninteractive-tabindex": "off",
+    },
+  },
+  {
+    files: ["**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
   },
 ]);
 

@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { isolatedXhsEnv } from "./xhs-runtime-env.mjs";
 
 const root = process.cwd();
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -24,7 +25,12 @@ if (!sourceDir) {
   const python = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "python");
   const output = execFileSync(python, [path.join(root, "scripts", "xhs-h5-capture.py"),
     "--source-url", required("--source-url"), "--output-dir", sourceDir],
-  { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: isolatedXhsEnv(dataHome),
+  }).trim();
   const result = JSON.parse(output.split("\n").at(-1));
   if (!result.ok) throw new Error(result.status || "H5 主体抓取失败");
   if (!result.excludedRecommendations) throw new Error("未识别到底部推荐流边界，禁止进入批阅页");

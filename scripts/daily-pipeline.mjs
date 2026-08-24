@@ -3,6 +3,7 @@ import { open, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promis
 import path from "node:path";
 import process from "node:process";
 import os from "node:os";
+import { clearH5Retry, h5TaskIsDue, scheduleH5Retry } from "./h5-retry-policy.mjs";
 
 const root = process.cwd();
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -79,10 +80,10 @@ async function main() {
     checkedAccounts: queue.checkedAccounts.length, pending: queue.tasks.filter((task) => task.status === "pending").length,
     h5AwaitingCapture: queue.tasks.filter((task) => task.status === "needs_h5_capture").length,
     pendingPinVerification: Array.isArray(pendingPins.accounts) ? pendingPins.accounts.filter((account) => account.status === "pending_verification").length : 0,
-    completed: [], failed: [], skipped: [], validation: "not_run", build: "not_run" };
+    completed: [], retrying: [], failed: [], skipped: [], validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
-    for (const task of queue.tasks.filter((item) => ["pending", "needs_h5_capture"].includes(item.status))) {
+    for (const task of queue.tasks.filter((item) => item.type === "h5_event" ? h5TaskIsDue(item, now) : item.status === "pending")) {
       try {
         if (task.type === "note") {
           const account = accountFor(pins, task.accountKey);
@@ -100,11 +101,20 @@ async function main() {
         task.status = "completed";
         task.completedAt = new Date().toISOString();
         delete task.error;
+        if (task.type === "h5_event") clearH5Retry(task);
       } catch (error) {
-        task.status = "failed";
-        task.failedAt = new Date().toISOString();
-        task.error = error instanceof Error ? error.message.split("\n").at(-1) : String(error);
-        report.failed.push({ id: task.id, type: task.type, title: task.title, error: task.error });
+        const message = error instanceof Error ? error.message.split("\n").at(-1) : String(error);
+        if (task.type === "h5_event") {
+          const retry = scheduleH5Retry(task, message, now);
+          const entry = { id: task.id, type: task.type, title: task.title, error: message, attempts: retry.attempts };
+          if (retry.terminal) report.failed.push(entry);
+          else report.retrying.push({ ...entry, nextAttemptAt: retry.nextAttemptAt });
+        } else {
+          task.status = "failed";
+          task.failedAt = new Date().toISOString();
+          task.error = message;
+          report.failed.push({ id: task.id, type: task.type, title: task.title, error: task.error });
+        }
       }
       await atomicJson(queuePath, queue);
     }
@@ -164,6 +174,7 @@ async function main() {
     `- 批阅页构建：${report.build}`,
     "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${item.title}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
     ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
+    ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
     ...(report.failed.length ? ["", "## 需要 Codex 处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
   console.log(JSON.stringify({ ok: report.failed.length === 0, mode: report.mode, checkedAccounts: report.checkedAccounts,

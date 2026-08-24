@@ -54,7 +54,7 @@ fi
 "$ENGINE_ROOT/.venv/bin/python" -m pip install --upgrade pip
 # XHS-Downloader's setup.py imports cx_Freeze for its optional desktop build.
 # Caiguang runs main.py directly, so install only the declared runtime dependencies.
-"$ENGINE_ROOT/.venv/bin/python" -m pip install -r "$ENGINE_ROOT/requirements.txt"
+"$ENGINE_ROOT/.venv/bin/python" -m pip install -r "$ENGINE_ROOT/requirements.txt" "curl-cffi>=0.15.0"
 "$ENGINE_ROOT/.venv/bin/python" -c 'import curl_cffi, fastapi, lxml, yaml'
 
 "$PYTHON_BIN" -m venv "$DISCOVERY_ROOT/.venv"

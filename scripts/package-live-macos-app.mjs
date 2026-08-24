@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";

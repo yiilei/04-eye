@@ -40,3 +40,5 @@ yarn-error.log*
 /outputs/
 /work/
 /data/xhs-capture.lock
+__pycache__/
+*.pyc

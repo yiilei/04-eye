@@ -206,7 +206,6 @@ const legacyItems: ReviewItem[] = [
 // the generated queue populated by the capture pipeline.
 void legacyItems;
 const items: ReviewItem[] = import.meta.env.VITE_PUBLIC_DISTRIBUTION === "1" ? [] : generatedItemsData as ReviewItem[];
-const starterPrompt = "帮我抓取最新的小红书创作服务活动";
 const emptyItem: ReviewItem = {
   id: "empty", title: "暂无待批阅素材", summary: "下一次采集成功后会自动出现在这里", date: "",
   capturedAt: "", width: 1, height: 1, fallback: false, cover: "", image: "",
@@ -427,7 +426,6 @@ export default function Home() {
   const [eagleMessage, setEagleMessage] = useState("");
   const [eagleError, setEagleError] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [setupCopied, setSetupCopied] = useState(false);
   const [xhsSetupStatus, setXhsSetupStatus] = useState<"未登录" | "等待登录" | "已登录">("未登录");
   const [eagleSetupStatus, setEagleSetupStatus] = useState("尚未检测");
   const [onboardingPreview, setOnboardingPreview] = useState(false);
@@ -496,8 +494,11 @@ export default function Home() {
       filename: `采光-小红书埋点-${new Date().toISOString().slice(0, 10)}.json`,
     };
   }, [allPinAccounts, pinnedAccountIds]);
-  const removedCurrent = removedSingles[current.id] ?? [];
-  const remainingGalleryPositions = current.gallery?.map((_source, position) => position).filter((position) => !removedCurrent.includes(position)) ?? [];
+  const removedCurrent = useMemo(() => removedSingles[current.id] ?? [], [current.id, removedSingles]);
+  const remainingGalleryPositions = useMemo(
+    () => current.gallery?.map((_source, position) => position).filter((position) => !removedCurrent.includes(position)) ?? [],
+    [current.gallery, removedCurrent],
+  );
   const currentLivePhoto = current.livePhotos?.[galleryIndex]
     ?? (current.livePhotoIndex === galleryIndex ? current.livePhotoVideo : undefined);
   const displayedDimensions = expectedImageSize(current, galleryIndex);
@@ -690,6 +691,7 @@ export default function Home() {
   // The desktop library is polled every 1.5 seconds and returns fresh object
   // identities. Revalidate only when the selected material actually changes;
   // otherwise the YES button flickers between checking and passed forever.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current.id]);
 
   useEffect(() => {
@@ -869,7 +871,7 @@ export default function Home() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [onboardingPreview, xhsSetupStatus]);
+  }, [eagleSetupStatus, onboardingPreview, xhsSetupStatus]);
 
   useEffect(() => {
     const updateClock = () => setDesktopTime(new Intl.DateTimeFormat("zh-CN", {
@@ -1540,7 +1542,7 @@ export default function Home() {
               <div className="shortcut-help" role="tooltip" aria-label="快捷键提示">
                 <div><span>切换素材</span><kbd>Tab</kbd></div>
                 <div><span>上一张 / 下一张</span><kbd>←</kbd><kbd>→</kbd></div>
-                <div><span>保留 / 删除整篇</span><kbd>Enter</kbd><kbd>'</kbd></div>
+                <div><span>保留 / 删除整篇</span><kbd>Enter</kbd><kbd>&apos;</kbd></div>
                 <div><span>保存 / 删除单张</span><kbd>↑</kbd><kbd>↓</kbd></div>
                 <div><span>复位画布</span><kbd>F</kbd></div>
                 <div><span>隐藏两侧栏</span><kbd>⌘</kbd><kbd>.</kbd></div>
@@ -1658,7 +1660,7 @@ export default function Home() {
               <button className="reject" onClick={() => void decide("rejected")} disabled={Boolean(syncingId) || Boolean(eagleItems[current.id])}>NO</button>
               <button className="keep" onClick={() => void decide("kept")} disabled={Boolean(syncingId) || quality.state !== "passed"}>YES</button>
             </div>
-            <div className={`post-caption ${formatPostCaption(current.caption) ? "" : "is-empty"}`} tabIndex={0} aria-label="帖子文案">
+            <div className={`post-caption ${formatPostCaption(current.caption) ? "" : "is-empty"}`} role="region" tabIndex={0} aria-label="帖子文案">
               {formatPostCaption(current.caption) || "暂无帖子文案"}
             </div>
             {eagleMessage && <p className={`eagle-status ${eagleError ? "error" : ""}`}>{eagleMessage}</p>}
