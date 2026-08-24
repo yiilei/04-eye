@@ -6,7 +6,7 @@ import process from "node:process";
 import os from "node:os";
 
 const projectRoot = process.cwd();
-const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "04的眼"));
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const reviewRoot = path.join(dataHome, "review");
 const targets = process.argv.slice(2);
 let manifests = targets;

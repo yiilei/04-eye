@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 PROJECT = Path(__file__).resolve().parents[1]
 ENGINE = PROJECT / "vendor/XHS-Downloader/main.py"
 PYTHON = PROJECT / "vendor/XHS-Downloader/.venv/bin/python"
-DATA_HOME = Path(os.environ.get("SHARP_EYE_HOME", Path.home() / "Library/Application Support/04的眼")).expanduser()
+DATA_HOME = Path(os.environ.get("SHARP_EYE_HOME", Path.home() / "Library/Application Support/采光")).expanduser()
 DEFAULT_OUTPUT = DATA_HOME / "review"
 REGISTRY = DATA_HOME / "data/generated-review-items.json"
 STAGING = DATA_HOME / "data/capture-staging"
@@ -42,7 +42,7 @@ def natural_key(path: Path) -> tuple:
 
 
 def media_index(path: Path) -> int | None:
-    match = re.search(r"_(\d+)$", path.stem)
+    match = re.search(r"(?:^|[_-])(\d+)$", path.stem)
     return int(match.group(1)) if match else None
 
 
@@ -128,17 +128,27 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
     normalized_images = []
     source_index_to_target: dict[int, int] = {}
 
+    source_indices = [media_index(source) for source in images]
+    if images and source_indices != list(range(1, len(images) + 1)):
+        raise RuntimeError(
+            "组图源序号不连续，无法证明轮播顺序；已阻止进入批阅页"
+        )
+
     for source in images:
         digest = sha256(source)
         if digest in hashes:
             raise RuntimeError(f"检测到重复图片：{source.name} 与 {hashes[digest]}")
         hashes[digest] = source.name
         position = len(normalized_images) + 1
-        source_index_to_target[media_index(source) or position] = position
+        source_index = media_index(source)
+        if source_index is None:
+            raise RuntimeError(f"图片缺少源序号：{source.name}")
+        source_index_to_target[source_index] = position
         destination = target / f"{position:02d}{source.suffix.lower()}"
         shutil.copy2(source, destination)
         width, height = image_size(destination)
-        normalized_images.append({"index": position, "path": destination.name,
+        normalized_images.append({"index": position, "sourceIndex": source_index,
+                                  "path": destination.name,
                                   "width": width, "height": height, "sha256": digest})
 
     loose_videos: list[str] = []
@@ -164,11 +174,16 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
         "account": {"name": account_name or metadata.get("作者昵称") or "待确认",
                     "xiaohongshuId": account_id or metadata.get("作者ID") or "待确认"},
         "title": title or metadata.get("作品标题") or slug,
+        "caption": metadata.get("作品描述") or "",
         "capturedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "sourceUrl": url, "sourceQuality": "web_highest_available",
         "qualityEvidence": "使用页面可获得的最高分辨率媒体地址下载，未二次压缩。",
-        "carouselOrderVerified": bool(normalized_images),
-        "carouselOrderEvidence": "按原帖媒体数组序号自动命名；校验连续序号、尺寸、哈希与 Live Photo 配对。" if normalized_images else "",
+        "carouselOrderVerified": bool(normalized_images) and source_indices == list(range(1, len(images) + 1)),
+        "carouselOrderEvidence": (
+            "XHS-Downloader 按页面 imageList 顺序生成 _1…_N 文件；采光逐项记录 "
+            "sourceIndex、尺寸、SHA-256 与 Live Photo 配对，并验证源序号连续。"
+            if normalized_images else ""
+        ),
         "images": normalized_images, "videos": loose_videos,
         "expected": {"imageCount": len(normalized_images),
                      "livePhotoCount": sum("livePhotoVideo" in image for image in normalized_images),
@@ -186,6 +201,8 @@ def validate(manifest: Path) -> None:
     images = data.get("images", [])
     videos = data.get("videos", [])
     expected = data.get("expected", {})
+    if images and data.get("carouselOrderVerified") is not True:
+        raise RuntimeError("组图轮播顺序未经核验")
     if len(images) != expected.get("imageCount"):
         raise RuntimeError("图片数量与清单不一致")
     if len(videos) != expected.get("videoCount", 0):
@@ -195,6 +212,8 @@ def validate(manifest: Path) -> None:
     for position, item in enumerate(images, start=1):
         if item.get("index") != position:
             raise RuntimeError("图片序号不连续")
+        if item.get("sourceIndex") != position:
+            raise RuntimeError("图片源序号不连续")
         path = base / item["path"]
         if not path.is_file() or not path.stat().st_size:
             raise RuntimeError(f"图片缺失：{item['path']}")
@@ -244,6 +263,7 @@ def register_for_app(manifest: Path) -> None:
         counts.append(f"{data['expected']['livePhotoCount']}个实况")
     item = {
         "id": data["id"], "postId": data["postId"], "title": data["title"],
+        "caption": data.get("caption", ""),
         "summary": f"{account} · {' · '.join(counts)}", "date": data["capturedAt"][:10],
         "capturedAt": data["capturedAt"][:10], "width": first["width"], "height": first["height"],
         "fallback": False, "cover": gallery[0] if gallery else "", "image": gallery[0] if gallery else "",
@@ -295,7 +315,7 @@ def capture(args: argparse.Namespace) -> dict:
             "engine": engine_log.splitlines()[-1] if engine_log else "done"}
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="完整采集小红书帖子并写入本地批阅目录")
     parser.add_argument("--url", required=True)
     parser.add_argument("--slug")
@@ -306,7 +326,12 @@ def main() -> int:
     parser.add_argument("--cookie", default="", help="可选；不要把 Cookie 写进项目文件")
     parser.add_argument("--source-dir", type=Path, help="离线测试：使用已有完整媒体")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
-    args = parser.parse_args()
+    clean_argv = [value for value in (sys.argv[1:] if argv is None else argv) if value != "--"]
+    return parser.parse_args(clean_argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("w") as lock:

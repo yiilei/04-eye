@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   const date = new Date().toISOString().slice(0, 10);
   const payload = {
     schemaVersion: 1,
-    project: "04的眼",
+    project: "采光",
     platform: "小红书",
     exportedAt: new Date().toISOString(),
     accountCount: accounts.length,

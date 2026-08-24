@@ -6,6 +6,7 @@ import accountPinsData from "../data/xhs-account-pins.json";
 
 type Decision = "kept" | "rejected";
 type QualityState = "checking" | "passed" | "failed";
+type ColorTheme = "dark" | "light";
 type HistoryEntry =
   | { kind: "decision"; id: string; previous?: Decision; decision: Decision; index: number }
   | { kind: "remove-single"; id: string; previousRemoved: number[]; removedPosition: number; previousDecision?: Decision; index: number }
@@ -16,9 +17,10 @@ type PinAccount = {
   profileId: string; profileUrl: string; status: string;
   avatarLocalPath?: string; avatarUrl?: string; avatarVerifiedAt?: string;
   previousDisplayName?: string; lastSeenPostId?: string; lastCheckedAt?: string;
+  addedAt?: string; lastVerificationAttemptAt?: string; verificationError?: string;
 };
 type ReviewItem = {
-  id: string; title: string; summary: string; date: string; capturedAt: string;
+  id: string; title: string; caption?: string; summary: string; date: string; capturedAt: string;
   width: number; height: number; fallback: boolean; cover: string; image: string;
   localPath: string; sourceUrl: string; video?: string; videoLocalPath?: string;
   gallery?: string[]; galleryLocalPaths?: string[];
@@ -30,6 +32,26 @@ type ReviewItem = {
   previewOnly?: boolean;
   sourceQuality?: "source_original" | "web_highest_available";
 };
+type DesktopBridge = {
+  fitWindow?: (request: { mediaAspect: number; sidebarWidth: number }) => Promise<unknown>;
+  openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; error?: string }>;
+  getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
+  onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
+};
+
+function getDesktopBridge() {
+  return (window as Window & { sharpEyeDesktop?: DesktopBridge }).sharpEyeDesktop;
+}
+
+function formatPostCaption(caption?: string) {
+  const normalized = caption?.trim();
+  if (!normalized) return "";
+  const topicIndex = normalized.search(/#[^#\n]+(?:\[话题\])?#/);
+  if (topicIndex <= 0) return normalized;
+  const body = normalized.slice(0, topicIndex).trim();
+  const topics = normalized.slice(topicIndex).trim();
+  return body && topics ? `${body}\n\n\n${topics}` : normalized;
+}
 
 const projectRoot = "/Users/yilei/Documents/ChatGPT/小红书创作活动获取/public";
 const eagleBase = "http://127.0.0.1:41595/api";
@@ -44,7 +66,7 @@ const legacyItems: ReviewItem[] = [
     gallery: Array.from({ length: 4 }, (_, index) => `/review/2026-08-13/dance-picked-moments-20260813/${String(index + 1).padStart(2, "0")}.webp`),
     galleryLocalPaths: Array.from({ length: 4 }, (_, index) => `${projectRoot}/review/2026-08-13/dance-picked-moments-20260813/${String(index + 1).padStart(2, "0")}.webp`),
     imageDimensions: [{ width: 1080, height: 1447 }, { width: 1076, height: 1441 }, { width: 1075, height: 1441 }, { width: 1076, height: 1441 }],
-    localPath: `${projectRoot}/review/2026-08-13/dance-picked-moments-20260813/01.webp`, sourceUrl: "https://www.xiaohongshu.com/user/profile/68107a5700000000040309ce/6a7c0e4600000000330332dd?xsec_token=AB1vGyxMhLSlsSTOup5yhZXQlB1MY6WlvPe74Qoxi9-gc=&xsec_source=pc_user",
+    localPath: `${projectRoot}/review/2026-08-13/dance-picked-moments-20260813/01.webp`, sourceUrl: "https://www.xiaohongshu.com/user/profile/68107a5700000000040309ce/6a7c0e4600000000330332dd",
     sourceQuality: "web_highest_available",
   },
   {
@@ -56,7 +78,7 @@ const legacyItems: ReviewItem[] = [
     galleryLocalPaths: Array.from({ length: 6 }, (_, index) => `${projectRoot}/review/2026-08-13/humanities-place-story/${String(index + 1).padStart(2, "0")}.webp`),
     imageDimensions: Array.from({ length: 6 }, () => ({ width: 1080, height: 1443 })),
     localPath: `${projectRoot}/review/2026-08-13/humanities-place-story/01.webp`,
-    sourceUrl: "https://www.xiaohongshu.com/explore/6a7c1c4a000000003300caf3?xsec_token=AB1vGyxMhLSlsSTOup5yhZXXEhDtiWSjYtepkaM7Ni4ug=&xsec_source=pc_user",
+    sourceUrl: "https://www.xiaohongshu.com/explore/6a7c1c4a000000003300caf3",
     sourceQuality: "web_highest_available",
   },
   {
@@ -68,7 +90,7 @@ const legacyItems: ReviewItem[] = [
     galleryLocalPaths: Array.from({ length: 3 }, (_, index) => `${projectRoot}/review/2026-08-13/tech-google-dev-2026/${String(index + 1).padStart(2, "0")}.webp`),
     imageDimensions: Array.from({ length: 3 }, () => ({ width: 1080, height: 1443 })),
     localPath: `${projectRoot}/review/2026-08-13/tech-google-dev-2026/01.webp`,
-    sourceUrl: "https://www.xiaohongshu.com/explore/6a7b341d0000000022012fde?xsec_token=ABunjIwWQcMZxHQjhQQb7keXmJ1tHm98W9VZws-49nrqw=&xsec_source=pc_user",
+    sourceUrl: "https://www.xiaohongshu.com/explore/6a7b341d0000000022012fde",
     sourceQuality: "web_highest_available",
   },
   {
@@ -117,7 +139,7 @@ const legacyItems: ReviewItem[] = [
     livePhotoLocalPath: `${projectRoot}/review/2026-08-13/redesign-82-day/live.mp4`,
     localPath: `${projectRoot}/review/2026-08-13/redesign-82-day/01.webp`,
     galleryLocalPaths: Array.from({ length: 12 }, (_, index) => `${projectRoot}/review/2026-08-13/redesign-82-day/${String(index + 1).padStart(2, "0")}.webp`),
-    sourceUrl: "https://www.xiaohongshu.com/explore/6a7a9616000000002403f33f?xsec_token=ABH9Emg6rQ_WBnqCx-AxNug_7aRei_hlH5zF9kSK4sIYE=&xsec_source=pc_feed",
+    sourceUrl: "https://www.xiaohongshu.com/explore/6a7a9616000000002403f33f",
   },
   {
     id: "redesign-pinned-showreel", title: "点击围观！小红书REDesign2024年设计名场面", summary: "小红书REDesign · 置顶视频", date: "2025-06-09",
@@ -199,7 +221,18 @@ const scheduleStorageKey = "sharp-eye-schedule-v1";
 const dismissedItemsStorageKey = "sharp-eye-dismissed-review-items-v1";
 const pinnedAccountsStorageKey = "sharp-eye-pinned-accounts-v1";
 const manualPinAccountsStorageKey = "sharp-eye-manual-pin-accounts-v1";
+const colorThemeStorageKey = "sharp-eye-color-theme-v1";
+const onboardingCompleteStorageKey = "caiguang-onboarding-complete-v1";
 const seededPinAccounts = accountPinsData.accounts as PinAccount[];
+const defaultPinnedAccountIds = [
+  "59f985684eacab1ce3cc5409", // 小红书REDesign
+  "6821ceac000000000e01159c", // 快手电商设计
+  "6606305e0000000003025553", // 抖音电商设计
+  "5ff6f8cc0000000001000528", // ZRUIHUANG
+  "68288500000000000e01e796", // yilei_
+  "601bf388000000000101d9ca", // 北风
+  "583d8dd95e87e760a932787d", // 蟠淘会 TAOBAO DESIGN
+];
 
 function findFolderId(folders: Array<{ id: string; name: string; children?: Array<{ id: string; name: string; children?: unknown[] }> }>, name: string): string | undefined {
   for (const folder of folders) {
@@ -395,17 +428,23 @@ export default function Home() {
   const [eagleError, setEagleError] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [setupCopied, setSetupCopied] = useState(false);
+  const [xhsSetupStatus, setXhsSetupStatus] = useState<"未登录" | "等待登录" | "已登录">("未登录");
   const [eagleSetupStatus, setEagleSetupStatus] = useState("尚未检测");
+  const [onboardingPreview, setOnboardingPreview] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [colorTheme, setColorTheme] = useState<ColorTheme>("dark");
+  const [automaticCaptureEnabled, setAutomaticCaptureEnabled] = useState(false);
   const [captureTime, setCaptureTime] = useState("02:00");
   const [pushTime, setPushTime] = useState("11:00");
   const [pinSearch, setPinSearch] = useState("");
   const [pinProfileUrl, setPinProfileUrl] = useState("");
   const [pinLinkMessage, setPinLinkMessage] = useState("");
   const [manualPinAccounts, setManualPinAccounts] = useState<PinAccount[]>([]);
-  const [pinnedAccountIds, setPinnedAccountIds] = useState<string[]>(() => seededPinAccounts.map((account) => account.profileId));
+  const [pinnedAccountIds, setPinnedAccountIds] = useState<string[]>(() => defaultPinnedAccountIds);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
+  const [shortcutHelpPinned, setShortcutHelpPinned] = useState(false);
+  const [shortcutHelpSuppressed, setShortcutHelpSuppressed] = useState(false);
   const [focusCanvasMode, setFocusCanvasMode] = useState(false);
   const [appVisible, setAppVisible] = useState(true);
   const [desktopAppMode, setDesktopAppMode] = useState(false);
@@ -413,6 +452,7 @@ export default function Home() {
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [windowSize, setWindowSize] = useState<{ width: number; height: number }>();
+  const [onboardingFrame, setOnboardingFrame] = useState({ width: 960, height: 720 });
   const [quality, setQuality] = useState<{ state: QualityState; message: string }>({ state: "checking", message: "正在校验" });
   const [edgeBump, setEdgeBump] = useState<"left" | "right">();
   const [zoom, setZoom] = useState(1);
@@ -420,6 +460,7 @@ export default function Home() {
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
   const migrationStarted = useRef(false);
+  const pinPreviewLoading = useRef(new Set<string>());
   const appShellRef = useRef<HTMLElement>(null);
   const windowDrag = useRef<{
     x: number; y: number; originX: number; originY: number;
@@ -437,12 +478,14 @@ export default function Home() {
   ], [manualPinAccounts]);
   const visiblePinAccounts = useMemo(() => {
     const query = pinSearch.trim().toLocaleLowerCase("zh-CN");
-    if (!query) return allPinAccounts;
-    return allPinAccounts.filter((account) =>
+    const filtered = !query ? allPinAccounts : allPinAccounts.filter((account) =>
       account.displayName.toLocaleLowerCase("zh-CN").includes(query)
       || account.xiaohongshuId.toLocaleLowerCase("zh-CN").includes(query)
       || account.searchKey.toLocaleLowerCase("zh-CN").includes(query));
-  }, [allPinAccounts, pinSearch]);
+    return filtered.map((account, order) => ({ account, order }))
+      .sort((left, right) => Number(pinnedAccountIds.includes(right.account.profileId)) - Number(pinnedAccountIds.includes(left.account.profileId)) || left.order - right.order)
+      .map(({ account }) => account);
+  }, [allPinAccounts, pinSearch, pinnedAccountIds]);
   const pinExport = useMemo(() => {
     const exportedAccounts = allPinAccounts
       .filter((account) => pinnedAccountIds.includes(account.profileId));
@@ -450,7 +493,7 @@ export default function Home() {
     return {
       count: exportedAccounts.length,
       href: `/api/export-pins?ids=${encodeURIComponent(exportedAccounts.map((account) => account.profileId).join(","))}&manual=${encodeURIComponent(JSON.stringify(exportedManualAccounts))}`,
-      filename: `04的眼-小红书埋点-${new Date().toISOString().slice(0, 10)}.json`,
+      filename: `采光-小红书埋点-${new Date().toISOString().slice(0, 10)}.json`,
     };
   }, [allPinAccounts, pinnedAccountIds]);
   const removedCurrent = removedSingles[current.id] ?? [];
@@ -477,19 +520,45 @@ export default function Home() {
         : current.video
           ? "1 张长图 · 1 个视频"
           : "1 张 H5 长图";
-  const mediaAspect = displayedDimensions.width / displayedDimensions.height;
-  // Only genuinely horizontal material uses the stable 5:3 landscape frame.
-  // Square and portrait material follows its own ratio; very tall material is
-  // bounded to 9:16 and continues inside the scrolling canvas.
-  const boundedMediaAspect = mediaAspect > 1 ? 5 / 3 : Math.max(9 / 16, mediaAspect);
-  const usesTallScroll = mediaAspect < 9 / 16;
-  // Wide material is always fitted inside the 5:3 review canvas. The old
-  // horizontal scrolling mode made the source ratio overflow the canvas and
-  // visually defeated the fixed 5:3 frame.
+  const sourceMediaAspect = displayedDimensions.width / displayedDimensions.height;
+  // Videos and horizontal images stay inside the same stable 3:4 review
+  // frame. Their own ratio is preserved with letterboxing inside the frame.
+  // Portrait material follows its own ratio; very tall material is bounded
+  // to 9:16 and continues inside the scrolling canvas.
+  const boundedMediaAspect = current.id === "empty"
+    ? 4 / 3
+    : current.videoPost || sourceMediaAspect > 1
+      ? 3 / 4
+      : Math.max(9 / 16, sourceMediaAspect);
+  const usesTallScroll = sourceMediaAspect < 9 / 16;
   const mediaMode = usesTallScroll ? "tall-scrolling-media" : "fit-media";
   const visibleSidebarWidth = focusCanvasMode ? 0 : (leftSidebarOpen ? 166 : 0) + 252;
   const adaptiveWindowWidth = `min(calc(100vw - 92px), calc(${(boundedMediaAspect * 90).toFixed(4)}vh + ${visibleSidebarWidth}px))`;
   const adaptiveWindowHeight = `min(90vh, calc(${(100 / boundedMediaAspect).toFixed(4)}vw - ${((92 + visibleSidebarWidth) / boundedMediaAspect).toFixed(2)}px))`;
+
+  useEffect(() => {
+    if (!desktopAppMode) return;
+    const bridge = getDesktopBridge();
+    if (!bridge?.fitWindow) return;
+
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      const navWidth = focusCanvasMode || !leftSidebarOpen
+        ? 0
+        : document.querySelector("nav")?.getBoundingClientRect().width ?? 0;
+      const asideWidth = focusCanvasMode
+        ? 0
+        : document.querySelector("aside")?.getBoundingClientRect().width ?? 0;
+      if (!cancelled) void bridge.fitWindow?.({
+        mediaAspect: onboardingPreview ? 4 / 3 : boundedMediaAspect,
+        sidebarWidth: onboardingPreview ? 0 : navWidth + asideWidth,
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [boundedMediaAspect, current.id, desktopAppMode, focusCanvasMode, leftSidebarOpen, onboardingPreview]);
 
   useEffect(() => {
     setWindowSize((size) => {
@@ -615,7 +684,10 @@ export default function Home() {
       if (active) setQuality({ state: "failed", message: error instanceof Error ? error.message : "素材校验失败" });
     });
     return () => { active = false; };
-  }, [current]);
+  // The desktop library is polled every 1.5 seconds and returns fresh object
+  // identities. Revalidate only when the selected material actually changes;
+  // otherwise the YES button flickers between checking and passed forever.
+  }, [current.id]);
 
   useEffect(() => {
     const desktop = new URLSearchParams(window.location.search).get("desktop") === "1";
@@ -661,11 +733,12 @@ export default function Home() {
       .then(async (response) => {
         if (!response.ok) throw new Error("preferences unavailable");
         return response.json() as Promise<{
-          captureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
+          automaticCaptureEnabled?: boolean; captureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
         }>;
       })
       .then((preferences) => {
         if (!active) return;
+        setAutomaticCaptureEnabled(preferences.automaticCaptureEnabled === true);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.captureTime ?? "")) setCaptureTime(preferences.captureTime!);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.pushTime ?? "")) setPushTime(preferences.pushTime!);
         if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
@@ -692,11 +765,108 @@ export default function Home() {
     } catch { /* ignore invalid local data */ }
     try {
       const schedule = JSON.parse(localStorage.getItem(scheduleStorageKey) || "{}");
+      setAutomaticCaptureEnabled(schedule.automaticCaptureEnabled === true);
       if (/^\d{2}:\d{2}$/.test(schedule.captureTime)) setCaptureTime(schedule.captureTime);
       if (/^\d{2}:\d{2}$/.test(schedule.pushTime)) setPushTime(schedule.pushTime);
     } catch { /* ignore invalid local data */ }
+    const savedTheme = localStorage.getItem(colorThemeStorageKey);
+    if (savedTheme === "light" || savedTheme === "dark") setColorTheme(savedTheme);
+    const onboardingRequested = new URLSearchParams(window.location.search).get("onboarding") === "1";
+    const onboardingComplete = localStorage.getItem(onboardingCompleteStorageKey) === "1";
+    setOnboardingPreview(onboardingRequested || !onboardingComplete);
     setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadPendingPins = async () => {
+      try {
+        const response = await fetch("/api/pending-pins", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json() as { accounts?: PinAccount[] };
+        if (!active || !Array.isArray(payload.accounts)) return;
+        setManualPinAccounts((current) => {
+          const merged = new Map(current.map((account) => [account.profileId, account]));
+          for (const account of payload.accounts!) merged.set(account.profileId, account);
+          return [...merged.values()];
+        });
+      } catch { /* 本地接口不可用时仍保留浏览器缓存 */ }
+    };
+    void loadPendingPins();
+    const timer = window.setInterval(() => void loadPendingPins(), 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = colorTheme;
+    if (hydrated) localStorage.setItem(colorThemeStorageKey, colorTheme);
+  }, [colorTheme, hydrated]);
+
+  useEffect(() => {
+    const fitOnboardingFrame = () => {
+      const availableWidth = Math.max(480, window.innerWidth - 64);
+      const availableHeight = Math.max(360, window.innerHeight - 64);
+      const width = Math.min(availableWidth, availableHeight * 4 / 3);
+      setOnboardingFrame({ width: Math.round(width), height: Math.round(width * 3 / 4) });
+    };
+    fitOnboardingFrame();
+    window.addEventListener("resize", fitOnboardingFrame);
+    return () => window.removeEventListener("resize", fitOnboardingFrame);
+  }, []);
+
+  useEffect(() => {
+    if (xhsSetupStatus !== "已登录" || eagleSetupStatus !== "已连接") return;
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(onboardingCompleteStorageKey, "1");
+      setOnboardingPreview(false);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("onboarding");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    // Keep both completed states visible briefly so the user can understand
+    // what was detected before the review workspace opens automatically.
+    }, 2_400);
+    return () => window.clearTimeout(timer);
+  }, [eagleSetupStatus, xhsSetupStatus]);
+
+  useEffect(() => {
+    if (!desktopAppMode || !onboardingPreview) return;
+    const bridge = getDesktopBridge();
+    if (!bridge?.getXhsLoginStatus) return;
+    let active = true;
+    const applyStatus = (status: { loggedIn?: boolean }) => {
+      if (active && status.loggedIn) setXhsSetupStatus("已登录");
+    };
+    const check = () => void bridge.getXhsLoginStatus?.().then(applyStatus).catch(() => undefined);
+    const unsubscribe = bridge.onXhsLoginChanged?.(applyStatus);
+    check();
+    const timer = window.setInterval(check, 1_500);
+    return () => {
+      active = false;
+      unsubscribe?.();
+      window.clearInterval(timer);
+    };
+  }, [desktopAppMode, onboardingPreview]);
+
+  useEffect(() => {
+    if (!onboardingPreview || xhsSetupStatus !== "已登录" || eagleSetupStatus === "已连接") return;
+    let active = true;
+    const checkEagle = async () => {
+      if (active) setEagleSetupStatus((status) => status === "已连接" ? status : "检测中…");
+      try {
+        const response = await fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" });
+        if (!response.ok) throw new Error("Eagle unavailable");
+        if (active) setEagleSetupStatus("已连接");
+      } catch {
+        if (active) setEagleSetupStatus("等待 Eagle");
+      }
+    };
+    void checkEagle();
+    const timer = window.setInterval(() => void checkEagle(), 1_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [onboardingPreview, xhsSetupStatus]);
 
   useEffect(() => {
     const updateClock = () => setDesktopTime(new Intl.DateTimeFormat("zh-CN", {
@@ -729,18 +899,51 @@ export default function Home() {
   useEffect(() => { if (hydrated) localStorage.setItem(pinnedAccountsStorageKey, JSON.stringify(pinnedAccountIds)); }, [pinnedAccountIds, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem(manualPinAccountsStorageKey, JSON.stringify(manualPinAccounts)); }, [manualPinAccounts, hydrated]);
   useEffect(() => {
-    if (hydrated) localStorage.setItem(scheduleStorageKey, JSON.stringify({ captureTime, pushTime }));
-  }, [captureTime, pushTime, hydrated]);
+    if (!hydrated) return;
+    const pending = manualPinAccounts.filter((account) => account.status === "pending_verification" && pinnedAccountIds.includes(account.profileId));
+    const timer = window.setTimeout(() => {
+      void fetch("/api/pending-pins", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accounts: pending }),
+      }).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, manualPinAccounts, pinnedAccountIds]);
+  useEffect(() => {
+    if (!hydrated) return;
+    const missing = manualPinAccounts.filter((account) => account.status === "pending_verification"
+      && (!account.avatarUrl || account.displayName === "待核验账号"));
+    for (const account of missing) {
+      if (pinPreviewLoading.current.has(account.profileId)) continue;
+      pinPreviewLoading.current.add(account.profileId);
+      void fetch("/api/profile-preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileUrl: account.profileUrl }),
+      }).then(async (response) => {
+        const preview = await response.json() as { ok?: boolean; displayName?: string; xiaohongshuId?: string; avatarUrl?: string };
+        if (!response.ok || !preview.ok || !preview.displayName || !preview.avatarUrl) return;
+        setManualPinAccounts((accounts) => accounts.map((item) => item.profileId === account.profileId ? {
+          ...item,
+          displayName: preview.displayName!,
+          xiaohongshuId: preview.xiaohongshuId || "待晚间核验",
+          avatarUrl: preview.avatarUrl,
+        } : item));
+      }).catch(() => undefined).finally(() => pinPreviewLoading.current.delete(account.profileId));
+    }
+  }, [hydrated, manualPinAccounts]);
+  useEffect(() => {
+    if (hydrated) localStorage.setItem(scheduleStorageKey, JSON.stringify({ automaticCaptureEnabled, captureTime, pushTime }));
+  }, [automaticCaptureEnabled, captureTime, pushTime, hydrated]);
   useEffect(() => {
     if (!desktopAppMode || !desktopPreferencesReady) return;
     const timer = window.setTimeout(() => {
       void fetch("/api/desktop/preferences", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ captureTime, pushTime, pinnedAccountIds, manualPinAccounts }),
+        body: JSON.stringify({ automaticCaptureEnabled, captureTime, pushTime, pinnedAccountIds, manualPinAccounts }),
       }).catch(() => undefined);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [captureTime, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
+  }, [automaticCaptureEnabled, captureTime, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
 
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
@@ -809,6 +1012,10 @@ export default function Home() {
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       if (!event.metaKey && !event.ctrlKey) {
+        if (usesTallScroll && zoomRef.current === 1) {
+          element.scrollBy({ top: event.deltaY, left: event.deltaX });
+          return;
+        }
         const nextPan = {
           x: panRef.current.x - event.deltaX,
           y: panRef.current.y - event.deltaY,
@@ -833,7 +1040,10 @@ export default function Home() {
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
-  }, []);
+  // The viewer does not exist while first-run onboarding is visible. Rebind
+  // as soon as onboarding closes so trackpad pinch / wheel input reaches the
+  // real canvas instead of being lost for the lifetime of the page.
+  }, [onboardingPreview, usesTallScroll]);
 
   useEffect(() => {
     const element = viewer.current;
@@ -874,7 +1084,9 @@ export default function Home() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", stopDragging);
     };
-  }, []);
+  // Same lifecycle rule as wheel zoom: the middle-button pan target is only
+  // mounted after onboarding has completed.
+  }, [onboardingPreview]);
 
   const moveGallery = useCallback((direction: -1 | 1) => {
     if (!current.gallery?.length) return;
@@ -1107,7 +1319,7 @@ export default function Home() {
     window.open(url, "_blank", "noopener,noreferrer");
   }, [pinSearch]);
 
-  const addPinFromProfileUrl = useCallback(() => {
+  const addPinFromProfileUrl = useCallback(async () => {
     const rawUrl = pinProfileUrl.trim();
     setPinLinkMessage("");
     try {
@@ -1117,23 +1329,39 @@ export default function Home() {
       if (!profileId) throw new Error("profile");
       const existing = allPinAccounts.find((account) => account.profileId === profileId);
       if (!existing) {
+        setPinLinkMessage("正在读取账号名称和头像…");
+        const previewResponse = await fetch("/api/profile-preview", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profileUrl: `https://www.xiaohongshu.com/user/profile/${profileId}` }),
+        });
+        const preview = await previewResponse.json() as { ok?: boolean; displayName?: string; xiaohongshuId?: string; avatarUrl?: string; error?: string };
+        if (!previewResponse.ok || !preview.ok || !preview.displayName || !preview.avatarUrl) throw new Error(preview.error || "preview");
         setManualPinAccounts((accounts) => [...accounts, {
           searchKey: profileId,
-          xiaohongshuId: "待首次检查读取",
-          displayName: "待核验账号",
+          xiaohongshuId: preview.xiaohongshuId || "待晚间核验",
+          displayName: preview.displayName,
           group: "manual_pending",
           profileId,
           profileUrl: `https://www.xiaohongshu.com/user/profile/${profileId}`,
           status: "pending_verification",
+          avatarUrl: preview.avatarUrl,
+          addedAt: new Date().toISOString(),
         }]);
       }
       setPinnedAccountIds((ids) => ids.includes(profileId) ? ids : [...ids, profileId]);
       setPinProfileUrl("");
-      setPinLinkMessage(existing ? `已埋点：${existing.displayName}` : "主页已加入，首次检查时补齐账号资料");
-    } catch {
-      setPinLinkMessage("请粘贴小红书账号主页链接，不要粘贴帖子链接");
+      setPinLinkMessage(existing ? `已埋点：${existing.displayName}` : "已加入待验证，今晚统一核验");
+    } catch (error) {
+      setPinLinkMessage(error instanceof Error && error.message !== "host" && error.message !== "profile"
+        ? "暂时无法读取账号名称和头像，请稍后重试"
+        : "请粘贴小红书账号主页链接，不要粘贴帖子链接");
     }
   }, [allPinAccounts, pinProfileUrl]);
+
+  const removePendingPin = useCallback((profileId: string) => {
+    setPinnedAccountIds((ids) => ids.filter((id) => id !== profileId));
+    setPinLinkMessage("已取消埋点，账号已移到列表底部");
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1179,16 +1407,36 @@ export default function Home() {
     return () => removeEventListener("keydown", onKey);
   }, [current.id, decide, decisions, index, moveGallery, openItem, removeCurrentItem, removeCurrentSingle, resetZoom, reviewItems.length, saveCurrentSingle, undo, undoCurrent]);
 
-  if (!reviewItems.length) {
+  if (onboardingPreview) {
     return (
       <main className="app-shell first-run-shell">
-        <section className="first-run-guide">
-          <div className="first-run-title"><img src="/favicon.svg" alt="" /><span><strong>欢迎使用 04的眼</strong><small>三步完成首次设置</small></span></div>
-          <div className="first-run-step"><b>1</b><span><strong>登录小红书</strong><small>在 Codex 内置浏览器打开小红书并扫码登录。</small></span><button onClick={() => window.open("https://www.xiaohongshu.com/explore", "_blank", "noopener,noreferrer")}>打开登录页</button></div>
-          <div className="first-run-step"><b>2</b><span><strong>连接 Eagle</strong><small>先启动 Eagle，再检测本机连接。也可以稍后设置。</small></span><button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info").then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("未连接，请先启动 Eagle")); }}>{eagleSetupStatus}</button></div>
-          <div className="first-run-step prompt-step"><b>3</b><span><strong>把下面这句话发给 Codex</strong><code>{starterPrompt}</code></span><button onClick={() => void navigator.clipboard.writeText(starterPrompt).then(() => setSetupCopied(true))}>{setupCopied ? "已复制" : "复制"}</button></div>
-          <p>{libraryStatus}</p>
+        <section className="first-run-guide" style={desktopAppMode ? undefined : onboardingFrame}>
+          {!desktopAppMode && <div className="window-controls first-run-window-controls">
+            <div className="window-button-group traffic-lights">
+              <button className="traffic-close" onClick={() => setOnboardingPreview(false)} aria-label="关闭" title="关闭" />
+              <button className="traffic-minimize" onClick={() => setOnboardingPreview(false)} aria-label="最小化" title="最小化" />
+              <button className="traffic-zoom" aria-label="缩放" title="缩放" />
+            </div>
+          </div>}
+          <div className="first-run-setup">
+            <div className="first-run-intro"><h1><i aria-hidden="true" />开始使用<i aria-hidden="true" /></h1></div>
+            <div className="first-run-steps">
+              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="同步 Chrome 中已登录的小红书会话" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "登录"}</button></div></div>
+              <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
+            </div>
+          </div>
         </section>
+      </main>
+    );
+  }
+
+  if (!reviewItems.length) {
+    return (
+      <main className="app-shell empty-review">
+        <div>
+          <strong>暂无待批阅素材</strong>
+          <span>{libraryStatus}</span>
+        </div>
       </main>
     );
   }
@@ -1196,7 +1444,7 @@ export default function Home() {
   return (
     <>
       {!desktopAppMode && <div className="desktop-menu-bar" aria-label="桌面状态栏">
-        <div className="desktop-menu-left"><strong>●</strong><b>{appVisible ? "04的眼" : "访达"}</b><span>文件</span><span>编辑</span><span>显示</span><span>窗口</span><span>帮助</span></div>
+        <div className="desktop-menu-left"><strong>●</strong><b>{appVisible ? "采光" : "访达"}</b><span>文件</span><span>编辑</span><span>显示</span><span>窗口</span><span>帮助</span></div>
         <div className="desktop-menu-right"><span>⌁</span><span>◉</span><time>{desktopTime}</time></div>
       </div>}
       {appVisible && <main ref={appShellRef} className={`app-shell ${leftSidebarOpen ? "" : "left-sidebar-collapsed"} ${focusCanvasMode ? "focus-canvas-mode" : ""}`} style={desktopAppMode ? { width: "100vw", height: "100vh", transform: "none" } : { width: windowSize?.width ?? adaptiveWindowWidth, height: windowSize?.height ?? adaptiveWindowHeight, transform: `translate3d(${windowOffset.x}px, ${windowOffset.y}px, 0)` }}>
@@ -1206,8 +1454,8 @@ export default function Home() {
       <section className="workspace" onMouseDown={desktopAppMode ? undefined : startWindowDrag}>
         <div className="window-controls">
           {!desktopAppMode && <div className="window-button-group traffic-lights">
-            <button className="traffic-close" onClick={() => setAppVisible(false)} aria-label="退出04的眼" title="退出" />
-            <button className="traffic-minimize" onClick={() => setAppVisible(false)} aria-label="最小化04的眼" title="最小化" />
+            <button className="traffic-close" onClick={() => setAppVisible(false)} aria-label="退出采光" title="退出" />
+            <button className="traffic-minimize" onClick={() => setAppVisible(false)} aria-label="最小化采光" title="最小化" />
             <button className="traffic-zoom" onClick={() => { setWindowSize(undefined); setWindowOffset({ x: 0, y: 0 }); }} aria-label="恢复默认窗口大小" title="恢复默认大小" />
           </div>}
           <button className="sidebar-toggle" onClick={() => setLeftSidebarOpen((value) => !value)} aria-label={leftSidebarOpen ? "收起左侧栏" : "展开左侧栏"}><span /><span /></button>
@@ -1222,7 +1470,7 @@ export default function Home() {
                 <button className={itemIndex === index ? "active" : ""} onClick={() => openItem(itemIndex)}>
                   <img src={item.cover} alt="" style={{ aspectRatio: `${item.width} / ${Math.min(item.height, item.width * 4 / 3)}` }} />
                   <span><strong>{item.title}</strong><span className="thumbnail-meta"><small>{item.date}</small><span className="platform-pill" aria-label="小红书">小红书</span></span></span>
-                  {decisions[item.id] && <i className={decisions[item.id]}>{decisions[item.id] === "kept" ? "留" : "删"}</i>}
+                  {decisions[item.id] && <i className={decisions[item.id]} aria-label={decisions[item.id] === "kept" ? "已保留" : "已删除"}>{decisions[item.id] === "kept" ? "✓" : "×"}</i>}
                 </button>
               </Fragment>
             ))}
@@ -1261,11 +1509,46 @@ export default function Home() {
               <button className="back-icon" onClick={() => setSettingsOpen(false)} aria-label="返回素材信息" title="返回">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
               </button>
-            ) : <span className="review-progress">{String(index + 1).padStart(2, "0")}/{String(reviewItems.length).padStart(2, "0")}</span>}
+            ) : <div className={`review-progress-help ${shortcutHelpPinned ? "is-pinned" : ""} ${shortcutHelpSuppressed ? "is-suppressed" : ""}`}
+              onMouseLeave={() => setShortcutHelpSuppressed(false)}>
+              <button className="review-progress" aria-label={`当前第 ${index + 1} 组，共 ${reviewItems.length} 组；悬停查看快捷键`}
+                aria-expanded={shortcutHelpPinned}
+                onClick={() => {
+                  if (shortcutHelpPinned) {
+                    setShortcutHelpPinned(false);
+                    setShortcutHelpSuppressed(true);
+                  } else {
+                    setShortcutHelpPinned(true);
+                    setShortcutHelpSuppressed(false);
+                  }
+                }}>
+                {String(index + 1).padStart(2, "0")}/{String(reviewItems.length).padStart(2, "0")}
+              </button>
+              <div className="shortcut-help" role="tooltip" aria-label="快捷键提示">
+                <div><span>切换素材</span><kbd>Tab</kbd></div>
+                <div><span>上一张 / 下一张</span><kbd>←</kbd><kbd>→</kbd></div>
+                <div><span>保留 / 删除整篇</span><kbd>Enter</kbd><kbd>'</kbd></div>
+                <div><span>保存 / 删除单张</span><kbd>↑</kbd><kbd>↓</kbd></div>
+                <div><span>复位画布</span><kbd>F</kbd></div>
+                <div><span>隐藏两侧栏</span><kbd>⌘</kbd><kbd>.</kbd></div>
+                <div><span>撤回上一步</span><kbd>⌘</kbd><kbd>Z</kbd></div>
+              </div>
+            </div>}
             <div className="post-link-actions">
               {!settingsOpen && (
                 <button className={`post-link-icon ${linkCopied ? "copied" : ""}`} onClick={() => void copyPostLink()} aria-label={linkCopied ? "链接已复制" : "复制原帖链接"} title={linkCopied ? "已复制" : "复制原帖链接"}>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H6.8A2.8 2.8 0 0 0 4 7.8v9.4A2.8 2.8 0 0 0 6.8 20h9.4a2.8 2.8 0 0 0 2.8-2.8V15M13 4h7v7M20 4l-9 9" /></svg>
+                </button>
+              )}
+              {settingsOpen && (
+                <button className="theme-icon" onClick={() => setColorTheme((theme) => theme === "dark" ? "light" : "dark")}
+                  aria-label={colorTheme === "dark" ? "切换到白天模式" : "切换到暗黑模式"}
+                  title={colorTheme === "dark" ? "白天模式" : "暗黑模式"}>
+                  {colorTheme === "dark" ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.8" /><path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5 7 7M17 17l1.5 1.5M18.5 5.5 17 7M7 17l-1.5 1.5" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 15.2A8 8 0 0 1 8.8 4.5 8 8 0 1 0 19.5 15.2Z" /></svg>
+                  )}
                 </button>
               )}
               <button className={`settings-icon ${settingsOpen ? "active" : ""}`} onClick={() => setSettingsOpen(true)} aria-label="打开设置" title="设置">
@@ -1276,13 +1559,29 @@ export default function Home() {
           {settingsOpen ? (
             <div className="settings-content">
               <section className="settings-panel" aria-label="自动采集设置">
-                <div className="settings-row">
-                  <div><strong>抓取时间</strong><span>每天自动检查新内容</span></div>
-                  <input type="time" value={captureTime} onChange={(event) => setCaptureTime(event.target.value)} aria-label="每天抓取时间" />
+                <div className="settings-automation-row">
+                  <strong>自动抓取</strong>
+                  <button
+                    type="button"
+                    className={`automation-switch ${automaticCaptureEnabled ? "is-on" : "is-off"}`}
+                    role="switch"
+                    aria-checked={automaticCaptureEnabled}
+                    aria-label="自动抓取"
+                    onClick={() => setAutomaticCaptureEnabled((enabled) => !enabled)}
+                  >
+                    <span className="automation-switch-label">{automaticCaptureEnabled ? "on" : "off"}</span>
+                    <span className="automation-switch-knob" aria-hidden="true" />
+                  </button>
                 </div>
-                <div className="settings-row">
-                  <div><strong>推送时间</strong><span>提醒你开始批阅</span></div>
-                  <input type="time" value={pushTime} onChange={(event) => setPushTime(event.target.value)} aria-label="每天推送时间" />
+                <div className="settings-time-panel">
+                  <div className="settings-row">
+                    <div><strong>抓取时间</strong></div>
+                    <input type="time" value={captureTime} onChange={(event) => setCaptureTime(event.target.value)} aria-label="每天抓取时间" />
+                  </div>
+                  <div className="settings-row">
+                    <div><strong>推送时间</strong></div>
+                    <input type="time" value={pushTime} onChange={(event) => setPushTime(event.target.value)} aria-label="每天推送时间" />
+                  </div>
                 </div>
               </section>
               <section className="pin-panel" aria-label="小红书埋点账号">
@@ -1295,9 +1594,9 @@ export default function Home() {
                 </label>
                 <div className="pin-link-row">
                   <input value={pinProfileUrl} onChange={(event) => { setPinProfileUrl(event.target.value); setPinLinkMessage(""); }}
-                    onKeyDown={(event) => { if (event.key === "Enter") addPinFromProfileUrl(); }}
+                    onKeyDown={(event) => { if (event.key === "Enter") void addPinFromProfileUrl(); }}
                     placeholder="粘贴小红书账号主页链接" aria-label="小红书账号主页链接" />
-                  <button type="button" onClick={addPinFromProfileUrl}>埋点</button>
+                  <button type="button" onClick={() => void addPinFromProfileUrl()}>埋点</button>
                 </div>
                 {pinLinkMessage && <div className="pin-link-message">{pinLinkMessage}</div>}
                 <div className="pin-list">
@@ -1309,12 +1608,15 @@ export default function Home() {
                           <span className="pin-avatar" aria-hidden="true">
                             {account.avatarLocalPath
                               ? <img src={account.avatarLocalPath} alt="" />
+                              : account.avatarUrl
+                                ? <img src={account.avatarUrl} alt="" />
                               : account.displayName.slice(0, 1).toLocaleUpperCase("zh-CN")}
                           </span>
                           <span><strong>{account.displayName}</strong><small>小红书号 {account.xiaohongshuId}</small></span>
                         </a>
-                        <button className={pinned ? "pin-toggle is-pinned" : "pin-toggle"} onClick={() => toggleAccountPin(account.profileId)}>
-                          {pinned ? "取消埋点" : "埋点"}
+                        <button className={`${pinned ? "pin-toggle is-pinned" : "pin-toggle"}${account.status === "pending_verification" && pinned ? " is-pending" : ""}`}
+                          onClick={() => account.status === "pending_verification" && pinned ? removePendingPin(account.profileId) : toggleAccountPin(account.profileId)}>
+                          {account.status === "pending_verification" && pinned ? <><span className="pending-label">待验证</span><span className="pending-cancel">取消埋点</span></> : pinned ? "取消埋点" : "埋点"}
                         </button>
                       </div>
                     );
@@ -1343,6 +1645,9 @@ export default function Home() {
               <button className="reject" onClick={() => void decide("rejected")} disabled={Boolean(syncingId) || Boolean(eagleItems[current.id])}>NO</button>
               <button className="keep" onClick={() => void decide("kept")} disabled={Boolean(syncingId) || quality.state !== "passed"}>YES</button>
             </div>
+            <div className={`post-caption ${formatPostCaption(current.caption) ? "" : "is-empty"}`} tabIndex={0} aria-label="帖子文案">
+              {formatPostCaption(current.caption) || "暂无帖子文案"}
+            </div>
             {eagleMessage && <p className={`eagle-status ${eagleError ? "error" : ""}`}>{eagleMessage}</p>}
             <span className="gallery-position" aria-label={`当前第 ${galleryIndex + 1} 张，共 ${current.gallery?.length ?? 1} 张`}>{galleryIndex + 1}/{current.gallery?.length ?? 1}</span>
             <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo} disabled={!history.length && !decisions[current.id]}>{decisions[current.id] ? "重新选择" : "撤回上一步"}</button>
@@ -1352,7 +1657,7 @@ export default function Home() {
       </main>}
       {!desktopAppMode && <div className="desktop-dock" aria-label="桌面应用栏">
         <button className="dock-icon finder-icon" aria-label="访达" title="访达">◒</button>
-        <button className={`dock-icon review-app-icon ${appVisible ? "running" : ""}`} onClick={reopenApplication} aria-label="打开04的眼" title="04的眼"><img src="/favicon.svg" alt="" /></button>
+        <button className={`dock-icon review-app-icon ${appVisible ? "running" : ""}`} onClick={reopenApplication} aria-label="打开采光" title="采光"><img src="/caiguang-icon.svg" alt="" /></button>
         <button className="dock-icon" aria-label="浏览器" title="浏览器">◎</button>
         <button className="dock-icon" aria-label="照片" title="照片">✿</button>
         <span className="dock-divider" />

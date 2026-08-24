@@ -5,11 +5,13 @@ import process from "node:process";
 import os from "node:os";
 
 const root = process.cwd();
-const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "04的眼"));
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const dataDir = path.join(root, "data");
 const queuePath = path.join(dataDir, "xhs-capture-queue.json");
 const pinsPath = path.join(dataDir, "xhs-account-pins.json");
 const policyPath = path.join(dataDir, "xhs-media-policy.json");
+const workspacePendingPinsPath = path.join(dataDir, "xhs-pending-pins.json");
+const appPendingPinsPath = path.join(dataHome, "data", "xhs-pending-pins.json");
 const registryPath = path.join(dataHome, "data", "generated-review-items.json");
 const reportsDir = path.join(dataDir, "reports");
 const lockPath = path.join(dataDir, "daily-pipeline.lock");
@@ -70,9 +72,12 @@ async function main() {
   const queue = await readJson(queuePath);
   const pins = await readJson(pinsPath);
   const policy = await readJson(policyPath);
+  const pendingPins = await readJson(appPendingPinsPath).catch(() => readJson(workspacePendingPinsPath).catch(() => ({ accounts: [] })));
   validateConfiguration(queue, pins, policy);
   const report = { schemaVersion: 1, date: today, startedAt: nowIso, mode: dryRun ? "dry-run" : "run",
     checkedAccounts: queue.checkedAccounts.length, pending: queue.tasks.filter((task) => task.status === "pending").length,
+    h5AwaitingCapture: queue.tasks.filter((task) => task.status === "needs_h5_capture").length,
+    pendingPinVerification: Array.isArray(pendingPins.accounts) ? pendingPins.accounts.filter((account) => account.status === "pending_verification").length : 0,
     completed: [], failed: [], skipped: [], validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
@@ -104,6 +109,10 @@ async function main() {
     }
 
     for (const check of queue.checkedAccounts) {
+      if (check.accountKey === "creator-events") {
+        if (check.status !== "verified") report.failed.push({ id: "creator-events", type: "activity_check", title: "创作服务中心", error: check.error || `活动检查未完成：${check.status}` });
+        continue;
+      }
       const account = accountFor(pins, check.accountKey);
       if (!account) {
         report.failed.push({ id: check.accountKey, type: "account_check", title: check.accountKey, error: "账号埋点不存在" });
@@ -114,12 +123,23 @@ async function main() {
         if (check.latestPostId) account.lastSeenPostId = check.latestPostId;
         account.lastCheckedAt = check.checkedAt || new Date().toISOString();
         account.status = "verified";
-      } else if (check.status !== "verified") {
+      } else if (check.status === "pin_invalid") {
         account.status = "pin_invalid";
+      } else if (check.status !== "verified") {
+        report.failed.push({
+          id: check.accountKey,
+          type: "account_check",
+          title: account.displayName,
+          error: check.error || `账号检查未完成：${check.status}`,
+        });
       }
     }
     pins.updatedAt = new Date().toISOString();
     await atomicJson(pinsPath, pins);
+
+    for (const task of queue.tasks.filter((item) => item.status === "needs_h5_capture")) {
+      report.failed.push({ id: task.id, type: "h5_capture", title: task.title, error: "已自动发现活动，等待 H5 主体提取" });
+    }
 
     try {
       run(process.execPath, [path.join(root, "scripts", "validate-review-manifest.mjs")]);
@@ -138,11 +158,14 @@ async function main() {
   const markdown = [`# ${today} 小红书视觉采集日报`, "",
     `- 检查账号：${report.checkedAccounts}`,
     `- 待处理任务：${report.pending}`,
+    `- 待提取 H5：${report.h5AwaitingCapture}`,
+    `- 待验证账号：${report.pendingPinVerification}`,
     `- 完成：${report.completed.length}`,
     `- 失败：${report.failed.length}`,
     `- 素材校验：${report.validation}`,
     `- 批阅页构建：${report.build}`,
     "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${item.title}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
+    ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
     ...(report.failed.length ? ["", "## 需要 Codex 处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
   console.log(JSON.stringify({ ok: report.failed.length === 0, mode: report.mode, checkedAccounts: report.checkedAccounts,

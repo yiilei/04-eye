@@ -1,6 +1,6 @@
 {
-  "name": "04-eye",
-  "version": "0.1.1",
+  "name": "caiguang",
+  "version": "0.2.0",
   "private": false,
   "main": "desktop/main.mjs",
   "engines": {
@@ -10,24 +10,37 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "desktop:dev": "pnpm run build && electron .",
+    "desktop:live": "node scripts/desktop-live.mjs",
+    "desktop:live:app": "node scripts/package-live-macos-app.mjs",
     "desktop:package": "pnpm run build && node scripts/package-macos-app.mjs",
     "desktop:package:public": "VITE_PUBLIC_DISTRIBUTION=1 pnpm run build && node scripts/package-macos-app.mjs",
     "setup:downloader": "zsh scripts/setup-downloader.sh",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "pnpm run validate:review && pnpm run build && node --test tests/rendered-html.test.mjs",
+    "test": "vendor/XHS-Downloader/.venv/bin/python -m unittest tests/test_xhs_capture.py && pnpm run validate:review && pnpm run build && node --test tests/rendered-html.test.mjs tests/xhs-discover.test.mjs tests/xhs-events-discover.test.mjs tests/data-migration.test.mjs tests/starter-data.test.mjs tests/onboarding-desktop.test.mjs tests/scheduler-policy.test.mjs tests/mcp-server.test.mjs",
     "validate:review": "node scripts/validate-review-manifest.mjs",
     "capture:xhs": "vendor/XHS-Downloader/.venv/bin/python scripts/xhs-capture.py",
+    "discover:xhs": "node scripts/xhs-discover.mjs",
+    "verify:xhs-pins": "node scripts/xhs-verify-pins.mjs",
+    "discover:xhs-events": "node scripts/xhs-events-discover.mjs",
+    "discover:xhs:check": "node scripts/xhs-discover.mjs --account 63044481856",
+    "backlog:xhs": "node scripts/xhs-backlog.mjs",
+    "xhs:login": "node scripts/xhs-session.mjs login",
+    "xhs:status": "node scripts/xhs-session.mjs status",
+    "xhs:logout": "node scripts/xhs-session.mjs logout",
     "capture:h5": "node scripts/register-h5-event.mjs",
     "daily:run": "node scripts/daily-pipeline.mjs",
+    "daily:auto": "node scripts/daily-auto.mjs",
     "daily:check": "node scripts/daily-pipeline.mjs --dry-run",
     "check": "pnpm run validate:review && pnpm run build",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "drizzle-orm": "0.45.2",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",

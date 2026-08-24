@@ -1,0 +1,20 @@
+#!/bin/zsh
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+PLUGIN_ROOT="${SCRIPT_DIR:h}"
+PROJECT_ROOT="${PLUGIN_ROOT:h:h}"
+
+for candidate in \
+  "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node" \
+  "$HOME/.cache/codex-runtimes/codex-workspace/dependencies/node/bin/node" \
+  "/opt/homebrew/bin/node" \
+  "/usr/local/bin/node" \
+  "/usr/bin/node"; do
+  if [[ -x "$candidate" ]]; then
+    exec "$candidate" "$PLUGIN_ROOT/mcp/server.mjs"
+  fi
+done
+
+echo "采光 MCP 缺少 Node.js 22，请先运行采光完整安装。" >&2
+exit 1

@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import worker from "../dist/server/index.js";
+import { seedStarterData } from "./starter-data.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -23,10 +24,12 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   const decisionsPath = path.join(dataRoot, "data", "review-decisions.json");
   const trashIndexPath = path.join(dataRoot, "data", "review-trash.json");
   const preferencesPath = path.join(dataRoot, "data", "user-preferences.json");
+  const pendingPinsPath = path.join(dataRoot, "data", "xhs-pending-pins.json");
   await mkdir(path.dirname(registryPath), { recursive: true });
   await mkdir(reviewRoot, { recursive: true });
   await mkdir(trashRoot, { recursive: true });
-  try { await stat(registryPath); } catch { await writeFile(registryPath, "[]\n"); }
+  try { await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot); }
+  catch { await writeFile(registryPath, "[]\n"); }
 
   const json = (value, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
@@ -107,10 +110,67 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
+      if (pathname === "/api/pending-pins" && request.method === "GET") {
+        const response = json(await readJson(pendingPinsPath, { schemaVersion: 1, updatedAt: null, accounts: [] }));
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/pending-pins" && request.method === "POST") {
+        const payload = await request.json();
+        const accounts = Array.isArray(payload?.accounts) ? payload.accounts.filter((account) =>
+          account && typeof account.profileId === "string"
+          && typeof account.profileUrl === "string"
+          && account.status === "pending_verification") : undefined;
+        if (!accounts) {
+          const response = json({ ok: false, error: "invalid accounts" }, 400);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        await atomicJson(pendingPinsPath, { schemaVersion: 1, updatedAt: new Date().toISOString(), accounts });
+        const response = json({ ok: true, count: accounts.length });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/profile-preview" && request.method === "POST") {
+        const payload = await request.json();
+        const profileUrl = String(payload?.profileUrl || "");
+        let result;
+        let status = 200;
+        if (!/^https:\/\/www\.xiaohongshu\.com\/user\/profile\/[a-zA-Z0-9_-]+$/.test(profileUrl)) {
+          result = { ok: false, error: "invalid profile url" };
+          status = 400;
+        } else {
+          try {
+            const profileResponse = await fetch(profileUrl, {
+              headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/139 Safari/537.36" },
+            });
+            if (!profileResponse.ok) throw new Error(`HTTP ${profileResponse.status}`);
+            const html = await profileResponse.text();
+            const decode = (value) => { try { return JSON.parse(`"${value.replace(/"/g, '\\"')}"`); } catch { return value.replace(/\\u002F/g, "/").replace(/\\\//g, "/"); } };
+            const match = (pattern) => { const value = html.match(pattern)?.[1]; return value ? decode(value) : ""; };
+            const displayName = match(/"nickname":"((?:\\.|[^"\\])+)"/);
+            const xiaohongshuId = match(/"redId":"((?:\\.|[^"\\])+)"/);
+            const avatarUrl = match(/"avatar":"((?:\\.|[^"\\])+)"/);
+            if (!displayName || !avatarUrl) throw new Error("主页资料不可见");
+            result = { ok: true, displayName, xiaohongshuId: xiaohongshuId || "待晚间核验", avatarUrl };
+          } catch (error) {
+            result = { ok: false, error: error instanceof Error ? error.message : "读取失败" };
+            status = 502;
+          }
+        }
+        const response = json(result, status);
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
       if (pathname === "/api/desktop/preferences" && request.method === "POST") {
         const payload = await request.json();
         const validTime = (value) => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-        if (!validTime(payload?.captureTime) || !validTime(payload?.pushTime)
+        if (typeof payload?.automaticCaptureEnabled !== "boolean"
+          || !validTime(payload?.captureTime) || !validTime(payload?.pushTime)
           || !Array.isArray(payload?.pinnedAccountIds) || !Array.isArray(payload?.manualPinAccounts)) {
           const response = json({ ok: false, error: "invalid preferences" }, 400);
           outgoing.statusCode = response.status;
@@ -119,6 +179,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         }
         await atomicJson(preferencesPath, {
           schemaVersion: 1,
+          automaticCaptureEnabled: payload.automaticCaptureEnabled,
           captureTime: payload.captureTime,
           pushTime: payload.pushTime,
           pinnedAccountIds: payload.pinnedAccountIds.map(String),

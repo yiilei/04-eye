@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "id": "starter-tanghulu-69af7a72",
+  "platform": "xiaohongshu",
+  "sourceType": "note_gallery",
+  "postId": "69af7a720000000028008aaa",
+  "account": {
+    "name": "北风",
+    "xiaohongshuId": "2636836395"
+  },
+  "title": "营销设计｜关于糖葫芦的视觉设计",
+  "capturedAt": "2026-08-24T02:27:14+08:00",
+  "sourceUrl": "https://www.xiaohongshu.com/user/profile/601bf388000000000101d9ca/69af7a720000000028008aaa",
+  "sourceQuality": "web_highest_available",
+  "qualityEvidence": "使用页面可获得的最高分辨率媒体地址下载，未二次压缩。",
+  "carouselOrderVerified": true,
+  "carouselOrderEvidence": "XHS-Downloader 按页面 imageList 顺序生成 _1…_N 文件；采光逐项记录 sourceIndex、尺寸、SHA-256 与 Live Photo 配对，并验证源序号连续。",
+  "images": [
+    {
+      "index": 1,
+      "sourceIndex": 1,
+      "path": "01.webp",
+      "width": 1080,
+      "height": 1440,
+      "sha256": "7a085e95f1d2506e8b94c7a8d4931bcf1e41c67f8fffd19633639f289121ffbc",
+      "livePhotoVideo": "live-01.mp4"
+    },
+    {
+      "index": 2,
+      "sourceIndex": 2,
+      "path": "02.webp",
+      "width": 1080,
+      "height": 1440,
+      "sha256": "37249a1636e0500e3078c0b2011f9b131f615fa59a71fe11a185f904a77c3a52"
+    },
+    {
+      "index": 3,
+      "sourceIndex": 3,
+      "path": "03.webp",
+      "width": 1080,
+      "height": 1440,
+      "sha256": "9cdd6d8104df9979ed7860da17878ea9a69ae2d85d7657b027e9b89920533441",
+      "livePhotoVideo": "live-03.mp4"
+    },
+    {
+      "index": 4,
+      "sourceIndex": 4,
+      "path": "04.webp",
+      "width": 1080,
+      "height": 1440,
+      "sha256": "c0176af1732ffd6edcc2bb881aff31cfeeeac890016be10cd77ad4054d51f0d9",
+      "livePhotoVideo": "live-04.mp4"
+    },
+    {
+      "index": 5,
+      "sourceIndex": 5,
+      "path": "05.webp",
+      "width": 1080,
+      "height": 1440,
+      "sha256": "6711c2db8816e9560765f98f5ae2b780a23c64c7006315832f97a2744d9e178e",
+      "livePhotoVideo": "live-05.mp4"
+    }
+  ],
+  "videos": [],
+  "expected": {
+    "imageCount": 5,
+    "livePhotoCount": 4,
+    "videoCount": 0
+  },
+  "reviewState": "pending"
+}

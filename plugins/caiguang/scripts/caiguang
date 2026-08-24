@@ -1,0 +1,79 @@
+#!/bin/zsh
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_ROOT="${SCRIPT_DIR:h:h:h}"
+
+find_runtime() {
+  local candidate
+  for candidate in \
+    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin" \
+    "$HOME/.cache/codex-runtimes/codex-workspace/dependencies/node/bin" \
+    "/opt/homebrew/bin" \
+    "/usr/local/bin"; do
+    if [[ -x "$candidate/node" ]]; then
+      export PATH="$candidate:$PATH"
+      break
+    fi
+  done
+
+  for candidate in \
+    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback" \
+    "$HOME/.cache/codex-runtimes/codex-workspace/dependencies/bin/fallback"; do
+    if [[ -x "$candidate/pnpm" ]]; then
+      export PATH="$candidate:$PATH"
+      break
+    fi
+  done
+}
+
+find_runtime
+cd "$PROJECT_ROOT"
+
+if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
+  echo "采光缺少 Node 22 或 pnpm。请先在 Codex 中运行完整安装。" >&2
+  exit 1
+fi
+
+command_name="${1:-doctor}"
+shift || true
+
+case "$command_name" in
+  setup)
+    pnpm install --frozen-lockfile
+    pnpm setup:downloader
+    ;;
+  doctor)
+    node_version="$(node -p 'process.versions.node')"
+    pnpm_version="$(pnpm --version)"
+    [[ -x vendor/xhs-cli/.venv/bin/xhs ]] || { echo "xhs-cli 未安装" >&2; exit 1; }
+    [[ -x vendor/XHS-Downloader/.venv/bin/python ]] || { echo "XHS-Downloader 未安装" >&2; exit 1; }
+    echo "采光环境正常：Node $node_version · pnpm $pnpm_version · 两个采集引擎已就绪"
+    ;;
+  login) pnpm xhs:login "$@" ;;
+  status) pnpm xhs:status "$@" ;;
+  check) pnpm daily:check "$@" ;;
+  discover) pnpm discover:xhs -- "$@" ;;
+  verify) pnpm verify:xhs-pins -- --write "$@" ;;
+  backlog) pnpm backlog:xhs -- "$@" ;;
+  capture) pnpm capture:xhs -- "$@" ;;
+  daily) pnpm daily:run "$@" ;;
+  auto) pnpm daily:auto "$@" ;;
+  schedule) node scripts/caiguang-scheduler.mjs "$@" ;;
+  package) pnpm desktop:package:public "$@" ;;
+  test) pnpm test "$@" ;;
+  app)
+    if [[ -d "$HOME/Applications/采光.app" ]]; then
+      open "$HOME/Applications/采光.app"
+    elif [[ -d "$HOME/Applications/04的眼.app" ]]; then
+      open "$HOME/Applications/04的眼.app"
+    else
+      pnpm desktop:live
+    fi
+    ;;
+  *)
+    echo "未知命令：$command_name" >&2
+    echo "可用命令：setup doctor login status check discover verify backlog capture daily auto schedule package test app" >&2
+    exit 2
+    ;;
+esac

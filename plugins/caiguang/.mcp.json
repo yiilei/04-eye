@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "caiguang": {
+      "command": "./scripts/mcp-launcher",
+      "args": [],
+      "cwd": "."
+    }
+  }
+}

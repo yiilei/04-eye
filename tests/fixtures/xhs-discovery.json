@@ -1,0 +1,16 @@
+{
+  "63044481856": {
+    "userPageData": {
+      "basicInfo": {
+        "nickname": "小红书REDesign",
+        "redId": "63044481856",
+        "userId": "59f985684eacab1ce3cc5409"
+      }
+    },
+    "notes": [
+      { "id": "6a9000000000000000000002", "xsecToken": "fixture-token-2", "noteCard": { "displayTitle": "新增帖子 2" } },
+      { "id": "6a9000000000000000000001", "xsecToken": "fixture-token-1", "noteCard": { "displayTitle": "新增帖子 1" } },
+      { "id": "6a7efc7000000000050213c7", "xsecToken": "fixture-baseline", "noteCard": { "displayTitle": "基线帖子" } }
+    ]
+  }
+}

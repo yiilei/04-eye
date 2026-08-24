@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import os from "node:os";
 
 const projectRoot = process.cwd();
-const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "04的眼"));
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) args.set(process.argv[index], process.argv[index + 1]);
 const required = (key) => {
@@ -27,7 +27,10 @@ const videoName = "preview.mp4";
 const coverName = "thumbnail.png";
 
 await mkdir(targetDir, { recursive: true });
-for (const name of [imageName, videoName, coverName]) await copyFile(path.join(sourceDir, name), path.join(targetDir, name));
+for (const name of [imageName, coverName]) await copyFile(path.join(sourceDir, name), path.join(targetDir, name));
+const sourceVideoPath = path.join(sourceDir, videoName);
+const hasVideo = await access(sourceVideoPath).then(() => true).catch(() => false);
+if (hasVideo) await copyFile(sourceVideoPath, path.join(targetDir, videoName));
 
 const imagePath = path.join(targetDir, imageName);
 const dimensions = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", imagePath], { encoding: "utf8" });
@@ -35,8 +38,10 @@ const width = Number(dimensions.match(/pixelWidth: (\d+)/)?.[1]);
 const height = Number(dimensions.match(/pixelHeight: (\d+)/)?.[1]);
 if (!width || !height) throw new Error("无法读取 H5 长图尺寸");
 const imageBytes = await readFile(imagePath);
-const videoBytes = await readFile(path.join(targetDir, videoName));
-if (videoBytes.length < 1024 || !videoBytes.subarray(0, 64).toString("latin1").includes("ftyp")) throw new Error("头部动态文件不是有效 MP4");
+if (hasVideo) {
+  const videoBytes = await readFile(path.join(targetDir, videoName));
+  if (videoBytes.length < 1024 || !videoBytes.subarray(0, 64).toString("latin1").includes("ftyp")) throw new Error("头部动态文件不是有效 MP4");
+}
 
 const manifest = {
   schemaVersion: 1,
@@ -49,12 +54,14 @@ const manifest = {
   capturedAt: new Date().toISOString(),
   sourceUrl,
   sourceQuality: "web_highest_available",
-  qualityEvidence: "完整静态长图与头部 MP4 均来自已核验的网页最高可用清晰度素材，未二次缩放。",
+  qualityEvidence: hasVideo
+    ? "完整静态长图与头部 MP4 均来自已核验的网页最高可用清晰度素材。"
+    : "完整静态长图来自已核验的网页最高可用清晰度渲染；页面未发现头部视频资源。",
   carouselOrderVerified: false,
   carouselOrderEvidence: "",
   images: [{ index: 1, path: imageName, width, height, sha256: createHash("sha256").update(imageBytes).digest("hex") }],
-  videos: [videoName],
-  expected: { imageCount: 1, livePhotoCount: 0, videoCount: 1 },
+  videos: hasVideo ? [videoName] : [],
+  expected: { imageCount: 1, livePhotoCount: 0, videoCount: hasVideo ? 1 : 0 },
   reviewState: "pending",
 };
 await writeFile(path.join(targetDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -68,7 +75,7 @@ const item = {
   id: slug,
   postId: slug,
   title,
-  summary: "小红书创作服务中心 · H5完整长图 · 1个头部视频",
+  summary: `小红书创作服务中心 · H5完整长图${hasVideo ? " · 1个头部视频" : ""}`,
   date: displayDate,
   capturedAt: captureDate,
   width,
@@ -77,11 +84,10 @@ const item = {
   cover: `${prefix}/${coverName}`,
   image: `${prefix}/${imageName}`,
   localPath: imagePath,
-  video: `${prefix}/${videoName}`,
-  videoLocalPath: path.join(targetDir, videoName),
+  ...(hasVideo ? { video: `${prefix}/${videoName}`, videoLocalPath: path.join(targetDir, videoName) } : {}),
   sourceUrl,
   sourceQuality: "web_highest_available",
 };
 const nextRegistry = [item, ...registry.filter((existing) => existing.id !== slug && existing.postId !== slug)];
 await writeFile(registryPath, `${JSON.stringify(nextRegistry, null, 2)}\n`);
-console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: 1, width, height, manifest: path.join(targetDir, "manifest.json") }));
+console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: hasVideo ? 1 : 0, width, height, manifest: path.join(targetDir, "manifest.json") }));

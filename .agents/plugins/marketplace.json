@@ -1,0 +1,20 @@
+{
+  "name": "caiguang-local",
+  "interface": {
+    "displayName": "采光本地插件"
+  },
+  "plugins": [
+    {
+      "name": "caiguang",
+      "source": {
+        "source": "local",
+        "path": "./plugins/caiguang"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
