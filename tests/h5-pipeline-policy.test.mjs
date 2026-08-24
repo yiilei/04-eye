@@ -70,6 +70,8 @@ test("installer is complete, cached, and keeps development dependencies optional
   assert.match(wrapper, /setup-dev\)/);
   const packagedInstaller = await readFile(path.join(root, "packaging", "开始安装.command"), "utf8");
   assert.match(packagedInstaller, /pnpm install --prod --frozen-lockfile --prefer-offline/);
+  const workspace = await readFile(path.join(root, "pnpm-workspace.yaml"), "utf8");
+  assert.match(workspace, /electron: true/);
   const hosting = JSON.parse(await readFile(path.join(root, ".openai", "hosting.json"), "utf8"));
   assert.deepEqual(hosting, { d1: null, r2: null });
 });
