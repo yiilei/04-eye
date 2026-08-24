@@ -12,7 +12,7 @@ Codex 应按以下顺序操作：
 
 1. 下载并安装“采光.app”。
 2. 打开应用，确认独立桌面窗口可以启动。
-3. 在源码目录执行 `pnpm install` 和 `pnpm setup:downloader`，安装前端依赖、开源发现助手、Camoufox 浏览器组件和媒体采集引擎。
+3. 在源码目录执行 `plugins/caiguang/scripts/caiguang setup`。普通使用者只安装 MCP 与脚本运行依赖，不下载 Electron、Vite 等开发工具；需要修改或重新打包应用时才执行 `plugins/caiguang/scripts/caiguang setup-dev`。
 4. 安装仓库内 `plugins/caiguang` 插件并确认其本地 MCP 服务可以列出 `caiguang_*` 工具。MCP 只调用本机脚本，不上传用户素材或登录状态。
 5. 先取得用户对同步 Chrome 登录的明确同意，再执行 `pnpm xhs:login`；命令只读 Chrome 会话并复制到采光本机资料目录，不输出 Cookie、不修改 Chrome、失败时不自动扫码。
 6. 检查 Eagle 本地 API；未安装时允许跳过。
@@ -29,6 +29,7 @@ Codex 应按以下顺序操作：
 - `pnpm-workspace.yaml` 只批准构建 `esbuild`、`sharp`、`workerd` 三个明确依赖。
 - XHS-Downloader 只安装运行依赖，不再执行会误加载 `cx_Freeze` 的可编辑桌面打包入口。
 - `setup:downloader` 会同时安装 PyYAML、xhs-cli 与 Camoufox；不需要污染系统 Python。
+- 安装器使用依赖指纹与本机缓存：重复安装时不会重跑 pip 或重新下载 Camoufox；只有 requirements/pyproject 改变时才增量更新。设置 `FORCE_SETUP=1` 可强制重建 Python 依赖，设置 `FORCE_CAMOUFOX_FETCH=1` 可强制刷新浏览器。
 - `caiguang logout` 已连接正式注销命令，只删除采光自己的会话副本，不修改 Chrome。
 - H5 命令兼容 pnpm 的 `--` 参数转发，并会自动截取主体、排除推荐流、检测和下载 MP4。
 - 如果页面检测到视频但 MP4 未成功保存，任务会失败并阻止进入批阅，不会再误报“页面没有视频”。

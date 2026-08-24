@@ -63,6 +63,10 @@ pnpm run setup:downloader
 pnpm run desktop:package:public
 ```
 
+上面是开发/打包流程。已安装预构建桌面应用的普通用户请运行
+`plugins/caiguang/scripts/caiguang setup`：它只安装运行依赖，并复用 pip、pnpm
+与 Camoufox 的本机缓存；重复执行时通常会在数秒内完成。
+
 生成的 macOS 应用和完整安装包都在 `release/desktop`。完整安装包同时包含桌面应用、完整源代码、Codex Skill、公开埋点、采集与校验脚本以及安装说明。当前测试包为 Apple Silicon 版并使用临时签名，首次打开时如被 macOS 拦截，请在访达中右键应用并选择“打开”；正式分发版将补充 Intel 构建、Apple Developer ID 签名与公证。
 
 ## 隐私

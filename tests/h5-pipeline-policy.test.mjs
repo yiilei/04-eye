@@ -59,9 +59,17 @@ test("rejected H5 evidence leaves no partial review directory", async () => {
   await rm(temporary, { recursive: true, force: true });
 });
 
-test("installer declares curl-cffi and hosting defaults are versioned", async () => {
+test("installer is complete, cached, and keeps development dependencies optional", async () => {
   const setup = await readFile(path.join(root, "scripts", "setup-downloader.sh"), "utf8");
   assert.match(setup, /curl-cffi>=0\.15\.0/);
+  assert.match(setup, /\.caiguang-setup/);
+  assert.match(setup, /Camoufox 浏览器已缓存/);
+  assert.match(setup, /engine_pid=\$!/);
+  const wrapper = await readFile(path.join(root, "plugins", "caiguang", "scripts", "caiguang"), "utf8");
+  assert.match(wrapper, /pnpm install --prod --frozen-lockfile --prefer-offline/);
+  assert.match(wrapper, /setup-dev\)/);
+  const packagedInstaller = await readFile(path.join(root, "packaging", "开始安装.command"), "utf8");
+  assert.match(packagedInstaller, /pnpm install --prod --frozen-lockfile --prefer-offline/);
   const hosting = JSON.parse(await readFile(path.join(root, ".openai", "hosting.json"), "utf8"));
   assert.deepEqual(hosting, { d1: null, r2: null });
 });

@@ -40,7 +40,13 @@ shift || true
 
 case "$command_name" in
   setup)
-    pnpm install --frozen-lockfile
+    # End users run the prebuilt desktop app. Only runtime/MCP dependencies are
+    # needed locally; avoiding Electron and build tooling saves a large download.
+    pnpm install --prod --frozen-lockfile --prefer-offline
+    pnpm setup:downloader
+    ;;
+  setup-dev)
+    pnpm install --frozen-lockfile --prefer-offline
     pnpm setup:downloader
     ;;
   doctor)
@@ -75,7 +81,7 @@ case "$command_name" in
     ;;
   *)
     echo "未知命令：$command_name" >&2
-    echo "可用命令：setup doctor login status logout check discover verify backlog capture h5 daily auto schedule package test app" >&2
+    echo "可用命令：setup setup-dev doctor login status logout check discover verify backlog capture h5 daily auto schedule package test app" >&2
     exit 2
     ;;
 esac

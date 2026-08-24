@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.3";
+const version = "0.3.4";
 const electronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 const releaseRoot = path.join(root, "release", "desktop");
 const appPath = path.join(releaseRoot, "采光.app");

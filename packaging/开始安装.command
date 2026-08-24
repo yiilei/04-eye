@@ -32,9 +32,13 @@ command -v node >/dev/null || { echo "缺少 Node.js 22+，请把本安装包交
 command -v pnpm >/dev/null || { echo "缺少 pnpm，请把本安装包交给 Codex 完成安装。"; exit 1; }
 
 cd "$SOURCE_HOME"
-pnpm install --frozen-lockfile
+echo "[1/4] 安装采光本地运行依赖…"
+pnpm install --prod --frozen-lockfile --prefer-offline
+echo "[2/4] 准备小红书采集引擎…"
 pnpm setup:downloader
+echo "[3/4] 安装本地定时器…"
 plugins/caiguang/scripts/caiguang schedule install
+echo "[4/4] 启动采光…"
 xattr -cr "$APP_HOME"
 open "$APP_HOME"
 
