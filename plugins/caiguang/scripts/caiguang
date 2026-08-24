@@ -52,11 +52,13 @@ case "$command_name" in
     ;;
   login) pnpm xhs:login "$@" ;;
   status) pnpm xhs:status "$@" ;;
+  logout) pnpm xhs:logout "$@" ;;
   check) pnpm daily:check "$@" ;;
   discover) pnpm discover:xhs -- "$@" ;;
   verify) pnpm verify:xhs-pins -- --write "$@" ;;
   backlog) pnpm backlog:xhs -- "$@" ;;
   capture) pnpm capture:xhs -- "$@" ;;
+  h5) pnpm capture:h5 -- "$@" ;;
   daily) pnpm daily:run "$@" ;;
   auto) pnpm daily:auto "$@" ;;
   schedule) node scripts/caiguang-scheduler.mjs "$@" ;;
@@ -73,7 +75,7 @@ case "$command_name" in
     ;;
   *)
     echo "未知命令：$command_name" >&2
-    echo "可用命令：setup doctor login status check discover verify backlog capture daily auto schedule package test app" >&2
+    echo "可用命令：setup doctor login status logout check discover verify backlog capture h5 daily auto schedule package test app" >&2
     exit 2
     ;;
 esac

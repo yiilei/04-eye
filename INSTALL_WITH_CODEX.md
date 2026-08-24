@@ -8,6 +8,8 @@
 
 Codex 应按以下顺序操作：
 
+> 仓库安装必须以 `origin/main` 为准。不要把 `FETCH_HEAD` 或 `backup-*` 分支当成最新版；当前目录非空时，应在独立子目录安装，不要覆盖 IDE 自己生成的文件。
+
 1. 下载并安装“采光.app”。
 2. 打开应用，确认独立桌面窗口可以启动。
 3. 在源码目录执行 `pnpm install` 和 `pnpm setup:downloader`，安装前端依赖、开源发现助手、Camoufox 浏览器组件和媒体采集引擎。
@@ -20,6 +22,16 @@ Codex 应按以下顺序操作：
 10. 日常执行 `pnpm daily:auto`；单条调试可执行 `pnpm run capture:h5` 或 `pnpm run capture:xhs`，然后执行 `pnpm run validate:review`。不要再把素材复制回网站静态目录。
 11. 确认素材写入 `~/Library/Application Support/采光/review/`，应用应在 2 秒内自动显示新增批阅内容。
 12. 不自动把素材上传到公开网络，不自动导入 Eagle，等待用户批阅。用户点 YES 后由应用导入 Eagle；点 NO 后进入本地可恢复回收区。
+
+## 已知安装坑已在程序内处理
+
+- 仓库已自带 `.openai/hosting.json`，本地构建不再因为缺少可选云绑定而失败。
+- `pnpm-workspace.yaml` 只批准构建 `esbuild`、`sharp`、`workerd` 三个明确依赖。
+- XHS-Downloader 只安装运行依赖，不再执行会误加载 `cx_Freeze` 的可编辑桌面打包入口。
+- `setup:downloader` 会同时安装 PyYAML、xhs-cli 与 Camoufox；不需要污染系统 Python。
+- `caiguang logout` 已连接正式注销命令，只删除采光自己的会话副本，不修改 Chrome。
+- H5 命令兼容 pnpm 的 `--` 参数转发，并会自动截取主体、排除推荐流、检测和下载 MP4。
+- 如果页面检测到视频但 MP4 未成功保存，任务会失败并阻止进入批阅，不会再误报“页面没有视频”。
 
 ## 验收标准
 

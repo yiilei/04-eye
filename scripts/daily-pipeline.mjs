@@ -61,10 +61,11 @@ function noteArguments(task, account) {
 }
 
 function h5Arguments(task) {
-  requireFields(task, ["sourceDir"], `H5 任务 ${task.id}`);
-  return [path.join(root, "scripts", "register-h5-event.mjs"), "--source-dir", path.resolve(root, task.sourceDir),
+  const args = [path.join(root, "scripts", "capture-h5-event.mjs"),
     "--slug", task.slug, "--title", task.title, "--source-url", task.sourceUrl,
     "--date", task.captureDate || today, "--display-date", task.displayDate || task.captureDate || today];
+  if (task.sourceDir) args.push("--source-dir", path.resolve(root, task.sourceDir));
+  return args;
 }
 
 async function main() {
@@ -81,7 +82,7 @@ async function main() {
     completed: [], failed: [], skipped: [], validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
-    for (const task of queue.tasks.filter((item) => item.status === "pending")) {
+    for (const task of queue.tasks.filter((item) => ["pending", "needs_h5_capture"].includes(item.status))) {
       try {
         if (task.type === "note") {
           const account = accountFor(pins, task.accountKey);
@@ -137,9 +138,6 @@ async function main() {
     pins.updatedAt = new Date().toISOString();
     await atomicJson(pinsPath, pins);
 
-    for (const task of queue.tasks.filter((item) => item.status === "needs_h5_capture")) {
-      report.failed.push({ id: task.id, type: "h5_capture", title: task.title, error: "已自动发现活动，等待 H5 主体提取" });
-    }
 
     try {
       run(process.execPath, [path.join(root, "scripts", "validate-review-manifest.mjs")]);

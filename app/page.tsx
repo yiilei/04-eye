@@ -525,11 +525,14 @@ export default function Home() {
   // frame. Their own ratio is preserved with letterboxing inside the frame.
   // Portrait material follows its own ratio; very tall material is bounded
   // to 9:16 and continues inside the scrolling canvas.
+  const isH5Long = !current.gallery && !current.videoPost && sourceMediaAspect < 9 / 16;
   const boundedMediaAspect = current.id === "empty"
     ? 4 / 3
-    : current.videoPost || sourceMediaAspect > 1
-      ? 3 / 4
-      : Math.max(9 / 16, sourceMediaAspect);
+    : isH5Long
+      ? 9 / 16
+      : current.videoPost || sourceMediaAspect > 1
+        ? 3 / 4
+        : Math.max(9 / 16, sourceMediaAspect);
   const usesTallScroll = sourceMediaAspect < 9 / 16;
   const mediaMode = usesTallScroll ? "tall-scrolling-media" : "fit-media";
   const visibleSidebarWidth = focusCanvasMode ? 0 : (leftSidebarOpen ? 166 : 0) + 252;
@@ -1027,12 +1030,19 @@ export default function Home() {
       const oldZoom = zoomRef.current;
       const nextZoom = Math.min(4, Math.max(.5, oldZoom * Math.exp(-event.deltaY * .01)));
       if (nextZoom === oldZoom) return;
-      const rect = element.getBoundingClientRect();
-      const pointerX = event.clientX - rect.left - rect.width / 2;
-      const pointerY = event.clientY - rect.top - rect.height / 2;
-      const contentX = (pointerX - panRef.current.x) / oldZoom;
-      const contentY = (pointerY - panRef.current.y) / oldZoom;
-      const nextPan = { x: pointerX - contentX * nextZoom, y: pointerY - contentY * nextZoom };
+      const stage = element.querySelector<HTMLElement>(".media-stage");
+      if (!stage) return;
+      const stageRect = stage.getBoundingClientRect();
+      // Anchor zoom to the actual pointer position. The stage is not always
+      // centred in the viewer (notably a scrollable H5), so using the viewer
+      // centre makes the content jump away from the cursor.
+      const pointerFromStageCenterX = event.clientX - (stageRect.left + stageRect.width / 2);
+      const pointerFromStageCenterY = event.clientY - (stageRect.top + stageRect.height / 2);
+      const zoomRatio = nextZoom / oldZoom;
+      const nextPan = {
+        x: panRef.current.x + pointerFromStageCenterX * (1 - zoomRatio),
+        y: panRef.current.y + pointerFromStageCenterY * (1 - zoomRatio),
+      };
       zoomRef.current = nextZoom;
       setZoom(nextZoom);
       panRef.current = nextPan;
@@ -1478,7 +1488,10 @@ export default function Home() {
         </nav>
 
         <section className={`viewer ${mediaMode}`} ref={viewer} aria-label={`${current.title}完整长图`}>
-          <div className="media-stage" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`, aspectRatio: `${displayedDimensions.width} / ${displayedDimensions.height}` }}>
+          <div className="media-stage" style={{
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+            ...(usesTallScroll ? {} : { aspectRatio: `${displayedDimensions.width} / ${displayedDimensions.height}` }),
+          }}>
             <div className={`h5-composite ${edgeBump ? `edge-bump-${edgeBump}` : ""}`} key={current.id}>
               <img src={current.gallery?.[galleryIndex] ?? current.image}
                 width={current.imageDimensions?.[galleryIndex]?.width ?? current.width}

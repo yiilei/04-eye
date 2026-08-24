@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.1";
+const version = "0.3.2";
 const electronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 const releaseRoot = path.join(root, "release", "desktop");
 const appPath = path.join(releaseRoot, "采光.app");
@@ -51,12 +51,14 @@ async function createCompletePackage() {
     await cp(path.join(root, "public", entry), path.join(sourceRoot, "public", entry), { recursive: true, filter: sourceFilter });
   }
   await cp(path.join(root, "public", "favicon.svg"), path.join(sourceRoot, "public", "favicon.svg"));
-  await cp(path.join(root, ".agents"), path.join(sourceRoot, ".agents"), { recursive: true, filter: sourceFilter });
+  for (const entry of [".agents", ".openai"]) {
+    await cp(path.join(root, entry), path.join(sourceRoot, entry), { recursive: true, filter: sourceFilter });
+  }
 
   for (const entry of [
     ".gitignore", "AUTOMATION.md", "INSTALL_WITH_CODEX.md", "PROJECT-TODO.md", "README.md",
     "drizzle.config.ts", "eslint.config.mjs", "next-env.d.ts", "next.config.ts", "package.json",
-    "pnpm-lock.yaml", "postcss.config.mjs", "tsconfig.json", "vite.config.ts",
+    "pnpm-lock.yaml", "pnpm-workspace.yaml", "postcss.config.mjs", "tsconfig.json", "vite.config.ts",
   ]) await cp(path.join(root, entry), path.join(sourceRoot, entry));
 
   await mkdir(path.join(sourceRoot, "data", "reports"), { recursive: true });
