@@ -172,7 +172,7 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
         "account": {"name": account_name or metadata.get("作者昵称") or "待确认",
                     "xiaohongshuId": account_id or metadata.get("作者ID") or "待确认"},
         "title": title or metadata.get("作品标题") or slug,
-        "caption": metadata.get("作品描述") or "",
+        "caption": args.caption or metadata.get("作品描述") or "",
         "capturedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "sourceUrl": url, "sourceQuality": "web_highest_available",
         "qualityEvidence": "使用页面可获得的最高分辨率媒体地址下载，未二次压缩。",
@@ -321,6 +321,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--account-name", default="")
     parser.add_argument("--account-id", default="")
     parser.add_argument("--title", default="")
+    parser.add_argument("--caption", default="")
     parser.add_argument("--source-dir", type=Path, help="离线测试：使用已有完整媒体")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     clean_argv = [value for value in (sys.argv[1:] if argv is None else argv) if value != "--"]

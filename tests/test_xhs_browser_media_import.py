@@ -18,6 +18,7 @@ def valid_manifest():
     return {
         "postId": "6a8bf4de0000000029018448",
         "title": "fixture",
+        "caption": "这是从已授权页面读取的帖子文案。",
         "author": {"name": "抖音电商设计", "id": "95380627219"},
         "sourceUrl": "https://www.xiaohongshu.com/explore/6a8bf4de0000000029018448",
         "images": [
@@ -35,6 +36,7 @@ class BrowserMediaImportTests(unittest.TestCase):
         parsed = MODULE.validate_manifest(valid_manifest())
         self.assertEqual(len(parsed["images"]), 2)
         self.assertEqual(parsed["livePhotos"][0]["imageIndex"], 2)
+        self.assertEqual(parsed["caption"], "这是从已授权页面读取的帖子文案。")
 
     def test_rejects_non_xhs_media_or_sensitive_fields(self):
         manifest = valid_manifest()

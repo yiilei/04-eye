@@ -63,6 +63,7 @@ def validate_manifest(data: dict) -> dict:
     reject_sensitive_fields(data)
     post_id = str(data.get("postId", "")).strip()
     title = str(data.get("title", "")).strip()
+    caption = str(data.get("caption", "")).strip()
     author = data.get("author") or {}
     source_url = validate_public_url(str(data.get("sourceUrl", "")))
     images = data.get("images")
@@ -93,6 +94,7 @@ def validate_manifest(data: dict) -> dict:
     return {
         "postId": post_id,
         "title": title,
+        "caption": caption,
         "authorName": str(author.get("name", "")).strip(),
         "authorId": str(author.get("id", "")).strip(),
         "sourceUrl": source_url,
@@ -193,6 +195,7 @@ def main() -> int:
             "--account-name", data["authorName"],
             "--account-id", data["authorId"],
             "--title", data["title"],
+            "--caption", data["caption"],
         ]
         if args.date:
             command.extend(["--date", args.date])
