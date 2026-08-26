@@ -61,7 +61,7 @@ export function normalizePosts(payload, account) {
     const card = firstObject(item.note_card, item.noteCard, item.card, item);
     const id = valueAt(item, ["id", "noteId", "note_id"]) || valueAt(card, ["id", "noteId", "note_id"]);
     if (!id) return [];
-    const token = valueAt(item, ["xsec_token", "xsecToken"]);
+    const token = valueAt(item, ["xsec_token", "xsecToken"]) || valueAt(card, ["xsec_token", "xsecToken"]);
     const title = valueAt(card, ["display_title", "displayTitle", "title"]) || `小红书帖子 ${id.slice(0, 8)}`;
     const pinned = Boolean(item._caiguangPinned ?? item.isPinned ?? item.is_pinned ?? item.isTop ?? item.is_top ??
       card.isPinned ?? card.is_pinned ?? card.isTop ?? card.is_top);

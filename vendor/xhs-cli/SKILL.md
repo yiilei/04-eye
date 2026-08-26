@@ -35,11 +35,11 @@ All commands require valid cookies to function.
 
 ```bash
 xhs status                     # Check saved login session (no browser extraction)
-xhs login                      # Auto-extract Chrome cookies
-xhs login --cookie "a1=..."    # Or provide cookies manually
+xhs login --qrcode             # Create an isolated xhs-cli session
+xhs login --browser            # Disabled to protect the primary Chrome session
 ```
 
-Authentication first uses saved local cookies. If unavailable, it auto-detects local Chrome cookies via browser-cookie3. If extraction fails, QR code login is available.
+Authentication only loads sessions created by the isolated QR-code flow. Chrome/browser cookie import and external cookie injection are disabled so automation cannot invalidate the user's primary browser session.
 
 ## Command Reference
 

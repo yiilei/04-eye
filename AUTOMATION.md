@@ -1,11 +1,12 @@
-# 每日自动采集（Codex 约 10%）
+# 每日自动采集（本地优先，MyFlicker 仅处理解析降级）
 
 ## 分工
 
-1. 本地 `xhs-cli` 登录态直接访问已验证的固定主页，只做“发现新增链接与核对账号身份”。
-2. 本地发现脚本把检查结果写入 `data/xhs-capture-queue.json`；Codex 浏览器只作为登录失效或页面结构异常时的只读备用。
-3. 本地脚本执行下载、Live Photo 配对、尺寸与哈希校验、批阅登记、埋点更新和日报；应用通过本地资料库自动刷新，不再为每次抓取重新构建前端。
-4. 只有日报中“需要 Codex 处理”的失败项才进入人工排错。
+1. 本地 `xhs-cli` 登录态直接访问已验证的固定主页，只做“发现新增链接与核对账号身份”；发现器兼容分页嵌套数组以及 `noteCard.noteId` / `noteCard.xsecToken`。
+2. 本地发现脚本把检查结果写入 `data/xhs-capture-queue.json`；主下载器失败且属于解析不兼容时，任务进入 `needs_browser_capture`，由 MyFlicker 使用已授权的正常浏览器只读提取完整媒体清单。
+3. 浏览器降级只返回帖子身份、完整轮播、尺寸和 Live Photo 映射，不返回 Cookie、token 或请求头；`scripts/xhs-browser-media-import.py` 负责 HTTPS/CDN 白名单、下载、完整性预检和临时文件清理。
+4. 所有路径最终统一进入 `scripts/xhs-capture.py --source-dir`，完成 Live Photo 配对、尺寸与哈希校验、批阅登记、埋点更新和日报；应用通过本地资料库自动刷新，不为每次抓取重新构建前端。
+5. 网络错误有限重试；解析不兼容自动降级；只有登录、验证码、明确权限不足或完整性失败才需要用户处理。系统不维护自动账号黑名单。
 
 ## 安全检查
 
@@ -23,13 +24,13 @@ pnpm daily:run
 
 ## 首次建立独立登录态
 
-用户明确同意后，登录助手会读取 Chrome 当前小红书会话并复制到采光的隔离资料目录。它不会修改 Chrome，也不会自动退回二维码登录。首次使用运行：
+运行 `pnpm xhs:login` 后，使用小红书 App 扫描终端二维码。登录助手只创建采光隔离会话，不读取、打开或修改 Chrome，也不会复用主 Chrome 的 `web_session`：
 
 ```bash
 pnpm xhs:login
 ```
 
-同步完成后，采光的登录态只保存在本机应用资料目录。检查状态：
+独立登录完成后，采光会话只保存在本机应用资料目录。旧版从 Chrome 复制且没有 `sessionSource: isolated_qrcode` 标记的会话不会被自动使用。检查状态：
 
 ```bash
 pnpm xhs:status
@@ -51,7 +52,7 @@ pnpm daily:auto
 plugins/caiguang/scripts/caiguang schedule status
 ```
 
-当前本地定时器负责已验证账号的新增发现、下载和校验。创作服务中心 H5 仍由 Codex 的每日发现任务加入队列，因为它需要当前登录浏览器会话和页面主体判断。
+当前本地定时器负责已验证账号的新增发现、下载和校验。创作服务中心 H5 使用采光隔离会话；解析器受到安全限制时由 MyFlicker 复用用户已经打开并授权的标签页只读获取公开媒体清单，禁止复制该标签页 Cookie 到新浏览器。
 
 ## 队列格式
 

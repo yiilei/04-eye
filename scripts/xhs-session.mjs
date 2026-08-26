@@ -13,15 +13,15 @@ const command = process.argv[2] || "status";
 if (!new Set(["login", "status", "logout", "whoami"]).has(command)) throw new Error(`不支持的登录态命令：${command}`);
 
 await mkdir(configDir, { recursive: true, mode: 0o700 });
-// Login explicitly imports the user's currently active Chrome session into
-// Caiguang's isolated local data directory. It never falls back to QR login.
-const args = command === "login" ? ["login", "--browser"] : [command];
+// Login creates a Caiguang-owned session. It never reads or modifies Chrome.
+const args = command === "login" ? ["login", "--qrcode"] : [command];
 const child = spawn(executable, args, {
   cwd: root,
   stdio: "inherit",
   env: {
     ...process.env,
     XHS_CLI_CONFIG_DIR: configDir,
+    XHS_CLI_DISABLE_BROWSER_COOKIE: "1",
   },
 });
 child.on("exit", (code, signal) => {

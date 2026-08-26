@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import os from "node:os";
 import { clearH5Retry, h5TaskIsDue, scheduleH5Retry } from "./h5-retry-policy.mjs";
+import { clearNoteFailure, noteTaskIsDue, transitionNoteFailure } from "./note-capture-policy.mjs";
 
 const root = process.cwd();
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -76,14 +77,17 @@ async function main() {
   const policy = await readJson(policyPath);
   const pendingPins = await readJson(appPendingPinsPath).catch(() => readJson(workspacePendingPinsPath).catch(() => ({ accounts: [] })));
   validateConfiguration(queue, pins, policy);
+  const browserCaptureTasks = queue.tasks.filter((task) => task.status === "needs_browser_capture");
   const report = { schemaVersion: 1, date: today, startedAt: nowIso, mode: dryRun ? "dry-run" : "run",
     checkedAccounts: queue.checkedAccounts.length, pending: queue.tasks.filter((task) => task.status === "pending").length,
     h5AwaitingCapture: queue.tasks.filter((task) => task.status === "needs_h5_capture").length,
     pendingPinVerification: Array.isArray(pendingPins.accounts) ? pendingPins.accounts.filter((account) => account.status === "pending_verification").length : 0,
-    completed: [], retrying: [], failed: [], skipped: [], validation: "not_run", build: "not_run" };
+    completed: [], retrying: [], browserCapture: browserCaptureTasks.map((task) => ({
+      id: task.id, type: task.type, title: task.title, error: task.error || task.lastError || "本地解析器不可用", failureType: task.failureType || "parser_incompatible",
+    })), failed: [], skipped: [], validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
-    for (const task of queue.tasks.filter((item) => item.type === "h5_event" ? h5TaskIsDue(item, now) : item.status === "pending")) {
+    for (const task of queue.tasks.filter((item) => item.type === "h5_event" ? h5TaskIsDue(item, now) : noteTaskIsDue(item, now))) {
       try {
         if (task.type === "note") {
           const account = accountFor(pins, task.accountKey);
@@ -102,6 +106,7 @@ async function main() {
         task.completedAt = new Date().toISOString();
         delete task.error;
         if (task.type === "h5_event") clearH5Retry(task);
+        else clearNoteFailure(task);
       } catch (error) {
         const message = error instanceof Error ? error.message.split("\n").at(-1) : String(error);
         if (task.type === "h5_event") {
@@ -110,10 +115,12 @@ async function main() {
           if (retry.terminal) report.failed.push(entry);
           else report.retrying.push({ ...entry, nextAttemptAt: retry.nextAttemptAt });
         } else {
-          task.status = "failed";
-          task.failedAt = new Date().toISOString();
-          task.error = message;
-          report.failed.push({ id: task.id, type: task.type, title: task.title, error: task.error });
+          const transition = transitionNoteFailure(task, message, now);
+          const entry = { id: task.id, type: task.type, title: task.title, error: message, failureType: transition.category };
+          if (transition.action === "browser_capture") {
+            if (!report.browserCapture.some((item) => item.id === task.id)) report.browserCapture.push(entry);
+          } else if (transition.action === "retry") report.retrying.push({ ...entry, attempts: transition.attempts, nextAttemptAt: transition.nextAttemptAt });
+          else report.failed.push(entry);
         }
       }
       await atomicJson(queuePath, queue);
@@ -129,8 +136,8 @@ async function main() {
         report.failed.push({ id: check.accountKey, type: "account_check", title: check.accountKey, error: "账号埋点不存在" });
         continue;
       }
-      const failedForAccount = queue.tasks.some((task) => task.accountKey === check.accountKey && task.status === "failed");
-      if (check.status === "verified" && !failedForAccount) {
+      const unfinishedForAccount = queue.tasks.some((task) => task.accountKey === check.accountKey && task.status !== "completed");
+      if (check.status === "verified" && !unfinishedForAccount) {
         if (check.latestPostId) account.lastSeenPostId = check.latestPostId;
         account.lastCheckedAt = check.checkedAt || new Date().toISOString();
         account.status = "verified";
@@ -175,12 +182,14 @@ async function main() {
     "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${item.title}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
     ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
     ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
-    ...(report.failed.length ? ["", "## 需要 Codex 处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
+    ...(report.browserCapture.length ? ["", "## MyFlicker 自动接管", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}，需从已授权页面提取完整媒体清单`)] : []),
+    ...(report.failed.length ? ["", "## 需要用户处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
-  console.log(JSON.stringify({ ok: report.failed.length === 0, mode: report.mode, checkedAccounts: report.checkedAccounts,
-    pending: report.pending, completed: report.completed.length, failed: report.failed.length,
+  const ok = report.failed.length === 0 && report.browserCapture.length === 0;
+  console.log(JSON.stringify({ ok, mode: report.mode, checkedAccounts: report.checkedAccounts,
+    pending: report.pending, completed: report.completed.length, browserCapture: report.browserCapture.length, failed: report.failed.length,
     validation: report.validation, build: report.build, report: path.relative(root, `${reportBase}.md`) }));
-  if (!dryRun && report.failed.length) process.exitCode = 1;
+  if (!dryRun && !ok) process.exitCode = 1;
 }
 
 let lock;

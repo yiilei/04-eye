@@ -24,7 +24,7 @@
 - **话题** — 搜索话题标签
 - **互动** — 点赞/取消、收藏/取消、评论、删除笔记
 - **发布** — 发布图文笔记
-- **认证** — 自动提取 Chrome cookie，或 browser-assisted 扫码登录（终端二维码渲染）
+- **认证** — 使用 browser-assisted 扫码建立独立会话（终端二维码渲染），不读取主 Chrome Cookie
 - **JSON 输出** — 所有数据命令支持 `--json`
 - **Token 自动缓存** — `xsec_token` 搜索后自动缓存，后续命令免手动传
 
@@ -99,14 +99,12 @@ XHS_SMOKE_POST_CONTENT="smoke content"
 ### 登录
 
 ```bash
-# 自动从 Chrome 提取 cookie（推荐）
-xhs login
-
-# 强制使用二维码登录（用于排查登录问题）
+# 使用二维码建立独立会话（不会读取或修改 Chrome）
 xhs login --qrcode
 
-# 手动提供 cookie 字符串（至少包含 a1 和 web_session）
-xhs login --cookie "a1=xxx; web_session=yyy"
+# 已禁用：从浏览器或外部 Cookie 导入会话
+xhs login --browser
+xhs login --cookie "..."
 
 # 快速检查已保存的登录状态（不启动浏览器，不读取浏览器 cookie）
 xhs status
@@ -209,7 +207,7 @@ CLI (click) → XhsClient (camoufox 浏览器)
 
 ## 工作原理
 
-1. **认证** — 优先读取 `~/.xhs-cli/cookies.json`；未命中时通过 browser-cookie3 从本地 Chrome 提取 cookie。`xhs login --qrcode` 使用 browser-assisted 扫码登录，并在终端渲染二维码（`▀ ▄ █`）。
+1. **认证** — 只读取通过 `xhs login --qrcode` 建立在隔离配置目录中的会话。Chrome/其他浏览器 Cookie 导入以及外部 Cookie 注入均已禁用，避免自动化影响主浏览器登录。
 2. **登录态校验** — 登录后会校验会话是否为有效非 guest 会话，并做 feed/search 可用性探活；探活失败会提示重新登录。
 3. **浏览** — 使用 camoufox 导航到真实页面，所有流量与正常用户浏览一致。
 4. **数据提取** — 从 `window.__INITIAL_STATE__` 提取结构化数据。
@@ -247,9 +245,9 @@ git clone git@github.com:jackwener/xhs-cli.git .agents/skills/xhs-cli
 
 ## 注意事项
 
-- Cookie 存储在 `~/.xhs-cli/cookies.json`，权限 `0600`。
-- `xhs status` 只检查本地已保存 cookie，不会触发浏览器 cookie 提取。
-- `xhs login --cookie` 要求 cookie 至少包含 `a1` 和 `web_session`。
+- Cookie 只存储在 xhs-cli 隔离配置目录的 `cookies.json`，权限 `0600`，并带有 `sessionSource: isolated_qrcode` 来源标记。
+- `xhs status` 只检查本地已保存 Cookie，不会触发浏览器 Cookie 提取。
+- `xhs login --browser` 和 `xhs login --cookie` 均已禁用，以保护主浏览器登录。
 - 登录后会自动做可用性探活；若会话仍为 guest/风控受限，会提示重新登录。
 - `xhs post` 可能要求额外登录创作平台（`https://creator.xiaohongshu.com`）。
 - 使用 headless Firefox，不会弹出浏览器窗口。

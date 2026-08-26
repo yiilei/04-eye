@@ -1,9 +1,8 @@
 """Authentication for Xiaohongshu.
 
-Strategy:
-1. Try loading saved cookies from ~/.xhs-cli/cookies.json
-2. Try extracting cookies from local Chrome/Firefox via browser-cookie3
-3. Fallback: QR code login via API + terminal display
+Caiguang sessions are isolated from the user's primary Chrome profile. The CLI
+loads only sessions created by Caiguang QR login and never scans browser cookie
+databases implicitly.
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ TOKEN_CACHE_FILE = CONFIG_DIR / "token_cache.json"
 
 # a1 is required for signing; web_session is required for a stable logged-in session.
 REQUIRED_COOKIES = {"a1", "web_session"}
+SAFE_SESSION_SOURCES = {"isolated_qrcode"}
 LOGIN_URL = "https://www.xiaohongshu.com/login"
 QR_CREATE_ENDPOINT = "/api/sns/web/v1/login/qrcode/create"
 QR_USERINFO_ENDPOINT = "/api/qrcode/userinfo"
@@ -55,26 +55,11 @@ def get_saved_cookie_string() -> str | None:
 
 
 def get_cookie_string() -> str | None:
-    """Try all auth methods in order. Returns cookie string or None."""
-    # 1. Saved cookies
+    """Load only a Caiguang-isolated session; never inspect desktop browsers."""
     cookie = _load_saved_cookies()
     if cookie:
-        logger.info("Loaded saved cookies from %s", COOKIE_FILE)
-        return cookie
-
-    # Embedded applications can require an isolated QR-code session instead
-    # of silently copying a person's browser cookies.
-    if os.environ.get("XHS_CLI_DISABLE_BROWSER_COOKIE") == "1":
-        return None
-
-    # 2. browser-cookie3
-    cookie = _extract_browser_cookies()
-    if cookie:
-        logger.info("Extracted cookies from local browser")
-        save_cookies(cookie)
-        return cookie
-
-    return None
+        logger.info("Loaded isolated Caiguang cookies from %s", COOKIE_FILE)
+    return cookie
 
 
 def _load_saved_cookies() -> str | None:
@@ -85,6 +70,9 @@ def _load_saved_cookies() -> str | None:
     try:
         data = json.loads(COOKIE_FILE.read_text())
         cookies = data.get("cookies", {})
+        if data.get("sessionSource") not in SAFE_SESSION_SOURCES:
+            logger.warning("Ignoring a legacy or browser-imported session in %s", COOKIE_FILE)
+            return None
         if _has_required_cookies(cookies):
             return _dict_to_cookie_str(cookies)
     except (json.JSONDecodeError, KeyError) as e:
@@ -94,77 +82,14 @@ def _load_saved_cookies() -> str | None:
 
 
 def _extract_browser_cookies() -> str | None:
-    """Extract xiaohongshu cookies from local browsers using browser-cookie3.
+    """Chrome import is disabled to protect the user's primary browser session.
 
-    Runs extraction in a subprocess with timeout to avoid hanging
-    when the browser is running (Chrome DB lock issue).
+    Reusing the same web_session in Chrome and an automation browser can rotate
+    or invalidate the primary session. Keep this compatibility symbol so older
+    callers fail safely without reading the Chrome profile.
     """
-    import subprocess
-    import sys
-
-    # Python script to run in subprocess
-    extract_script = '''
-import json, sys
-from pathlib import Path
-try:
-    import browser_cookie3 as bc3
-except ImportError:
-    print(json.dumps({"error": "not_installed"}))
-    sys.exit(0)
-
-chrome_root = Path.home() / "Library/Application Support/Google/Chrome"
-profile = "Default"
-try:
-    local_state = json.loads((chrome_root / "Local State").read_text())
-    active = local_state.get("profile", {}).get("last_active_profiles", [])
-    if active:
-        profile = active[0]
-except Exception:
-    pass
-
-cookie_file = chrome_root / profile / "Cookies"
-try:
-    cj = bc3.chrome(cookie_file=str(cookie_file), domain_name=".xiaohongshu.com")
-    cookies = {c.name: c.value for c in cj if "xiaohongshu" in (c.domain or "")}
-    if "a1" in cookies and "web_session" in cookies:
-        print(json.dumps({"browser": "Chrome", "cookies": cookies}))
-        sys.exit(0)
-except Exception:
-    pass
-
-print(json.dumps({"error": "no_cookies"}))
-'''
-
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", extract_script],
-            capture_output=True, text=True, timeout=45,
-        )
-
-        if result.returncode != 0:
-            logger.debug("Cookie extraction subprocess failed: %s", result.stderr)
-            return None
-
-        data = json.loads(result.stdout.strip())
-
-        if "error" in data:
-            if data["error"] == "not_installed":
-                logger.warning("browser-cookie3 not installed")
-            else:
-                logger.debug("No valid cookies found in any browser")
-            return None
-
-        cookies = data["cookies"]
-        browser = data["browser"]
-        logger.info("Found valid cookies in %s (%d cookies)", browser, len(cookies))
-        return _dict_to_cookie_str(cookies)
-
-    except subprocess.TimeoutExpired:
-        logger.warning("Chrome cookie extraction timed out after 45 seconds")
-        return None
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.warning("Cookie extraction parse error: %s", e)
-        return None
+    logger.warning("Browser cookie import is disabled; use isolated QR login")
+    return None
 
 
 def qrcode_login() -> str:
@@ -393,12 +318,14 @@ def _display_qr_text_in_terminal(qr_text: str) -> bool:
         return False
 
 
-def save_cookies(cookie_str: str):
-    """Save cookies to config file."""
+def save_cookies(cookie_str: str, source: str = "isolated_qrcode"):
+    """Save cookies to the isolated Caiguang config with provenance."""
+    if source not in SAFE_SESSION_SOURCES:
+        raise ValueError(f"Unsafe session source: {source}")
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     cookies = cookie_str_to_dict(cookie_str)
-    data = {"cookies": cookies}
+    data = {"sessionSource": source, "cookies": cookies}
 
     COOKIE_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
     try:

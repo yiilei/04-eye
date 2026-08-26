@@ -12,10 +12,11 @@ description: 运行采光的小红书视觉素材发现、完整采集、校验�
 1. 账号埋点以 `data/xhs-account-pins.json` 为唯一来源。
 2. 媒体策略以 `data/xhs-media-policy.json` 为唯一来源。
 3. 发现结果只写入 `data/xhs-capture-queue.json`，随后运行 `daily`。
-4. 普通帖子由本地下载器保存全部图片、Live Photo 配对 MP4 或独立视频。
-5. 组图顺序、文件完整性、尺寸、哈希和 MP4 必须通过校验后才能进入批阅页。
-6. Codex 只在 `login_required`、`pin_invalid`、`order_verification_failed`、反爬或页面结构变化时介入。
-7. 不自动导入 Eagle；由用户在批阅页作出保留或删除决定。
+4. 普通帖子先由本地下载器保存全部图片、Live Photo 配对 MP4 或独立视频；解析不兼容时自动转入 `needs_browser_capture`。
+5. MyFlicker 浏览器降级只读提取作者、标题、帖子 ID、完整轮播与 Live Photo 映射，再通过 `browser-import` 交给采光；不输出 Cookie、token 或请求头。
+6. 组图顺序、文件完整性、尺寸、哈希和 MP4 必须通过校验后才能进入批阅页。
+7. 不建立自动账号黑名单；网络错误有限重试，登录、验证码、权限不足才通知用户。
+8. 不自动导入 Eagle；由用户在批阅页作出保留或删除决定。
 
 ## 命令
 
@@ -41,9 +42,11 @@ plugins/caiguang/scripts/caiguang capture --url '<小红书帖子链接>' --titl
 
 ## 失败处理
 
-- `login_required`：先让用户在 Chrome 登录并明确同意同步，再调用 `login`。只允许复制到采光本机资料目录，不输出 Cookie、不修改 Chrome；失败时不得自动扫码。
+- `login_required`：运行 `login`，让用户使用小红书 App 扫描终端二维码建立采光隔离会话。不得读取、复制、打开或修改主 Chrome，也不得把主 Chrome 的 `web_session` 注入自动化浏览器。
 - `pin_invalid`：停止该账号，核验显示名、小红书号、内部 ID 与固定主页；禁止绑定相似账号。
+- `needs_browser_capture`：MyFlicker 只复用用户已经打开且明确授权的目标标签页生成临时媒体清单，不复制 Cookie，也不新建携带同一会话的浏览器；随后执行 `plugins/caiguang/scripts/caiguang browser-import --manifest '<temp-json>' --slug '<slug>'`，再运行 `daily` 推进账号基线。
 - 组图顺序未核验：不得进入批阅页；先检查下载器 `imageList` 顺序证据和连续源序号。
-- 下载或反爬失败：保留错误，最多修复后重跑一次。
+- 网络错误：按队列策略有限重试；`安全限制` 或解析结构变化不重复撞同一解析器，直接转浏览器降级。
+- 不允许自动账号黑名单；只有登录、验证码、明确权限不足或最终完整性失败才需要用户处理。
 
 完成后只汇报脚本生成的日报及仍需人工处理的异常。

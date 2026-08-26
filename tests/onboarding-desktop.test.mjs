@@ -5,29 +5,41 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("desktop onboarding detects the capture-engine session and exposes the bridge", async () => {
-  const [main, preload, page, sessionScript] = await Promise.all([
+  const [main, preload, page, sessionScript, authScript] = await Promise.all([
     readFile(new URL("desktop/main.mjs", root), "utf8"),
     readFile(new URL("desktop/preload.cjs", root), "utf8"),
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("scripts/xhs-session.mjs", root), "utf8"),
+    readFile(new URL("vendor/xhs-cli/xhs_cli/auth.py", root), "utf8"),
   ]);
 
   assert.match(main, /captureCookieFile/);
   assert.match(main, /cookies\.a1 && cookies\.web_session/);
+  assert.match(main, /sessionSource === "isolated_qrcode"/);
   assert.doesNotMatch(main, /session\.defaultSession\.cookies/);
   assert.match(main, /采光-登录小红书\.command/);
-  assert.match(main, /login --browser/);
-  assert.doesNotMatch(main, /login --qrcode/);
+  assert.doesNotMatch(main, /login --browser/);
+  assert.match(main, /login --qrcode/);
+  assert.match(main, /Google Chrome/);
+  assert.match(main, /openXhsChromeLogin/);
   assert.match(main, /caiguang:open-xhs-login/);
   assert.match(main, /caiguang:xhs-login-status/);
   assert.match(preload, /openXhsLogin/);
   assert.match(preload, /onXhsLoginChanged/);
   assert.match(page, /setXhsSetupStatus\("已登录"\)/);
-  assert.match(page, /setInterval\(check, 1_500\)/);
   assert.match(page, /setInterval\(\(\) => void checkEagle\(\), 1_500\)/);
-  assert.match(page, /正在同步/);
-  assert.match(sessionScript, /\["login", "--browser"\]/);
-  assert.doesNotMatch(sessionScript, /--qrcode/);
+  assert.match(page, /已在 Chrome 登录/);
+  assert.match(page, /在 Chrome 登录/);
+  assert.match(page, /不会创建新会话，也不会读取 Chrome Cookie/);
+  assert.match(page, /completeAfterChromeReturn/);
+  assert.match(page, /document\.visibilityState === "visible"/);
+  assert.doesNotMatch(page, /同步 Chrome 中已登录/);
+  assert.match(sessionScript, /\["login", "--qrcode"\]/);
+  assert.match(sessionScript, /XHS_CLI_DISABLE_BROWSER_COOKIE: "1"/);
+  assert.doesNotMatch(sessionScript, /--browser/);
+  assert.doesNotMatch(authScript, /Google\/Chrome|browser_cookie3|bc3\.chrome|chrome_root|cookie_file = chrome_root/);
+  assert.match(authScript, /SAFE_SESSION_SOURCES = \{"isolated_qrcode"\}/);
+  assert.match(authScript, /Browser cookie import is disabled/);
 });
 
 test("desktop can force the real onboarding route for a fresh-run test", async () => {

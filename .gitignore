@@ -37,10 +37,12 @@ yarn-error.log*
 .vercel
 
 /dist/
-/release/
 /.wrangler/
 /outputs/
 /work/
 /data/xhs-capture.lock
+/data/reports/
+/data/xhs-events-state.json
+/release/
 __pycache__/
 *.pyc

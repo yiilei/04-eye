@@ -74,59 +74,20 @@ class TestStatusNotLoggedIn:
 
 
 class TestLoginCookieValidation:
-    def test_login_browser_imports_only_after_validation(self, runner, tmp_config_dir, monkeypatch):
-        saved = []
-        monkeypatch.setattr(
-            cli_module,
-            "_extract_browser_cookies",
-            lambda: "a1=abc; web_session=xyz; webId=web",
-        )
-        monkeypatch.setattr(cli_module, "_verify_cookies", lambda _cookies: True)
-        monkeypatch.setattr(cli_module, "_probe_session_usability", lambda _cookies: True)
-        monkeypatch.setattr(cli_module, "save_cookies", lambda cookie: saved.append(cookie))
+    def test_login_browser_is_disabled_without_reading_chrome(self, runner, tmp_config_dir, monkeypatch):
         monkeypatch.setattr(
             cli_module,
             "qrcode_login",
-            lambda: pytest.fail("browser import must never fall back to QR login"),
+            lambda: pytest.fail("deprecated browser import must not start QR implicitly"),
         )
-
         result = runner.invoke(cli, ["login", "--browser"])
+        assert result.exit_code == 2
+        assert "Chrome session import is disabled" in result.output
 
-        assert result.exit_code == 0
-        assert "Chrome login synced" in result.output
-        assert saved == ["a1=abc; web_session=xyz; webId=web"]
-
-    def test_login_browser_failure_never_falls_back_to_qrcode(self, runner, tmp_config_dir, monkeypatch):
-        monkeypatch.setattr(cli_module, "_extract_browser_cookies", lambda: None)
-        monkeypatch.setattr(
-            cli_module,
-            "qrcode_login",
-            lambda: pytest.fail("browser import must never fall back to QR login"),
-        )
-
-        result = runner.invoke(cli, ["login", "--browser"])
-
-        assert result.exit_code == 1
-        assert "QR login was not started" in result.output
-
-    def test_login_browser_accepts_capture_access_when_profile_is_inconclusive(
-        self, runner, tmp_config_dir, monkeypatch
-    ):
-        saved = []
-        monkeypatch.setattr(
-            cli_module,
-            "_extract_browser_cookies",
-            lambda: "a1=abc; web_session=xyz",
-        )
-        monkeypatch.setattr(cli_module, "_verify_cookies", lambda _cookies: None)
-        monkeypatch.setattr(cli_module, "_probe_session_usability", lambda _cookies: True)
-        monkeypatch.setattr(cli_module, "save_cookies", lambda cookie: saved.append(cookie))
-
-        result = runner.invoke(cli, ["login", "--browser"])
-
-        assert result.exit_code == 0
-        assert "capture access is valid" in result.output
-        assert saved == ["a1=abc; web_session=xyz"]
+    def test_login_external_cookie_import_is_disabled(self, runner, tmp_config_dir):
+        result = runner.invoke(cli, ["login", "--cookie", "a1=abc; web_session=xyz"])
+        assert result.exit_code == 2
+        assert "External cookie import is disabled" in result.output
 
     def test_login_rejects_multiple_explicit_methods(self, runner, tmp_config_dir):
         result = runner.invoke(
@@ -136,35 +97,25 @@ class TestLoginCookieValidation:
         assert result.exit_code == 1
         assert "Choose only one" in result.output
 
-    def test_login_valid_cookie(self, runner, tmp_config_dir):
+    def test_login_cookie_is_rejected_even_when_valid(self, runner, tmp_config_dir):
         result = runner.invoke(cli, ["login", "--cookie", "a1=abc; web_session=xyz"])
-        assert result.exit_code == 0
-        assert "Cookie saved" in result.output
+        assert result.exit_code == 2
+        assert "External cookie import is disabled" in result.output
 
-    def test_login_invalid_cookie(self, runner, tmp_config_dir):
+    def test_login_invalid_cookie_is_rejected_without_parsing(self, runner, tmp_config_dir):
         result = runner.invoke(cli, ["login", "--cookie", "bad_cookie_string"])
-        assert result.exit_code == 1
-        assert "Invalid cookie" in result.output
+        assert result.exit_code == 2
+        assert "External cookie import is disabled" in result.output
 
-    def test_login_cookie_missing_web_session(self, runner, tmp_config_dir):
-        result = runner.invoke(cli, ["login", "--cookie", "a1=abc_only"])
-        assert result.exit_code == 1
-        assert "Invalid cookie" in result.output
-
-    def test_login_cookie_name_collision_is_invalid(self, runner, tmp_config_dir):
-        result = runner.invoke(cli, ["login", "--cookie", "my_a1=abc; my_web_session=xyz"])
-        assert result.exit_code == 1
-        assert "Invalid cookie" in result.output
-
-    def test_login_empty_cookie(self, runner, tmp_config_dir, monkeypatch):
+    def test_login_empty_cookie_is_rejected_without_qrcode(self, runner, tmp_config_dir, monkeypatch):
         monkeypatch.setattr(
             cli_module,
             "qrcode_login",
             lambda: pytest.fail("qrcode_login should not be called for empty --cookie"),
         )
         result = runner.invoke(cli, ["login", "--cookie", ""])
-        assert result.exit_code == 1
-        assert "Invalid cookie" in result.output
+        assert result.exit_code == 2
+        assert "External cookie import is disabled" in result.output
 
     def test_login_verify_transient_error_does_not_clear(self, runner, tmp_config_dir, monkeypatch):
         called = {"qrcode": False}
@@ -253,10 +204,10 @@ class TestLoginCookieValidation:
         assert "session is still limited" in result.output
 
 class TestLogout:
-    def test_logout_with_cookies(self, runner, tmp_config_dir):
-        # First save some cookies
-        runner.invoke(cli, ["login", "--cookie", "a1=abc; web_session=xyz"])
-        # Then logout
+    def test_logout_with_cookies(self, runner, tmp_config_dir, sample_cookie_str):
+        from xhs_cli.auth import save_cookies
+
+        save_cookies(sample_cookie_str)
         result = runner.invoke(cli, ["logout"])
         assert result.exit_code == 0
         assert "Logged out" in result.output

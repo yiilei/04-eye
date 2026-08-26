@@ -85,14 +85,24 @@ class TestSaveAndLoadCookies:
     def test_save_and_load(self, tmp_config_dir, sample_cookie_str):
         save_cookies(sample_cookie_str)
 
-        # Verify file exists
         cookie_file = tmp_config_dir / "cookies.json"
         assert cookie_file.exists()
-
-        # Verify contents
         data = json.loads(cookie_file.read_text())
-        assert "cookies" in data
+        assert data["sessionSource"] == "isolated_qrcode"
         assert data["cookies"]["a1"] == "abc123"
+
+    def test_legacy_or_chrome_imported_session_is_not_loaded(self, tmp_config_dir, sample_cookie_str):
+        cookie_file = tmp_config_dir / "cookies.json"
+        cookies = cookie_str_to_dict(sample_cookie_str)
+        cookie_file.write_text(json.dumps({"cookies": cookies}))
+        assert get_saved_cookie_string() is None
+        cookie_file.write_text(json.dumps({"sessionSource": "chrome_imported", "cookies": cookies}))
+        assert get_cookie_string() is None
+
+    def test_browser_cookie_extraction_is_disabled(self, tmp_config_dir):
+        from xhs_cli.auth import _extract_browser_cookies
+
+        assert _extract_browser_cookies() is None
 
     def test_file_permissions(self, tmp_config_dir, sample_cookie_str):
         save_cookies(sample_cookie_str)

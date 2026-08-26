@@ -97,14 +97,12 @@ XHS_SMOKE_POST_CONTENT="smoke content"
 ### Login
 
 ```bash
-# Auto-extract cookies from Chrome (recommended)
-xhs login
-
-# Force QR code login (useful for troubleshooting auth)
+# Create an isolated session without reading or modifying Chrome
 xhs login --qrcode
 
-# Or provide cookie string manually (must include a1 and web_session)
-xhs login --cookie "a1=xxx; web_session=yyy"
+# Disabled to protect the primary browser session
+xhs login --browser
+xhs login --cookie "..."
 
 # Quick check for saved login session
 # (no browser needed, no browser-cookie extraction)
@@ -208,7 +206,7 @@ Uses [camoufox](https://github.com/daijro/camoufox) (anti-fingerprint Firefox) t
 
 ## How It Works
 
-1. **Authentication** — First reads `~/.xhs-cli/cookies.json`; if missing, extracts cookies from local Chrome via browser-cookie3. `xhs login --qrcode` uses browser-assisted QR login with terminal half-block rendering (`▀ ▄ █`).
+1. **Authentication** — Only sessions created by `xhs login --qrcode` are loaded from the isolated xhs-cli config directory. Chrome/browser cookie import and external cookie injection are disabled to protect the primary browser session.
 2. **Session Validation** — After login, the CLI verifies that the session is non-guest and probes feed/search usability. If probe fails, it asks for re-login.
 3. **Browsing** — Each operation navigates to real pages using camoufox, making all traffic look like normal user browsing.
 4. **Data Extraction** — Structured data is pulled from `window.__INITIAL_STATE__`.
@@ -245,9 +243,9 @@ All xhs-cli commands are available in OpenClaw after installation.
 
 ## Notes
 
-- Cookies are stored in `~/.xhs-cli/cookies.json` with `0600` permissions.
+- Cookies are stored only in the isolated xhs-cli config directory with `0600` permissions and `sessionSource: isolated_qrcode` provenance.
 - `xhs status` checks saved local cookies only and never triggers browser extraction.
-- `xhs login --cookie` requires at least `a1` and `web_session`.
+- `xhs login --browser` and `xhs login --cookie` are disabled to protect the primary browser session.
 - Login runs a usability probe; guest/risk-limited sessions are treated as invalid and require re-login.
 - `xhs post` may require an extra creator-platform login at `https://creator.xiaohongshu.com`.
 - Uses headless Firefox via camoufox — no browser window is shown.

@@ -32,7 +32,7 @@ export async function GET(request: Request) {
   return new Response(JSON.stringify(payload, null, 2), {
     headers: {
       "Cache-Control": "no-store",
-      "Content-Disposition": `attachment; filename="04-eye-xhs-pins-${date}.json"`,
+      "Content-Disposition": `attachment; filename="caiguang-xhs-pins-${date}.json"`,
       "Content-Type": "application/json; charset=utf-8",
     },
   });

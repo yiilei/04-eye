@@ -16,6 +16,26 @@ test("extracts identity from xhs-cli root profile fallback", () => {
   });
 });
 
+test("normalizes paginated xhs-cli cards with nested note IDs and tokens", () => {
+  const payload = [[{
+    id: "",
+    xsecToken: "outer-token",
+    noteCard: {
+      noteId: "6a8bf4de0000000029018448",
+      displayTitle: "「拼豆大赛设计」正是拼的年纪！",
+      user: { nickName: "抖音电商设计", userId: "6606305e0000000003025553" },
+    },
+  }], [{
+    id: "",
+    noteCard: { noteId: "6a79719d000000003203315d", displayTitle: "营销设计", xsecToken: "nested-token" },
+  }]];
+  const posts = normalizePosts(payload, account);
+  assert.deepEqual(posts.map((post) => post.id), ["6a8bf4de0000000029018448", "6a79719d000000003203315d"]);
+  assert.equal(posts[0].token, "outer-token");
+  assert.equal(posts[1].token, "nested-token");
+  assert.match(posts[1].sourceUrl, /xsec_token=nested-token/);
+});
+
 test("extracts identity from nested xhs-cli user-posts payload", () => {
   const payload = [[{ id: "post", noteCard: { user: {
     nickName: "小红书REDesign", userId: "profile",

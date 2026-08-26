@@ -80,7 +80,7 @@ def read_metadata(database: Path, post_id: str) -> dict:
         connection.close()
 
 
-def run_engine(url: str, stage: Path, cookie: str) -> tuple[Path, dict, str]:
+def run_engine(url: str, stage: Path) -> tuple[Path, dict, str]:
     if not PYTHON.exists() or not ENGINE.exists():
         raise RuntimeError("本地下载引擎未安装完整")
     command = [
@@ -91,8 +91,6 @@ def run_engine(url: str, stage: Path, cookie: str) -> tuple[Path, dict, str]:
         "--download_record", "false", "--folder_mode", "true",
         "--video_preference", "resolution", "--language", "zh_CN",
     ]
-    if cookie:
-        command.extend(["--cookie", cookie])
     result = subprocess.run(command, cwd=PROJECT, text=True, capture_output=True)
     log = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
     if result.returncode or "成功 0 个" in log or "获取数据失败" in log:
@@ -299,7 +297,7 @@ def capture(args: argparse.Namespace) -> dict:
     else:
         stage = STAGING / f"{args.date}-{post_id}"
         stage.mkdir(parents=True, exist_ok=True)
-        source_root, metadata, engine_log = run_engine(args.url, stage, args.cookie)
+        source_root, metadata, engine_log = run_engine(args.url, stage)
 
     manifest = normalize(source_root, args.output_root.resolve(), args.date, slug, args.url,
                          metadata, args.account_name, args.account_id, args.title)
@@ -323,7 +321,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--account-name", default="")
     parser.add_argument("--account-id", default="")
     parser.add_argument("--title", default="")
-    parser.add_argument("--cookie", default="", help="可选；不要把 Cookie 写进项目文件")
     parser.add_argument("--source-dir", type=Path, help="离线测试：使用已有完整媒体")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     clean_argv = [value for value in (sys.argv[1:] if argv is None else argv) if value != "--"]

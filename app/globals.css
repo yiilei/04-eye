@@ -382,6 +382,20 @@ aside { position: relative; display: flex; min-width: 0; padding: 0 22px 28px; f
 .settings-row input[type="time"]::-webkit-datetime-edit-fields-wrapper { padding: 0; }
 .settings-row input[type="time"]:focus { background: rgba(255,230,0,.1); border-color: rgba(255,230,0,.72); box-shadow: 0 0 0 3px rgba(255,230,0,.12); }
 .settings-row input[type="time"]::-webkit-calendar-picker-indicator { width: 5cqw; height: 5cqw; margin: 0 0 0 1cqw; padding: 0; opacity: .5; cursor: pointer; filter: invert(1); }
+.runtime-panel { flex: 0 0 auto; overflow: hidden; color: rgba(255,255,255,.92); background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09); border-radius: 13px; box-shadow: inset 0 1px rgba(255,255,255,.045); }
+.runtime-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 31px; padding: 0 11px; border-bottom: 1px solid rgba(255,255,255,.075); }
+.runtime-heading strong { font-size: 10px; font-weight: 650; letter-spacing: -.015em; }
+.runtime-heading span { color: rgba(255,255,255,.4); font-family: "DIN Alternate", "DIN Condensed", "Arial Narrow", sans-serif; font-size: 9px; font-variant-numeric: tabular-nums; }
+.runtime-status-row, .runtime-update-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 47px; padding: 8px 11px; }
+.runtime-status-row { border-bottom: 1px solid rgba(255,255,255,.065); }
+.runtime-status-row > div, .runtime-update-copy { display: grid; min-width: 0; gap: 3px; }
+.runtime-status-row strong, .runtime-update-copy strong { overflow: hidden; font-size: 9px; font-weight: 620; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-status-row small, .runtime-update-copy small { overflow: hidden; color: rgba(255,255,255,.38); font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-check, .runtime-release { height: 25px; padding: 0 9px; color: rgba(255,255,255,.82); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.11); border-radius: 999px; font-size: 8px; font-weight: 650; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.runtime-check:hover:not(:disabled), .runtime-release:hover { color: #fff; background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.2); }
+.runtime-check:disabled { color: rgba(255,255,255,.35); cursor: default; }
+.runtime-release { color: #141414; background: #ffe600; border-color: rgba(255,230,0,.92); }
+.runtime-release:hover { color: #0c0c0c; background: #fff04a; border-color: #fff04a; }
 .pin-panel { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09); border-radius: 13px; box-shadow: inset 0 1px rgba(255,255,255,.045); }
 .pin-search { position: relative; display: flex; flex: 0 0 auto; align-items: center; height: 40px; margin: 9px 9px 6px; }
 .pin-search svg { position: absolute; left: 10px; z-index: 1; width: 14px; height: 14px; fill: none; stroke: rgba(255,255,255,.9); stroke-width: 1.7; stroke-linecap: round; pointer-events: none; }
@@ -679,6 +693,9 @@ html:has(.first-run-shell), body:has(.first-run-shell) { min-width: 0; }
 .first-run-step button:hover,
 .first-run-step.is-complete button,
 .first-run-step.is-complete button:hover { color: #111; background: var(--accent); transform: none; }
+.first-run-enter { align-self: flex-end; min-width: 108px; height: 34px; margin-top: auto; color: #111; background: var(--accent); border: 0; border-radius: 999px; font-size: 11px; font-weight: 700; transition: opacity .16s ease, background .16s ease; }
+.first-run-enter:hover:not(:disabled) { background: #ffed3b; }
+.first-run-enter:disabled { color: rgba(17,17,17,.42); background: rgba(255,230,0,.32); cursor: default; }
 
 /* The packaged macOS app already owns the native window chrome. Avoid
    rendering a second rounded window and a duplicate traffic-light group. */

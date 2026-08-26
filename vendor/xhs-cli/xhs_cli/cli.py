@@ -24,8 +24,6 @@ from rich.table import Table
 
 from . import __version__
 from .auth import (
-    REQUIRED_COOKIES,
-    _extract_browser_cookies,
     clear_cookies,
     cookie_str_to_dict,
     get_cookie_string,
@@ -102,8 +100,8 @@ def cli(verbose: bool):
 
 @cli.command()
 @click.option("--qrcode", is_flag=True, help="Force QR code login")
-@click.option("--browser", is_flag=True, help="Import the currently logged-in browser session")
-@click.option("--cookie", "cookie_str", default=None, help="Manually provide cookie string")
+@click.option("--browser", is_flag=True, help="Deprecated: Chrome session import is disabled")
+@click.option("--cookie", "cookie_str", default=None, help="Deprecated: external session import is disabled")
 @click.pass_context
 def login(ctx: click.Context, qrcode: bool, browser: bool, cookie_str: str | None):
     """Login to Xiaohongshu."""
@@ -116,45 +114,18 @@ def login(ctx: click.Context, qrcode: bool, browser: bool, cookie_str: str | Non
         sys.exit(1)
 
     if browser:
-        cookie = _extract_browser_cookies()
-        if not cookie:
-            console.print(
-                "[red]❌ No usable Xiaohongshu login was found in Chrome. "
-                "Log in with Chrome, then retry. QR login was not started.[/red]"
-            )
-            sys.exit(1)
-        cookie_dict = cookie_str_to_dict(cookie)
-        if not REQUIRED_COOKIES.issubset(cookie_dict.keys()):
-            console.print("[red]❌ Chrome cookies are incomplete. Nothing was imported.[/red]")
-            sys.exit(1)
-        verify_result = _verify_cookies(cookie_dict)
-        # The profile endpoint can be slow or temporarily unavailable even when
-        # the same session can access the feed used by the capture pipeline.
-        # Treat feed usability as the required proof and identity as auxiliary.
-        probe_result = _probe_session_usability(cookie_dict)
-        if probe_result is not True:
-            console.print(
-                "[red]❌ Chrome login could not be verified for capture. "
-                "Nothing was imported and QR login was not started.[/red]"
-            )
-            sys.exit(1)
-        save_cookies(cookie)
-        if verify_result is not True:
-            console.print("[yellow]⚠️ Profile check was inconclusive; capture access is valid.[/yellow]")
-        console.print("[green]✅ Chrome login synced to Caiguang.[/green]")
-        return
+        console.print(
+            "[red]❌ Chrome session import is disabled to protect the primary browser login. "
+            "Run `xhs login --qrcode` to create an isolated Caiguang session.[/red]"
+        )
+        sys.exit(2)
 
     if cookie_provided:
-        parsed = cookie_str_to_dict(cookie_str or "")
-        if not REQUIRED_COOKIES.issubset(parsed.keys()):
-            console.print(
-                "[red]❌ Invalid cookie string. Must contain at least "
-                "'a1=...' and 'web_session=...'.[/red]"
-            )
-            sys.exit(1)
-        save_cookies("; ".join(f"{k}={v}" for k, v in parsed.items()))
-        console.print("[green]✅ Cookie saved![/green]")
-        return
+        console.print(
+            "[red]❌ External cookie import is disabled. "
+            "Run `xhs login --qrcode` to keep Caiguang isolated from Chrome.[/red]"
+        )
+        sys.exit(2)
 
     if not qrcode:
         cookie = get_cookie_string()
@@ -165,7 +136,7 @@ def login(ctx: click.Context, qrcode: bool, browser: bool, cookie_str: str | Non
             if verify_result is True:
                 probe_result = _probe_session_usability(cookie_dict)
                 if probe_result is True:
-                    console.print("[green]✅ Logged in (from browser cookies)[/green]")
+                    console.print("[green]✅ Logged in with the isolated Caiguang session.[/green]")
                     return
                 if probe_result is False:
                     console.print(

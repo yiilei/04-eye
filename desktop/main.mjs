@@ -1,16 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
 import { migrateLegacyData } from "./data-migration.mjs";
+import { checkForUpdate, getCodexStatus } from "./runtime-status.mjs";
 
 const desktopDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(desktopDir, "..");
 let serverHandle;
 let mainWindow;
 let xhsLoginTimer;
+let xhsLoginStarting = false;
+let xhsLoginResetTimer;
 
 const captureConfigDir = () => path.join(app.getPath("userData"), "xhs-cli");
 const captureCookieFile = () => path.join(captureConfigDir(), "cookies.json");
@@ -19,7 +23,7 @@ async function hasXhsCaptureLogin() {
   try {
     const saved = JSON.parse(await readFile(captureCookieFile(), "utf8"));
     const cookies = saved?.cookies || {};
-    return Boolean(cookies.a1 && cookies.web_session);
+    return saved?.sessionSource === "isolated_qrcode" && Boolean(cookies.a1 && cookies.web_session);
   } catch {
     return false;
   }
@@ -33,7 +37,12 @@ function stopXhsLoginTimer() {
 async function publishXhsLoginStatus() {
   const loggedIn = await hasXhsCaptureLogin();
   mainWindow?.webContents.send("caiguang:xhs-login-changed", { loggedIn });
-  if (loggedIn) stopXhsLoginTimer();
+  if (loggedIn) {
+    xhsLoginStarting = false;
+    if (xhsLoginResetTimer) clearTimeout(xhsLoginResetTimer);
+    xhsLoginResetTimer = undefined;
+    stopXhsLoginTimer();
+  }
   return { loggedIn };
 }
 
@@ -52,34 +61,71 @@ function shellQuote(value) {
 
 async function openXhsCaptureLogin() {
   if ((await publishXhsLoginStatus()).loggedIn) return { loggedIn: true };
+  if (xhsLoginStarting) return { loggedIn: false, loginStarted: true };
   const executable = findCaptureEngine();
   if (!executable) {
     return { loggedIn: false, error: "未找到采光的小红书登录组件，请先运行完整安装。" };
   }
+  xhsLoginStarting = true;
   await mkdir(captureConfigDir(), { recursive: true, mode: 0o700 });
   const helper = path.join(app.getPath("userData"), "采光-登录小红书.command");
   await writeFile(helper, [
     "#!/bin/zsh",
     "clear",
-    "echo '正在同步 Chrome 中已登录的小红书会话…'",
-    "echo '此操作只复制登录信息到采光本地，不会修改 Chrome，也不会自动弹出二维码。'",
+    "echo '正在创建采光独立的小红书会话…'",
+    "echo '请用小红书 App 扫描终端二维码。采光不会读取、打开或修改 Chrome。'",
     `export XHS_CLI_CONFIG_DIR=${shellQuote(captureConfigDir())}`,
-    `${shellQuote(executable)} login --browser`,
+    "export XHS_CLI_DISABLE_BROWSER_COOKIE=1",
+    `${shellQuote(executable)} login --qrcode`,
     "exit_code=$?",
-    "if [[ $exit_code -ne 0 ]]; then echo; echo '同步未完成：请先在 Chrome 登录小红书后重试。采光不会自动切换到扫码登录。'; read -k 1 '?按任意键关闭…'; fi",
+    "if [[ $exit_code -ne 0 ]]; then echo; echo '采光独立登录未完成，请重新扫码；主 Chrome 登录不会受到影响。'; read -k 1 '?按任意键关闭…'; fi",
     "exit $exit_code",
     "",
   ].join("\n"), { mode: 0o700 });
   await chmod(helper, 0o700);
   const openError = await shell.openPath(helper);
-  if (openError) return { loggedIn: false, error: openError };
+  if (openError) {
+    xhsLoginStarting = false;
+    return { loggedIn: false, error: openError };
+  }
   stopXhsLoginTimer();
+  if (xhsLoginResetTimer) clearTimeout(xhsLoginResetTimer);
+  xhsLoginResetTimer = setTimeout(() => { xhsLoginStarting = false; xhsLoginResetTimer = undefined; }, 5 * 60 * 1_000);
   xhsLoginTimer = setInterval(() => void publishXhsLoginStatus(), 1_000);
   return { loggedIn: false, loginStarted: true };
 }
 
-ipcMain.handle("caiguang:open-xhs-login", () => openXhsCaptureLogin());
+// First-run onboarding must not create a second Xiaohongshu device session.
+// It only opens the user's existing Chrome profile.  In particular, this
+// deliberately does not read, copy or modify any browser cookies.
+async function openXhsChromeLogin() {
+  try {
+    await new Promise((resolve, reject) => {
+      execFile("/usr/bin/open", ["-a", "Google Chrome", "https://www.xiaohongshu.com/explore"], (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+    return { chromeOpened: true };
+  } catch {
+    await shell.openExternal("https://www.xiaohongshu.com/explore");
+    return { chromeOpened: true };
+  }
+}
+
+ipcMain.handle("caiguang:open-xhs-login", () => openXhsChromeLogin());
 ipcMain.handle("caiguang:xhs-login-status", () => publishXhsLoginStatus());
+ipcMain.handle("caiguang:runtime-status", () => ({
+  version: app.getVersion(),
+  codex: getCodexStatus(),
+}));
+ipcMain.handle("caiguang:check-update", () => checkForUpdate({ currentVersion: app.getVersion() }));
+ipcMain.handle("caiguang:open-release", (_event, value) => {
+  const url = String(value || "");
+  if (!/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/tag\/v[\d.]+$/u.test(url)) return false;
+  void shell.openExternal(url);
+  return true;
+});
 
 ipcMain.handle("caiguang:fit-window", (event, requested = {}) => {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -142,5 +188,6 @@ app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
   stopXhsLoginTimer();
+  if (xhsLoginResetTimer) clearTimeout(xhsLoginResetTimer);
   serverHandle?.close();
 });
