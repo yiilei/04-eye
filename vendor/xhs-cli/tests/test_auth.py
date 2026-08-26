@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from xhs_cli.auth import (
     _browser_response_payload,
@@ -103,6 +106,18 @@ class TestSaveAndLoadCookies:
         from xhs_cli.auth import _extract_browser_cookies
 
         assert _extract_browser_cookies() is None
+
+    def test_browser_cookie_fallback_is_read_only_and_opt_in(self, tmp_config_dir):
+        from xhs_cli.auth import _extract_browser_cookies
+
+        fake_module = SimpleNamespace(chrome=lambda **_kwargs: [
+            SimpleNamespace(name="a1", value="fallback-a1", domain=".xiaohongshu.com"),
+            SimpleNamespace(name="web_session", value="fallback-session", domain=".xiaohongshu.com"),
+        ])
+        with patch.dict(os.environ, {"CAIGUANG_CHROME_FALLBACK": "1"}), patch.dict(sys.modules, {"browser_cookie3": fake_module}):
+            cookie = _extract_browser_cookies()
+        assert cookie_str_to_dict(cookie) == {"a1": "fallback-a1", "web_session": "fallback-session"}
+        assert not (tmp_config_dir / "cookies.json").exists()
 
     def test_file_permissions(self, tmp_config_dir, sample_cookie_str):
         save_cookies(sample_cookie_str)

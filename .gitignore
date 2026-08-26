@@ -4,6 +4,7 @@
 /node_modules
 /.pnpm-store/
 /.caiguang-setup/
+/.install-assets/
 /.pnp
 .pnp.*
 .yarn/*

@@ -42,7 +42,7 @@ plugins/caiguang/scripts/caiguang capture --url '<小红书帖子链接>' --titl
 
 ## 失败处理
 
-- `login_required`：运行 `login`，让用户使用小红书 App 扫描终端二维码建立采光隔离会话。不得读取、复制、打开或修改主 Chrome，也不得把主 Chrome 的 `web_session` 注入自动化浏览器。
+- `login_required`：优先运行 `login`，让用户使用小红书 App 扫描终端二维码建立采光隔离会话。夜间脚本仅在独立会话不可用且 `CAIGUANG_CHROME_FALLBACK=1` 时，使用一次只读 Chrome Cookie 快照完成本次发现；不得写入或删除 Chrome Cookie，也不得把快照持久化到采光会话。
 - `pin_invalid`：停止该账号，核验显示名、小红书号、内部 ID 与固定主页；禁止绑定相似账号。
 - `needs_browser_capture`：MyFlicker 只复用用户已经打开且明确授权的目标标签页生成临时媒体清单，不复制 Cookie，也不新建携带同一会话的浏览器；随后执行 `plugins/caiguang/scripts/caiguang browser-import --manifest '<temp-json>' --slug '<slug>'`，再运行 `daily` 推进账号基线。
 - 组图顺序未核验：不得进入批阅页；先检查下载器 `imageList` 顺序证据和连续源序号。

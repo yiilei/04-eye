@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.4";
+const version = "0.3.5";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
@@ -69,7 +69,10 @@ async function createCompletePackage() {
     ".gitignore", "AGENTS.md", "AUTOMATION.md", "INSTALL_WITH_CODEX.md", "PROJECT-TODO.md", "README.md",
     "drizzle.config.ts", "eslint.config.mjs", "next-env.d.ts", "next.config.ts", "package.json",
     "pnpm-lock.yaml", "pnpm-workspace.yaml", "postcss.config.mjs", "tsconfig.json", "vite.config.ts",
-  ]) await cp(path.join(root, entry), path.join(sourceRoot, entry));
+  ]) {
+    const source = path.join(root, entry);
+    if (existsSync(source)) await cp(source, path.join(sourceRoot, entry));
+  }
 
   await mkdir(path.join(sourceRoot, "data", "reports"), { recursive: true });
   await cp(path.join(root, "data", "xhs-account-pins.json"), path.join(sourceRoot, "data", "xhs-account-pins.json"));

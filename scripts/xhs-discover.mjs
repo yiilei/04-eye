@@ -141,7 +141,7 @@ function runXhs(args) {
     encoding: "utf8",
     timeout: 120_000,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, XHS_CLI_DISABLE_BROWSER_COOKIE: "1", NO_COLOR: "1" },
+    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, XHS_CLI_DISABLE_BROWSER_COOKIE: "1", CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1", NO_COLOR: "1" },
   }).trim();
 }
 

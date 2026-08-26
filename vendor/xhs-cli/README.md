@@ -207,7 +207,7 @@ CLI (click) → XhsClient (camoufox 浏览器)
 
 ## 工作原理
 
-1. **认证** — 只读取通过 `xhs login --qrcode` 建立在隔离配置目录中的会话。Chrome/其他浏览器 Cookie 导入以及外部 Cookie 注入均已禁用，避免自动化影响主浏览器登录。
+1. **认证** — 默认读取通过 `xhs login --qrcode` 建立在隔离配置目录中的会话。采光可在显式设置 `CAIGUANG_CHROME_FALLBACK=1` 且独立会话不可用时，使用一次不落盘的 Chrome 只读快照作为保底；不会修改或删除主浏览器 Cookie。
 2. **登录态校验** — 登录后会校验会话是否为有效非 guest 会话，并做 feed/search 可用性探活；探活失败会提示重新登录。
 3. **浏览** — 使用 camoufox 导航到真实页面，所有流量与正常用户浏览一致。
 4. **数据提取** — 从 `window.__INITIAL_STATE__` 提取结构化数据。

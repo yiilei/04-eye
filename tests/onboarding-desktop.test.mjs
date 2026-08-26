@@ -30,16 +30,19 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(page, /setInterval\(\(\) => void checkEagle\(\), 1_500\)/);
   assert.match(page, /已在 Chrome 登录/);
   assert.match(page, /在 Chrome 登录/);
-  assert.match(page, /不会创建新会话，也不会读取 Chrome Cookie/);
+  assert.match(page, /优先使用采光独立会话/);
+  assert.match(page, /只读使用 Chrome 当前登录状态/);
   assert.match(page, /completeAfterChromeReturn/);
   assert.match(page, /document\.visibilityState === "visible"/);
   assert.doesNotMatch(page, /同步 Chrome 中已登录/);
   assert.match(sessionScript, /\["login", "--qrcode"\]/);
   assert.match(sessionScript, /XHS_CLI_DISABLE_BROWSER_COOKIE: "1"/);
   assert.doesNotMatch(sessionScript, /--browser/);
-  assert.doesNotMatch(authScript, /Google\/Chrome|browser_cookie3|bc3\.chrome|chrome_root|cookie_file = chrome_root/);
+  assert.match(authScript, /CAIGUANG_CHROME_FALLBACK/);
+  assert.match(authScript, /browser_cookie3/);
+  assert.doesNotMatch(authScript, /cookie_file = chrome_root|save_cookies\(.*browser/i);
   assert.match(authScript, /SAFE_SESSION_SOURCES = \{"isolated_qrcode"\}/);
-  assert.match(authScript, /Browser cookie import is disabled/);
+  assert.match(authScript, /CAIGUANG_CHROME_FALLBACK/);
 });
 
 test("desktop can force the real onboarding route for a fresh-run test", async () => {

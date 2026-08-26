@@ -35,7 +35,7 @@ export function diffEvents(events, state) {
 function runBrowser() {
   const output = execFileSync(python, [browserScript], {
     cwd: root, encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, NO_COLOR: "1" },
+    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1", NO_COLOR: "1" },
   }).trim();
   return JSON.parse(output.split("\n").at(-1));
 }

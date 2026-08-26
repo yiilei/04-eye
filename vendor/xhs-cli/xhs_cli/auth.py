@@ -55,10 +55,14 @@ def get_saved_cookie_string() -> str | None:
 
 
 def get_cookie_string() -> str | None:
-    """Load only a Caiguang-isolated session; never inspect desktop browsers."""
+    """Prefer the Caiguang session, with an explicit read-only Chrome fallback."""
     cookie = _load_saved_cookies()
     if cookie:
         logger.info("Loaded isolated Caiguang cookies from %s", COOKIE_FILE)
+        return cookie
+    cookie = _extract_browser_cookies()
+    if cookie:
+        logger.warning("Using the temporary read-only Chrome fallback for this run")
     return cookie
 
 
@@ -82,13 +86,26 @@ def _load_saved_cookies() -> str | None:
 
 
 def _extract_browser_cookies() -> str | None:
-    """Chrome import is disabled to protect the user's primary browser session.
+    """Read a temporary Chrome cookie snapshot only when explicitly enabled.
 
-    Reusing the same web_session in Chrome and an automation browser can rotate
-    or invalidate the primary session. Keep this compatibility symbol so older
-    callers fail safely without reading the Chrome profile.
+    The snapshot is never written to ``cookies.json`` and Chrome's database is
+    never modified. Callers enable this only after the isolated session returns
+    ``login_required`` so normal nightly runs remain fully isolated.
     """
-    logger.warning("Browser cookie import is disabled; use isolated QR login")
+    if os.environ.get("CAIGUANG_CHROME_FALLBACK", "0") != "1":
+        return None
+    try:
+        import browser_cookie3
+
+        raw = [
+            {"name": cookie.name, "value": cookie.value, "domain": cookie.domain}
+            for cookie in browser_cookie3.chrome(domain_name=".xiaohongshu.com")
+        ]
+        cookies = _normalize_browser_cookies(raw)
+        if _has_required_cookies(cookies):
+            return _dict_to_cookie_str(cookies)
+    except Exception as exc:
+        logger.warning("Chrome fallback was unavailable: %s", exc)
     return None
 
 
