@@ -14,4 +14,9 @@ contextBridge.exposeInMainWorld("sharpEyeDesktop", {
     ipcRenderer.on("caiguang:xhs-login-changed", listener);
     return () => ipcRenderer.removeListener("caiguang:xhs-login-changed", listener);
   },
+  onLibraryChanged: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("caiguang:library-changed", listener);
+    return () => ipcRenderer.removeListener("caiguang:library-changed", listener);
+  },
 });

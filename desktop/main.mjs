@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -15,6 +15,22 @@ let mainWindow;
 let xhsLoginTimer;
 let xhsLoginStarting = false;
 let xhsLoginResetTimer;
+let libraryWatcher;
+let libraryChangeTimer;
+
+function startLibraryWatcher() {
+  libraryWatcher?.close();
+  const dataDir = path.join(app.getPath("userData"), "data");
+  void mkdir(dataDir, { recursive: true }).then(() => {
+    libraryWatcher = watch(dataDir, (_eventType, filename) => {
+      if (filename !== "generated-review-items.json") return;
+      if (libraryChangeTimer) clearTimeout(libraryChangeTimer);
+      libraryChangeTimer = setTimeout(() => {
+        mainWindow?.webContents.send("caiguang:library-changed", { updatedAt: new Date().toISOString() });
+      }, 120);
+    });
+  });
+}
 
 const captureConfigDir = () => path.join(app.getPath("userData"), "xhs-cli");
 const captureCookieFile = () => path.join(captureConfigDir(), "cookies.json");
@@ -175,6 +191,7 @@ async function createWindow() {
   const targetUrl = liveUrl || new URL(serverHandle.url);
   if (forceOnboarding) targetUrl.searchParams.set("onboarding", "1");
   await window.loadURL(targetUrl.toString());
+  startLibraryWatcher();
 }
 
 app.setName("采光");
@@ -190,4 +207,6 @@ app.on("before-quit", () => {
   stopXhsLoginTimer();
   if (xhsLoginResetTimer) clearTimeout(xhsLoginResetTimer);
   serverHandle?.close();
+  libraryWatcher?.close();
+  if (libraryChangeTimer) clearTimeout(libraryChangeTimer);
 });

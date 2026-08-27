@@ -7,6 +7,7 @@ import accountPinsData from "../data/xhs-account-pins.json";
 type Decision = "kept" | "rejected";
 type QualityState = "checking" | "passed" | "failed";
 type ColorTheme = "dark" | "light";
+type CaptureProgress = { state?: string; phase?: string; label?: string; percent?: number; phaseIndex?: number; phaseCount?: number };
 type HistoryEntry =
   | { kind: "decision"; id: string; previous?: Decision; decision: Decision; index: number }
   | { kind: "remove-single"; id: string; previousRemoved: number[]; removedPosition: number; previousDecision?: Decision; index: number }
@@ -40,6 +41,7 @@ type DesktopBridge = {
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
+  onLibraryChanged?: (callback: (status: { updatedAt?: string }) => void) => () => void;
 };
 
 function getDesktopBridge() {
@@ -225,6 +227,7 @@ const pinnedAccountsStorageKey = "sharp-eye-pinned-accounts-v1";
 const manualPinAccountsStorageKey = "sharp-eye-manual-pin-accounts-v1";
 const colorThemeStorageKey = "sharp-eye-color-theme-v1";
 const onboardingCompleteStorageKey = "caiguang-onboarding-complete-v1";
+const reviewTourCompleteStorageKey = "caiguang-review-tour-complete-v1";
 const seededPinAccounts = accountPinsData.accounts as PinAccount[];
 const defaultPinnedAccountIds = [
   "59f985684eacab1ce3cc5409", // 小红书REDesign
@@ -432,6 +435,9 @@ export default function Home() {
   const [xhsSetupStatus, setXhsSetupStatus] = useState<"未登录" | "等待登录" | "已登录">("未登录");
   const [eagleSetupStatus, setEagleSetupStatus] = useState("尚未检测");
   const [onboardingPreview, setOnboardingPreview] = useState(false);
+  const [reviewTourStep, setReviewTourStep] = useState<number | null>(null);
+  const [reviewTourTransitioning, setReviewTourTransitioning] = useState(false);
+  const [reviewTourSpotlight, setReviewTourSpotlight] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [colorTheme, setColorTheme] = useState<ColorTheme>("dark");
   const [automaticCaptureEnabled, setAutomaticCaptureEnabled] = useState(false);
@@ -452,6 +458,7 @@ export default function Home() {
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>();
   const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable"; latestVersion?: string; releaseUrl?: string | null; message?: string }>({ state: "idle" });
+  const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [windowSize, setWindowSize] = useState<{ width: number; height: number }>();
@@ -496,14 +503,108 @@ export default function Home() {
       setUpdateStatus({ state: "unavailable", message: "暂时无法检查更新" });
     }
   }, []);
+  const refreshManualCapture = useCallback(async () => {
+    if (!desktopAppMode) return;
+    try {
+      const response = await fetch("/api/desktop/capture-now", { cache: "no-store" });
+      if (!response.ok) throw new Error("无法读取本地抓取状态");
+      const payload = await response.json() as {
+        running?: boolean;
+        exitCode?: number | null;
+        state?: { lastCaptureStatus?: string };
+        progress?: CaptureProgress;
+      };
+      if (payload.running) {
+        setManualCapture({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting" });
+      } else if (manualCapture.state === "running") {
+        const completed = payload.exitCode === 0 || payload.state?.lastCaptureStatus === "completed";
+        setManualCapture(completed
+          ? { state: "completed", message: "抓取完成，批阅列表已刷新", percent: 100, phase: "completed" }
+          : { state: "failed", message: payload.progress?.label || "抓取需要处理登录或页面异常", percent: payload.progress?.percent ?? 0, phase: "failed" });
+      }
+    } catch (error) {
+      if (manualCapture.state === "running") setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "本地抓取失败", percent: manualCapture.percent, phase: "failed" });
+    }
+  }, [desktopAppMode, manualCapture.percent, manualCapture.state]);
+  const startManualCapture = useCallback(async (firstCapture = false) => {
+    if (!desktopAppMode || manualCapture.state === "running") return;
+    setManualCapture({ state: "running", message: "准备本地抓取", percent: 3, phase: "starting" });
+    try {
+      const response = await fetch(`/api/desktop/capture-now${firstCapture ? "?initial=1" : ""}`, { method: "POST" });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "无法启动本地抓取");
+    } catch (error) {
+      setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "无法启动本地抓取", percent: 0, phase: "failed" });
+    }
+  }, [desktopAppMode, manualCapture.state]);
+
+  useEffect(() => {
+    if (!desktopAppMode || manualCapture.state !== "running") return;
+    const timer = window.setInterval(() => void refreshManualCapture(), 1_500);
+    return () => window.clearInterval(timer);
+  }, [desktopAppMode, manualCapture.state, refreshManualCapture]);
   const finishOnboarding = useCallback(() => {
     localStorage.setItem(onboardingCompleteStorageKey, "1");
     setOnboardingPreview(false);
+    if (localStorage.getItem(reviewTourCompleteStorageKey) !== "1") setReviewTourStep(0);
     const url = new URL(window.location.href);
     url.searchParams.delete("onboarding");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
-  const reviewItems = useMemo(() => runtimeItems.filter((item) => !dismissedIds.includes(item.id)), [dismissedIds, runtimeItems]);
+
+  const moveReviewTour = useCallback((direction: -1 | 1) => {
+    if (reviewTourStep === null || reviewTourTransitioning) return;
+    if (direction < 0) {
+      setReviewTourStep((step) => Math.max(0, (step ?? 0) - 1));
+      return;
+    }
+    setReviewTourTransitioning(true);
+    window.setTimeout(() => {
+      setReviewTourStep((step) => Math.min(3, (step ?? 0) + 1));
+      setReviewTourTransitioning(false);
+    }, 260);
+  }, [reviewTourStep, reviewTourTransitioning]);
+
+  const finishReviewTourAndCapture = useCallback(() => {
+    if (reviewTourTransitioning) return;
+    setReviewTourTransitioning(true);
+    window.setTimeout(() => {
+      localStorage.setItem(reviewTourCompleteStorageKey, "1");
+      setReviewTourStep(null);
+      setReviewTourTransitioning(false);
+      void startManualCapture(true);
+    }, 280);
+  }, [reviewTourTransitioning, startManualCapture]);
+
+  useEffect(() => {
+    if (reviewTourStep === null) return;
+    const selectors = [".settings-icon", ".actions", ".viewer", ".capture-now"];
+    const updateSpotlight = () => {
+      const shell = appShellRef.current;
+      const target = shell?.querySelector<HTMLElement>(selectors[reviewTourStep]);
+      if (!shell || !target) return;
+      const shellRect = shell.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const padding = reviewTourStep === 2 ? 5 : reviewTourStep === 1 ? 8 : 7;
+      setReviewTourSpotlight({
+        left: targetRect.left - shellRect.left - padding,
+        top: targetRect.top - shellRect.top - padding,
+        width: targetRect.width + padding * 2,
+        height: targetRect.height + padding * 2,
+      });
+    };
+    const frame = window.requestAnimationFrame(updateSpotlight);
+    window.addEventListener("resize", updateSpotlight);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updateSpotlight);
+    };
+  }, [reviewTourStep, settingsOpen, windowSize]);
+  const dismissalKey = useCallback((item: ReviewItem) => `${item.id}@${item.capturedAt || item.date || "unknown"}`, []);
+  const reviewItems = useMemo(
+    () => runtimeItems.filter((item) => !dismissedIds.includes(dismissalKey(item))),
+    [dismissalKey, dismissedIds, runtimeItems],
+  );
   const current = reviewItems[index] ?? emptyItem;
   const allPinAccounts = useMemo(() => [
     ...seededPinAccounts,
@@ -763,7 +864,8 @@ export default function Home() {
     };
     void refreshLibrary();
     const timer = window.setInterval(() => void refreshLibrary(), 1_500);
-    return () => { active = false; window.clearInterval(timer); };
+    const unsubscribe = getDesktopBridge()?.onLibraryChanged?.(() => void refreshLibrary());
+    return () => { active = false; window.clearInterval(timer); unsubscribe?.(); };
   }, [desktopAppMode]);
 
   useEffect(() => {
@@ -819,6 +921,7 @@ export default function Home() {
     const onboardingRequested = new URLSearchParams(window.location.search).get("onboarding") === "1";
     const onboardingComplete = localStorage.getItem(onboardingCompleteStorageKey) === "1";
     setOnboardingPreview(onboardingRequested || !onboardingComplete);
+    if (!onboardingRequested && onboardingComplete && localStorage.getItem(reviewTourCompleteStorageKey) !== "1") setReviewTourStep(0);
     setHydrated(true);
   }, []);
 
@@ -1277,19 +1380,22 @@ export default function Home() {
     const removedIndex = index;
     const remainingCount = reviewItems.length - 1;
     setHistory((value) => [...value, { kind: "remove-item", id: current.id, index: removedIndex }]);
-    setDismissedIds((value) => value.includes(current.id) ? value : [...value, current.id]);
+    const key = dismissalKey(current);
+    setDismissedIds((value) => value.includes(key) ? value : [...value, key]);
     openItem(remainingCount ? Math.min(removedIndex, remainingCount - 1) : 0);
     setEagleError(false);
     setEagleMessage("已从批阅页面移除整组素材，可按 Command + Z 撤回");
-  }, [current.id, index, openItem, reviewItems.length]);
+  }, [current, dismissalKey, index, openItem, reviewItems.length]);
 
   const undo = useCallback(() => {
     const last = history.at(-1);
     if (!last) return;
     setHistory((value) => value.slice(0, -1));
     if (last.kind === "remove-item") {
-      const nextDismissed = dismissedIds.filter((id) => id !== last.id);
-      const restoredItems = runtimeItems.filter((item) => !nextDismissed.includes(item.id));
+      const restoredItem = runtimeItems.find((item) => item.id === last.id);
+      const restoredKey = restoredItem ? dismissalKey(restoredItem) : last.id;
+      const nextDismissed = dismissedIds.filter((id) => id !== restoredKey && id !== last.id);
+      const restoredItems = runtimeItems.filter((item) => !nextDismissed.includes(dismissalKey(item)));
       const restoredIndex = restoredItems.findIndex((item) => item.id === last.id);
       setDismissedIds(nextDismissed);
       openItem(restoredIndex >= 0 ? restoredIndex : last.index);
@@ -1324,7 +1430,7 @@ export default function Home() {
     setEagleMessage(last.decision === "kept" && Boolean(eagleItems[last.id])
       ? "已撤回“留下”状态；为避免误删，已经导入 Eagle 的文件仍然保留"
       : "已撤回上一步");
-  }, [dismissedIds, eagleItems, history, openItem, persistDecision, runtimeItems]);
+  }, [dismissalKey, dismissedIds, eagleItems, history, openItem, persistDecision, runtimeItems]);
 
   const undoCurrent = useCallback(() => {
     if (!decisions[current.id]) return;
@@ -1489,7 +1595,7 @@ export default function Home() {
         <div className="desktop-menu-left"><strong>●</strong><b>{appVisible ? "采光" : "访达"}</b><span>文件</span><span>编辑</span><span>显示</span><span>窗口</span><span>帮助</span></div>
         <div className="desktop-menu-right"><span>⌁</span><span>◉</span><time>{desktopTime}</time></div>
       </div>}
-      {appVisible && <main ref={appShellRef} className={`app-shell ${leftSidebarOpen ? "" : "left-sidebar-collapsed"} ${focusCanvasMode ? "focus-canvas-mode" : ""}`} style={desktopAppMode ? { width: "100vw", height: "100vh", transform: "none" } : { width: windowSize?.width ?? adaptiveWindowWidth, height: windowSize?.height ?? adaptiveWindowHeight, transform: `translate3d(${windowOffset.x}px, ${windowOffset.y}px, 0)` }}>
+      {appVisible && <main ref={appShellRef} className={`app-shell ${leftSidebarOpen ? "" : "left-sidebar-collapsed"} ${focusCanvasMode ? "focus-canvas-mode" : ""} ${reviewTourStep !== null ? `has-review-tour tour-context-${reviewTourStep + 1}` : ""}`} style={desktopAppMode ? { width: "100vw", height: "100vh", transform: "none" } : { width: windowSize?.width ?? adaptiveWindowWidth, height: windowSize?.height ?? adaptiveWindowHeight, transform: `translate3d(${windowOffset.x}px, ${windowOffset.y}px, 0)` }}>
       {!desktopAppMode && (["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const).map((edge) => (
         <div key={edge} className={`window-resize-handle resize-${edge}`} onMouseDown={(event) => startWindowResize(event, edge)} aria-hidden="true" />
       ))}
@@ -1709,14 +1815,58 @@ export default function Home() {
               <button className="keep" onClick={() => void decide("kept")} disabled={Boolean(syncingId) || quality.state !== "passed"}>YES</button>
             </div>
             <div className={`post-caption ${formatPostCaption(current.caption) ? "" : "is-empty"}`} role="region" tabIndex={0} aria-label="帖子文案">
-              {formatPostCaption(current.caption) || "暂无帖子文案"}
+              <span className="post-caption-copy">{formatPostCaption(current.caption) || "暂无帖子文案"}</span>
             </div>
             {eagleMessage && <p className={`eagle-status ${eagleError ? "error" : ""}`}>{eagleMessage}</p>}
-            <span className="gallery-position" aria-label={`当前第 ${galleryIndex + 1} 张，共 ${current.gallery?.length ?? 1} 张`}>{galleryIndex + 1}/{current.gallery?.length ?? 1}</span>
+            <div className="gallery-position-group">
+              <span className="gallery-position" aria-label={`当前第 ${galleryIndex + 1} 张，共 ${current.gallery?.length ?? 1} 张`}>{galleryIndex + 1}/{current.gallery?.length ?? 1}</span>
+              {desktopAppMode && (
+                <button type="button" className={`capture-now ${manualCapture.state}`} onClick={() => reviewTourStep === 3 ? finishReviewTourAndCapture() : void startManualCapture()}
+                  disabled={manualCapture.state === "running"} aria-label="立即执行一次本地抓取"
+                  title="立即抓取（完全在本地执行，不使用 Codex）">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 11V6.7a1.45 1.45 0 0 1 2.9 0V10m0 0V4.8a1.45 1.45 0 0 1 2.9 0V10m0 0V6a1.45 1.45 0 0 1 2.9 0v5m0 0V8.3a1.45 1.45 0 0 1 2.9 0v5.2c0 4.1-2.7 7-6.8 7h-.8c-2.1 0-3.8-.8-5.1-2.4l-2.4-3a1.55 1.55 0 0 1 2.3-2.1l1.2 1.1V11Z" /></svg>
+                  {manualCapture.state === "running" && <span className="capture-now-ring" style={{ background: `conic-gradient(var(--accent) ${manualCapture.percent}%, rgba(255,255,255,.13) 0)` }} />}
+                </button>
+              )}
+              {manualCapture.message && <span className={`capture-now-message ${manualCapture.state}`} role="status" aria-live="polite">
+                <span>{manualCapture.message}</span>
+                {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
+              </span>}
+            </div>
             <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo} disabled={!history.length && !decisions[current.id]}>{decisions[current.id] ? "重新选择" : "撤回上一步"}</button>
           </>}
         </aside>
       </section>
+      {reviewTourStep !== null && (
+        <section className={`review-tour review-tour-step-${reviewTourStep + 1} ${reviewTourTransitioning ? "is-diffusing" : ""}`} aria-label="首次使用引导">
+          <div className="review-tour-spotlight" style={reviewTourSpotlight} />
+          <div className="review-tour-card" role="dialog" aria-modal="true" aria-live="polite">
+            <small>{String(reviewTourStep + 1).padStart(2, "0")} / 04</small>
+            {reviewTourStep === 0 && <>
+              <h2>先设置你的采集来源</h2>
+              <p>打开右上角设置，可以添加想关注的小红书账号，并设置每天的抓取时间与推送时间。</p>
+            </>}
+            {reviewTourStep === 1 && <>
+              <h2>留下，或删除</h2>
+              <p>点击 NO 会删除当前素材；点击 YES 会把它保存进已连接的 Eagle。</p>
+            </>}
+            {reviewTourStep === 2 && <>
+              <h2>像 Figma 一样查看画板</h2>
+              <p>方向键切换图片或处理单张素材，触控板缩放与拖动画布；按 F 随时复位。</p>
+              <div className="review-tour-keys" aria-label="快捷键示意"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd><kbd>F</kbd></div>
+            </>}
+            {reviewTourStep === 3 && <>
+              <h2>试试第一次抓取</h2>
+              <p>高光区域是本地抓手。完成引导后会执行首次抓取：创作服务中心最新一条，以及每个已启用埋点账号的最新一篇，不回填历史。</p>
+            </>}
+            <div className="review-tour-controls">
+              <button type="button" className="review-tour-back" onClick={() => moveReviewTour(-1)} disabled={reviewTourStep === 0 || reviewTourTransitioning}>上一步</button>
+              {reviewTourStep < 3 && <button type="button" className="review-tour-next" onClick={() => moveReviewTour(1)} disabled={reviewTourTransitioning}>下一步</button>}
+              {reviewTourStep === 3 && <button type="button" className="review-tour-next" onClick={finishReviewTourAndCapture} disabled={reviewTourTransitioning}>完成</button>}
+            </div>
+          </div>
+        </section>
+      )}
       </main>}
       {!desktopAppMode && <div className="desktop-dock" aria-label="桌面应用栏">
         <button className="dock-icon finder-icon" aria-label="访达" title="访达">◒</button>

@@ -173,6 +173,35 @@ body.sharp-eye-desktop nav { padding-top: 48px; }
   box-shadow: inset 0 1px rgba(255, 255, 255, .08), 0 34px 100px rgba(0, 0, 0, .55), 0 3px 14px rgba(0,0,0,.34);
   transition: width .22s cubic-bezier(.2,.8,.2,1), height .22s cubic-bezier(.2,.8,.2,1), margin-right .22s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease;
 }
+
+/* First review: four concise, app-local teaching moments. */
+.review-tour { position: absolute; inset: 0; z-index: 90; overflow: hidden; border-radius: inherit; pointer-events: auto; animation: review-tour-diffuse-in .46s ease both; }
+.review-tour-spotlight { position: absolute; z-index: 1; border: 2px solid #ffe500; border-radius: 18px; box-shadow: 0 0 0 9999px rgba(4,5,8,.64), 0 0 0 7px rgba(255,229,0,.16), 0 12px 38px rgba(0,0,0,.34); transition: left .3s ease, top .3s ease, width .3s ease, height .3s ease, border-radius .3s ease; animation: review-tour-spotlight-pulse 1.25s ease-in-out infinite; pointer-events: none; }
+.review-tour-card { position: absolute; z-index: 2; width: min(390px, calc(100% - 48px)); padding: 26px 28px 22px; color: #f7f7f8; background: rgba(25,27,33,.82); border: 1px solid rgba(255,255,255,.16); border-radius: 26px; box-shadow: 0 24px 70px rgba(0,0,0,.42); backdrop-filter: blur(30px) saturate(1.25); transition: opacity .26s ease, filter .26s ease, transform .26s ease; animation: review-tour-card-in .5s cubic-bezier(.2,.8,.2,1) both; }
+.review-tour-card { pointer-events: auto; }
+.review-tour.is-diffusing .review-tour-card { opacity: 0; filter: blur(18px); transform: scale(.95); pointer-events: none; }
+.review-tour-card small { display: block; margin-bottom: 22px; color: #ffe500; font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+.review-tour-card h2 { margin: 0 0 14px; font-size: clamp(23px, 2.2vw, 32px); line-height: 1.16; letter-spacing: -.03em; }
+.review-tour-card p { margin: 0; color: rgba(245,245,247,.7); font-size: 14px; line-height: 1.75; }
+.review-tour-step-1 .review-tour-card { top: 54px; right: 310px; }
+.review-tour-step-2 .review-tour-card { top: 34%; right: 310px; }
+.review-tour-step-3 .review-tour-card { top: 38px; left: 50%; transform: translateX(-50%); }
+.review-tour-step-3.is-diffusing .review-tour-card { transform: translateX(-50%) scale(.95); }
+.review-tour-step-4 .review-tour-card { right: 310px; bottom: 30px; }
+.review-tour-controls { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; }
+.review-tour-controls button { min-width: 96px; height: 42px; padding: 0 18px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; color: rgba(255,255,255,.72); background: rgba(255,255,255,.07); font-weight: 700; }
+.review-tour-controls .review-tour-next { margin-left: auto; color: #111; background: #ffe500; border-color: #ffe500; }
+.review-tour-controls button:disabled { opacity: .28; }
+.review-tour-keys { display: flex; gap: 7px; margin-top: 20px; }
+.review-tour-keys kbd { display: grid; place-items: center; min-width: 34px; height: 32px; padding: 0 9px; color: #111; background: #ffe500; border-radius: 9px; box-shadow: inset 0 -2px 0 rgba(0,0,0,.15); font: 750 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+html[data-theme="light"] .review-tour-spotlight { box-shadow: 0 0 0 9999px rgba(225,227,232,.68), 0 0 0 7px rgba(255,229,0,.22), 0 12px 38px rgba(23,28,38,.18); }
+html[data-theme="light"] .review-tour-card { color: #15171c; background: rgba(255,255,255,.84); border-color: rgba(0,0,0,.1); box-shadow: 0 24px 70px rgba(23,28,38,.2); }
+html[data-theme="light"] .review-tour-card p { color: rgba(21,23,28,.65); }
+html[data-theme="light"] .review-tour-controls button { color: rgba(21,23,28,.68); background: rgba(0,0,0,.05); border-color: rgba(0,0,0,.09); }
+html[data-theme="light"] .review-tour-controls .review-tour-next { color: #111; background: #ffe500; border-color: #ffe500; }
+@keyframes review-tour-diffuse-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes review-tour-card-in { from { opacity: 0; filter: blur(18px); } to { opacity: 1; filter: blur(0); } }
+@keyframes review-tour-spotlight-pulse { 0%,100% { border-color: rgba(255,229,0,.5); outline: 0 solid rgba(255,229,0,0); } 50% { border-color: #ffe500; outline: 7px solid rgba(255,229,0,.22); } }
 body:not(.sharp-eye-desktop) .app-shell { max-width: calc(100vw - 20px); max-height: calc(100vh - 42px); }
 
 .window-resize-handle { position: absolute; z-index: 60; }
@@ -463,19 +492,35 @@ dd { color: rgba(255,255,255,.74); }
 .reject:hover { background: rgba(255,255,255,.09); }
 .keep { background: rgba(255,255,255,.92); border-color: rgba(255,255,255,.92); color: #16181d; }
 .actions .keep { color: #111; background: var(--accent); border-color: var(--accent); box-shadow: inset 0 1px rgba(255,255,255,.3), 0 7px 18px rgba(70,62,0,.18); }
-.actions .keep:hover { background: #2492ff; border-color: #2492ff; }
+.actions .keep:hover { color: #111; background: #fff000; border-color: #fff000; }
 .post-caption { min-height: 0; flex: 1; margin: 18px -7px 34px 0; padding: 2px 7px 2px 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; color: rgba(255,255,255,.64); font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-color: rgba(255,255,255,.24) transparent; scrollbar-width: thin; }
 .post-caption::-webkit-scrollbar { width: 2px; }
 .post-caption::-webkit-scrollbar-track { background: transparent; }
 .post-caption::-webkit-scrollbar-thumb { background: rgba(255,255,255,.24); border-radius: 999px; }
 .post-caption.is-empty { color: rgba(255,255,255,.3); }
+.post-caption-copy { display: block; }
 .keep:hover { background: #fff; }
 kbd { color: rgba(255,255,255,.7); background: rgba(255,255,255,.07); border-color: rgba(255,255,255,.12); border-bottom-color: rgba(255,255,255,.18); }
 .keep kbd { color: #22252a; background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.14); }
 .eagle-status { color: #7be2a8; background: rgba(31,157,98,.13); border: 1px solid rgba(92,218,148,.12); }
 .eagle-status.error { color: #ff8fa0; background: rgba(180,35,54,.13); }
 .undo { position: absolute; right: 22px; bottom: 18px; display: block; width: auto; margin: 0; padding: 4px 0; color: rgba(255,255,255,.42); font-size: 10px; text-align: right; }
-.gallery-position { position: absolute; left: 22px; bottom: 18px; display: block; padding: 4px 0; color: rgba(255,255,255,.42); font-family: "DIN Alternate", "DIN Condensed", "Arial Narrow", sans-serif; font-size: 10px; font-variant-numeric: tabular-nums; line-height: normal; }
+.gallery-position-group { position: absolute; left: 22px; bottom: 14px; display: flex; align-items: center; gap: 9px; }
+.gallery-position { display: block; padding: 4px 0; color: rgba(255,255,255,.42); font-family: "DIN Alternate", "DIN Condensed", "Arial Narrow", sans-serif; font-size: 10px; font-variant-numeric: tabular-nums; line-height: normal; }
+.capture-now { position: relative; display: grid; width: 28px; height: 28px; padding: 6px; place-items: center; color: rgba(255,255,255,.68); background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.13); border-radius: 50%; box-shadow: inset 0 1px rgba(255,255,255,.08); }
+.capture-now-ring { position: absolute; inset: -3px; z-index: -1; border-radius: 50%; mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0); }
+.capture-now:hover { color: #111; background: var(--accent); border-color: var(--accent); }
+.capture-now svg { width: 15px; height: 15px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.capture-now.running { color: #111; background: var(--accent); border-color: var(--accent); cursor: wait; }
+.capture-now.running svg { animation: capture-hand-grab .82s cubic-bezier(.45,0,.2,1) infinite; transform-origin: 50% 62%; }
+.capture-now.completed { color: #7be2a8; border-color: rgba(123,226,168,.35); }
+.capture-now.failed { color: #ff8fa0; border-color: rgba(255,143,160,.35); }
+.capture-now-message { position: absolute; left: 0; bottom: 36px; display: flex; width: max-content; max-width: 240px; padding: 7px 9px; align-items: baseline; gap: 7px; color: rgba(255,255,255,.8); background: rgba(23,25,31,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.26); font-size: 9px; line-height: 1.35; pointer-events: none; }
+.capture-now-message > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-now-message > strong { flex: 0 0 auto; color: #ffdf00; font-family: "DIN Alternate", "DIN Condensed", sans-serif; font-size: 10px; font-variant-numeric: tabular-nums; }
+.capture-now-message.completed { color: #7be2a8; }
+.capture-now-message.failed { color: #ff8fa0; }
+@keyframes capture-hand-grab { 0%,100% { transform: translateY(0) scale(1); } 38% { transform: translateY(1px) rotate(-5deg) scaleX(.73) scaleY(.88); } 62% { transform: translateY(-1px) rotate(3deg) scaleX(.9) scaleY(.95); } }
 .done { color: #7be2a8; background: rgba(31,157,98,.13); }
 .workspace { transition: grid-template-columns .22s cubic-bezier(.2,.8,.2,1); }
 .left-sidebar-collapsed .workspace { grid-template-columns: 0 minmax(0, 1fr) clamp(210px, 18vw, 252px); }
@@ -626,6 +671,13 @@ html[data-theme="light"] .review-byline time,
 html[data-theme="light"] .review-info > span,
 html[data-theme="light"] .gallery-position,
 html[data-theme="light"] .undo { color: rgba(25,29,36,.48); }
+html[data-theme="light"] .capture-now { color: rgba(25,29,36,.58); background: rgba(25,29,36,.055); border-color: rgba(25,29,36,.13); }
+html[data-theme="light"] .capture-now:hover,
+html[data-theme="light"] .capture-now.running { color: #111; background: var(--accent); border-color: var(--accent); }
+html[data-theme="light"] .capture-now-message { color: rgba(20,22,27,.82); background: rgba(255,255,255,.94); border-color: rgba(25,29,36,.12); }
+html[data-theme="light"] .capture-now-message > strong { color: #b08b00; }
+html[data-theme="light"] .capture-now-message.completed { color: #198754; }
+html[data-theme="light"] .capture-now-message.failed { color: #c33148; }
 html[data-theme="light"] .review-info { border-color: rgba(28,33,42,.1); }
 html[data-theme="light"] .reject { color: rgba(24,27,34,.78); background: rgba(30,35,45,.055); border-color: rgba(28,33,42,.12); }
 html[data-theme="light"] .reject:hover { background: rgba(30,35,45,.1); }

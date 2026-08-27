@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { diffPosts, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { diffPosts, latestPostOnly, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -78,6 +78,16 @@ test("keeps a newly published pinned post when it is newer than the baseline", (
     { id: "6a9000020000000000000000", pinned: true },
     { id: "6a8000000000000000000000" },
   ], "6a8000000000000000000000");
+  assert.deepEqual(result.newPosts.map((post) => post.id), ["6a9000020000000000000000"]);
+});
+
+test("first capture takes exactly the latest non-pinned post", () => {
+  const result = latestPostOnly([
+    { id: "6a9000030000000000000000", pinned: true },
+    { id: "6a9000020000000000000000" },
+    { id: "6a8000000000000000000000" },
+  ]);
+  assert.equal(result.status, "verified");
   assert.deepEqual(result.newPosts.map((post) => post.id), ["6a9000020000000000000000"]);
 });
 

@@ -118,7 +118,7 @@ def collect_media(root: Path) -> tuple[list[Path], list[Path]]:
 
 def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str,
               url: str, metadata: dict, account_name: str, account_id: str,
-              title: str) -> Path:
+              title: str, caption: str = "") -> Path:
     images, videos = collect_media(source_root)
     target = output_root / capture_date / slug
     target.mkdir(parents=True, exist_ok=True)
@@ -172,7 +172,7 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
         "account": {"name": account_name or metadata.get("作者昵称") or "待确认",
                     "xiaohongshuId": account_id or metadata.get("作者ID") or "待确认"},
         "title": title or metadata.get("作品标题") or slug,
-        "caption": args.caption or metadata.get("作品描述") or "",
+        "caption": caption or metadata.get("作品描述") or "",
         "capturedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "sourceUrl": url, "sourceQuality": "web_highest_available",
         "qualityEvidence": "使用页面可获得的最高分辨率媒体地址下载，未二次压缩。",
@@ -300,7 +300,7 @@ def capture(args: argparse.Namespace) -> dict:
         source_root, metadata, engine_log = run_engine(args.url, stage)
 
     manifest = normalize(source_root, args.output_root.resolve(), args.date, slug, args.url,
-                         metadata, args.account_name, args.account_id, args.title)
+                         metadata, args.account_name, args.account_id, args.title, args.caption)
     validate(manifest)
     if args.output_root.resolve() == DEFAULT_OUTPUT.resolve():
         register_for_app(manifest)

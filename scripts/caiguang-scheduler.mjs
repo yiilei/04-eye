@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -15,6 +15,8 @@ const statePath = path.join(dataRoot, "scheduler-state.json");
 const logRoot = path.join(appData, "logs");
 const launchAgent = path.join(os.homedir(), "Library", "LaunchAgents", "com.yilei.caiguang.scheduler.plist");
 const wrapper = path.join(projectRoot, "plugins", "caiguang", "scripts", "caiguang");
+const localRuntimeRoot = path.join(os.homedir(), "Library", "Application Support", "Caiguang", "runtime");
+const localRuntimeNode = path.join(localRuntimeRoot, "node");
 
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
@@ -80,16 +82,31 @@ async function install() {
   await migrateLegacyData(appData);
   await mkdir(path.dirname(launchAgent), { recursive: true });
   await mkdir(logRoot, { recursive: true });
+  await mkdir(localRuntimeRoot, { recursive: true });
+  const appCandidates = [
+    path.join(os.homedir(), "Applications", "采光.app", "Contents", "MacOS", "采光"),
+    path.join("/Applications", "采光.app", "Contents", "MacOS", "采光"),
+  ];
+  let appExecutable = "";
+  for (const candidate of appCandidates) {
+    try { await access(candidate); appExecutable = candidate; break; } catch { /* try next */ }
+  }
+  if (!appExecutable) throw new Error("没有找到已安装的采光.app，无法建立独立后台运行环境");
+  await rm(localRuntimeNode, { force: true });
+  await symlink(appExecutable, localRuntimeNode);
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.yilei.caiguang.scheduler</string>
   <key>ProgramArguments</key><array>
-    <string>${xml(process.execPath)}</string>
+    <string>${xml(localRuntimeNode)}</string>
     <string>${xml(fileURLToPath(import.meta.url))}</string>
     <string>tick</string>
   </array>
-  <key>EnvironmentVariables</key><dict><key>SHARP_EYE_HOME</key><string>${xml(appData)}</string></dict>
+  <key>EnvironmentVariables</key><dict>
+    <key>ELECTRON_RUN_AS_NODE</key><string>1</string>
+    <key>SHARP_EYE_HOME</key><string>${xml(appData)}</string>
+  </dict>
   <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>${xml(path.join(logRoot, "scheduler.stdout.log"))}</string>

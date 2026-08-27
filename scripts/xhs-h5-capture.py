@@ -7,10 +7,13 @@ import argparse
 import hashlib
 import json
 import sys
+import time
+from contextlib import ExitStack
 from pathlib import Path
 
-from xhs_cli.auth import cookie_str_to_dict, get_saved_cookie_string
+from xhs_cli.auth import cookie_str_to_dict, get_cookie_string
 from camoufox.sync_api import Camoufox
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 
 NOTES_SELECTORS = (
@@ -32,7 +35,7 @@ def main() -> int:
     parser.add_argument("--output-width", type=int, default=1125)
     args = parser.parse_args()
 
-    cookie = get_saved_cookie_string()
+    cookie = get_cookie_string()
     if not cookie:
         print(json.dumps({"ok": False, "status": "login_required"}, ensure_ascii=False))
         return 1
@@ -44,7 +47,19 @@ def main() -> int:
     video_path = output_dir / "preview.mp4"
 
     scale = args.output_width / args.viewport_width
-    with Camoufox(headless=True) as browser:
+    chrome_path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    with ExitStack() as stack:
+        if chrome_path.exists():
+            playwright = stack.enter_context(sync_playwright())
+            browser = playwright.chromium.launch(headless=True, executable_path=str(chrome_path))
+            stack.callback(browser.close)
+            browser_engine = "system_chrome"
+        else:
+            browser = stack.enter_context(Camoufox(
+                headless=True,
+                fonts=["PingFang SC", "Hiragino Sans GB", "Arial Unicode MS"],
+            ))
+            browser_engine = "camoufox_fallback"
         context = browser.new_context(
             viewport={"width": args.viewport_width, "height": 900},
             device_scale_factor=scale,
@@ -62,12 +77,42 @@ def main() -> int:
 
         page.wait_for_selector("#app", timeout=20_000)
 
+        # H5 activities load their Chinese web fonts after DOMContentLoaded.
+        # Capturing before both fonts and lazy images settle produces visible
+        # hexadecimal tofu boxes even though the same page becomes readable a
+        # few seconds later in an interactive browser.
+        try:
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except PlaywrightTimeoutError:
+            # Activity pages keep analytics/streaming requests open. Font and
+            # image readiness below are the authoritative capture gates.
+            pass
+        page.evaluate(
+            """async () => {
+              if (document.fonts?.ready) await document.fonts.ready;
+              const pending = [...document.images]
+                .filter(image => !image.complete)
+                .map(image => new Promise(resolve => {
+                  image.addEventListener('load', resolve, { once: true });
+                  image.addEventListener('error', resolve, { once: true });
+                }));
+              await Promise.race([
+                Promise.all(pending),
+                new Promise(resolve => setTimeout(resolve, 10_000)),
+              ]);
+            }"""
+        )
+        page.wait_for_timeout(2_000)
+
         # Scroll through the activity body so lazy images/GIF layers are fully rendered.
         for _ in range(3):
             metrics = page.evaluate(
                 """(selectors) => {
                   const app = document.querySelector('#app');
-                  const notes = selectors.map(s => document.querySelector(s)).find(Boolean);
+                  const notesTitle = [...document.querySelectorAll('*')]
+                    .find(el => el.children.length === 0 && el.textContent.trim() === '精选笔记');
+                  const notes = selectors.map(s => document.querySelector(s)).find(Boolean)
+                    || notesTitle?.closest('.onix-wrapper') || notesTitle?.closest('.container');
                   const appRect = app.getBoundingClientRect();
                   const end = notes ? notes.getBoundingClientRect().top - appRect.top : app.scrollHeight;
                   return { end, viewport: innerHeight };
@@ -83,12 +128,36 @@ def main() -> int:
             page.evaluate("y => window.scrollTo(0, y)", max(0, metrics["end"] - metrics["viewport"]))
             page.wait_for_timeout(600)
 
+        # Scrolling can trigger another wave of font/image requests. Require
+        # two stable render fingerprints before producing the archive.
+        previous_fingerprint = None
+        stable_samples = 0
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and stable_samples < 2:
+            page.evaluate("async () => { if (document.fonts?.ready) await document.fonts.ready; }")
+            fingerprint = page.evaluate(
+                """() => {
+                  const app = document.querySelector('#app');
+                  const text = app?.innerText || '';
+                  const images = [...document.images].map(image =>
+                    `${image.currentSrc || image.src}:${image.naturalWidth}x${image.naturalHeight}:${image.complete}`
+                  ).join('|');
+                  return `${text.length}:${text.slice(0, 1200)}:${images}`;
+                }"""
+            )
+            stable_samples = stable_samples + 1 if fingerprint == previous_fingerprint else 0
+            previous_fingerprint = fingerprint
+            page.wait_for_timeout(1_000)
+
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(350)
         capture = page.evaluate(
             r"""(selectors) => {
               const app = document.querySelector('#app');
-              const notes = selectors.map(s => document.querySelector(s)).find(Boolean);
+              const notesTitle = [...document.querySelectorAll('*')]
+                .find(el => el.children.length === 0 && el.textContent.trim() === '精选笔记');
+              const notes = selectors.map(s => document.querySelector(s)).find(Boolean)
+                || notesTitle?.closest('.onix-wrapper') || notesTitle?.closest('.container');
               if (!app) throw new Error('missing #app');
               const appRect = app.getBoundingClientRect();
               const end = notes ? notes.getBoundingClientRect().top - appRect.top : app.scrollHeight;
@@ -113,11 +182,10 @@ def main() -> int:
             NOTES_SELECTORS,
         )
 
-        page.screenshot(
+        page.locator("#app").screenshot(
             path=str(image_path),
             type="jpeg",
             quality=96,
-            full_page=True,
             animations="disabled",
         )
         thumb_clip = {
@@ -155,6 +223,7 @@ def main() -> int:
         "deviceScaleFactor": capture["deviceScaleFactor"],
         "contentWidth": capture["contentWidth"],
         "contentHeight": capture["contentHeight"],
+        "browserEngine": browser_engine,
     }
     (output_dir / "capture-result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n",

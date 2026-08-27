@@ -26,10 +26,12 @@ const atomicJson = async (file, value) => {
 const eventId = (event) => event.activityId || createHash("sha256").update(event.sourceUrl).digest("hex").slice(0, 16);
 const slug = (event) => `xhs-event-${eventId(event)}`;
 
-export function diffEvents(events, state) {
+export function diffEvents(events, state, previousLatestEventId = "") {
   const known = new Set(state?.knownEventIds || []);
   const normalized = events.filter((event) => event?.sourceUrl).map((event) => ({ ...event, id: eventId(event) }));
-  return { current: normalized, newEvents: state?.initializedAt ? normalized.filter((event) => !known.has(event.id)) : [] };
+  if (state?.initializedAt) return { current: normalized, newEvents: normalized.filter((event) => !known.has(event.id)) };
+  const previousIndex = previousLatestEventId ? normalized.findIndex((event) => event.id === previousLatestEventId) : -1;
+  return { current: normalized, newEvents: previousIndex >= 0 ? normalized.slice(0, previousIndex) : [] };
 }
 
 function runBrowser() {
@@ -61,9 +63,12 @@ export async function discoverEvents(options = {}) {
     return { ok: false, status: "empty", checked: 0, added: 0, error: "创作服务中心没有返回可识别活动，未更新基线", diagnostics: result.diagnostics };
   }
 
-  const difference = diffEvents(result.events || [], state);
+  const previousCreatorCheck = queue.checkedAccounts.find((item) => item.accountKey === "creator-events");
+  const previousLatestEventId = state.latestEventId || previousCreatorCheck?.latestPostId || "";
+  const difference = diffEvents(result.events || [], state, previousLatestEventId);
+  if (options.firstLatest && difference.current.length) difference.newEvents = difference.current.slice(0, 1);
   const currentIds = difference.current.map((event) => event.id);
-  const baselineOnly = !state.initializedAt;
+  const baselineOnly = !state.initializedAt && !previousLatestEventId;
   const tasks = difference.newEvents.map((event) => ({
     id: `h5-${event.id}`, type: "h5_event", status: "needs_h5_capture", accountKey: "creator-events",
     title: event.title, slug: slug(event), sourceUrl: event.sourceUrl, coverUrl: event.coverUrl || "",
@@ -89,11 +94,12 @@ export async function discoverEvents(options = {}) {
 }
 
 function parseArguments(argv) {
-  const result = { write: false, fixture: "" };
+  const result = { write: false, fixture: "", firstLatest: process.env.CAIGUANG_FIRST_CAPTURE === "1" };
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--") continue;
     if (argv[index] === "--write") result.write = true;
     else if (argv[index] === "--fixture") result.fixture = argv[++index];
+    else if (argv[index] === "--first-latest") result.firstLatest = true;
     else throw new Error(`未知参数：${argv[index]}`);
   }
   return result;

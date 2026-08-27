@@ -7,10 +7,10 @@ PROJECT_ROOT="${SCRIPT_DIR:h:h:h}"
 find_runtime() {
   local candidate
   for candidate in \
-    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin" \
-    "$HOME/.cache/codex-runtimes/codex-workspace/dependencies/node/bin" \
     "/opt/homebrew/bin" \
-    "/usr/local/bin"; do
+    "/usr/local/bin" \
+    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin" \
+    "$HOME/.cache/codex-runtimes/codex-workspace/dependencies/node/bin"; do
     if [[ -x "$candidate/node" ]]; then
       export PATH="$candidate:$PATH"
       break
@@ -30,48 +30,67 @@ find_runtime() {
 find_runtime
 cd "$PROJECT_ROOT"
 
-if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
-  echo "采光缺少 Node 22 或 pnpm。请先在 Codex 中运行完整安装。" >&2
-  exit 1
-fi
+APP_EXECUTABLE="$HOME/Applications/采光.app/Contents/MacOS/采光"
+
+run_node() {
+  if [[ -x "$APP_EXECUTABLE" ]]; then
+    ELECTRON_RUN_AS_NODE=1 "$APP_EXECUTABLE" "$@"
+  elif command -v node >/dev/null 2>&1; then
+    node "$@"
+  else
+    echo "采光本地运行环境缺失，请重新安装采光应用。" >&2
+    return 1
+  fi
+}
+
+require_pnpm() {
+  command -v pnpm >/dev/null 2>&1 || {
+    echo "仅安装、构建和打包需要 pnpm；日常采集不需要 Codex 或 pnpm。" >&2
+    return 1
+  }
+}
 
 command_name="${1:-doctor}"
 shift || true
 
 case "$command_name" in
   setup)
+    require_pnpm
     pnpm install --prod --frozen-lockfile --prefer-offline
     pnpm setup:downloader
     ;;
   setup-dev)
+    require_pnpm
     pnpm install --frozen-lockfile --prefer-offline
     pnpm setup:downloader
     ;;
   doctor)
-    node_version="$(node -p 'process.versions.node')"
-    pnpm_version="$(pnpm --version)"
+    node_version="$(run_node -p 'process.versions.node')"
+    pnpm_version="$(pnpm --version 2>/dev/null || printf '非必需')"
     [[ -x vendor/xhs-cli/.venv/bin/xhs ]] || { echo "xhs-cli 未安装" >&2; exit 1; }
     [[ -x vendor/XHS-Downloader/.venv/bin/python ]] || { echo "XHS-Downloader 未安装" >&2; exit 1; }
     echo "采光环境正常：Node $node_version · pnpm $pnpm_version · 两个采集引擎已就绪"
     ;;
-  login) pnpm xhs:login "$@" ;;
-  status) pnpm xhs:status "$@" ;;
-  logout) pnpm xhs:logout "$@" ;;
-  check) pnpm daily:check "$@" ;;
-  discover) pnpm discover:xhs -- "$@" ;;
-  verify) pnpm verify:xhs-pins -- --write "$@" ;;
-  backlog) pnpm backlog:xhs -- "$@" ;;
-  capture) pnpm capture:xhs -- "$@" ;;
-  h5) pnpm capture:h5 -- "$@" ;;
-  daily) pnpm daily:run "$@" ;;
-  auto) pnpm daily:auto "$@" ;;
-  schedule) node scripts/caiguang-scheduler.mjs "$@" ;;
-  package) pnpm desktop:package:public "$@" ;;
-  test) pnpm test "$@" ;;
+  login) run_node scripts/xhs-session.mjs login "$@" ;;
+  status) run_node scripts/xhs-session.mjs status "$@" ;;
+  logout) run_node scripts/xhs-session.mjs logout "$@" ;;
+  check) run_node scripts/daily-pipeline.mjs --dry-run "$@" ;;
+  discover) run_node scripts/xhs-discover.mjs "$@" ;;
+  verify) run_node scripts/xhs-verify-pins.mjs --write "$@" ;;
+  backlog) run_node scripts/xhs-backlog.mjs "$@" ;;
+  capture) vendor/XHS-Downloader/.venv/bin/python scripts/xhs-capture.py "$@" ;;
+  h5) run_node scripts/capture-h5-event.mjs "$@" ;;
+  daily) run_node scripts/daily-pipeline.mjs "$@" ;;
+  auto) run_node scripts/daily-auto.mjs "$@" ;;
+  schedule) run_node scripts/caiguang-scheduler.mjs "$@" ;;
+  schedule-worker) run_node scripts/caiguang-scheduler.mjs "$@" ;;
+  package) require_pnpm; pnpm desktop:package:public "$@" ;;
+  test) require_pnpm; pnpm test "$@" ;;
   app)
     if [[ -d "$HOME/Applications/采光.app" ]]; then
       open "$HOME/Applications/采光.app"
     else
+      require_pnpm
       pnpm desktop:live
     fi
     ;;

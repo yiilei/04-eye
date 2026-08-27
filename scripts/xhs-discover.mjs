@@ -106,6 +106,13 @@ export function diffPosts(posts, lastSeenPostId) {
   return { status: "verified", latestPostId, newPosts: orderedPosts.slice(0, baselineIndex).reverse() };
 }
 
+export function latestPostOnly(posts) {
+  const visible = posts.filter((post) => !post.pinned);
+  const candidates = visible.length ? visible : posts;
+  const latest = [...candidates].sort((left, right) => postIdTimestamp(right.id) - postIdTimestamp(left.id))[0];
+  return latest ? { status: "verified", latestPostId: latest.id, newPosts: [latest] } : { status: "empty", latestPostId: "", newPosts: [] };
+}
+
 export function selectAccounts(accounts, accountKeys = [], pinnedAccountIds) {
   const explicit = new Set(accountKeys || []);
   const pinned = Array.isArray(pinnedAccountIds) ? new Set(pinnedAccountIds.map(String)) : null;
@@ -122,7 +129,7 @@ function slugFor(account, post) {
 }
 
 function parseArguments(argv) {
-  const result = { accountKeys: [], write: false, fixture: "", maxAccounts: Infinity };
+  const result = { accountKeys: [], write: false, fixture: "", maxAccounts: Infinity, firstLatest: process.env.CAIGUANG_FIRST_CAPTURE === "1" };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--") continue;
@@ -130,6 +137,7 @@ function parseArguments(argv) {
     else if (value === "--account") result.accountKeys.push(argv[++index]);
     else if (value === "--fixture") result.fixture = argv[++index];
     else if (value === "--max-accounts") result.maxAccounts = Number(argv[++index]);
+    else if (value === "--first-latest") result.firstLatest = true;
     else throw new Error(`未知参数：${value}`);
   }
   return result;
@@ -141,7 +149,7 @@ function runXhs(args) {
     encoding: "utf8",
     timeout: 120_000,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, XHS_CLI_DISABLE_BROWSER_COOKIE: "1", CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1", NO_COLOR: "1" },
+    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, XHS_CLI_DISABLE_BROWSER_COOKIE: process.env.XHS_CLI_DISABLE_BROWSER_COOKIE ?? "0", CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1", NO_COLOR: "1" },
   }).trim();
 }
 
@@ -172,7 +180,8 @@ export async function discover(options = {}) {
     if (options.accountKeys?.length) throw new Error("没有匹配的已验证账号埋点");
     return { ok: true, status: options.write ? "written" : "dry_run", checked: 0, added: 0, checks: [], tasks: [] };
   }
-  if (!options.fixture && !sessionAvailable()) return { ok: false, status: "login_required", checked: 0, added: 0, configDir: cliConfig };
+  const chromeFallbackEnabled = (process.env.CAIGUANG_CHROME_FALLBACK ?? "1") === "1";
+  if (!options.fixture && !chromeFallbackEnabled && !sessionAvailable()) return { ok: false, status: "login_required", checked: 0, added: 0, configDir: cliConfig };
 
   const fixture = options.fixture ? await readJson(path.resolve(root, options.fixture)) : null;
   const checkedAt = new Date().toISOString();
@@ -192,7 +201,7 @@ export async function discover(options = {}) {
         continue;
       }
       const posts = normalizePosts(postsPayload, account);
-      const difference = diffPosts(posts, account.lastSeenPostId);
+      const difference = options.firstLatest ? latestPostOnly(posts) : diffPosts(posts, account.lastSeenPostId);
       checks.push({ accountKey: account.searchKey, checkedAt, status: difference.status, latestPostId: difference.latestPostId,
         ...(difference.status === "baseline_missing" ? { error: "主页首批帖子中未找到上次基线，已停止，避免误抓历史内容" } : {}) });
       for (const post of difference.newPosts) {

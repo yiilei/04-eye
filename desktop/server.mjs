@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
@@ -25,6 +26,13 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   const trashIndexPath = path.join(dataRoot, "data", "review-trash.json");
   const preferencesPath = path.join(dataRoot, "data", "user-preferences.json");
   const pendingPinsPath = path.join(dataRoot, "data", "xhs-pending-pins.json");
+  const schedulerStatePath = path.join(dataRoot, "data", "scheduler-state.json");
+  const captureProgressPath = path.join(dataRoot, "data", "capture-progress.json");
+  const installedSourceRoot = path.join(dataRoot, "source");
+  const installedScheduler = path.join(installedSourceRoot, "scripts", "caiguang-scheduler.mjs");
+  let captureProcess;
+  let captureStartedAt = null;
+  let captureExitCode = null;
   await mkdir(path.dirname(registryPath), { recursive: true });
   await mkdir(reviewRoot, { recursive: true });
   await mkdir(trashRoot, { recursive: true });
@@ -106,6 +114,58 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       }
       if (pathname === "/api/desktop/preferences" && request.method === "GET") {
         const response = json(await readJson(preferencesPath, {}));
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/capture-now" && request.method === "GET") {
+        const state = await readJson(schedulerStatePath, {});
+        const progress = await readJson(captureProgressPath, {});
+        const response = json({
+          ok: true,
+          running: Boolean(captureProcess),
+          startedAt: captureStartedAt,
+          exitCode: captureExitCode,
+          state,
+          progress,
+        });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/capture-now" && request.method === "POST") {
+        const firstCapture = new URL(request.url).searchParams.get("initial") === "1";
+        if (captureProcess) {
+          const response = json({ ok: true, running: true, startedAt: captureStartedAt }, 202);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        try {
+          await access(installedScheduler);
+        } catch {
+          const response = json({ ok: false, error: "采光本地采集组件不完整，请重新安装最新版。" }, 503);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        captureStartedAt = new Date().toISOString();
+        captureExitCode = null;
+        const child = spawn(process.execPath, [installedScheduler, "run"], {
+          cwd: installedSourceRoot,
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0" },
+          stdio: "ignore",
+        });
+        captureProcess = child;
+        child.once("error", () => {
+          captureExitCode = -1;
+          captureProcess = undefined;
+        });
+        child.once("exit", (code) => {
+          captureExitCode = code ?? -1;
+          captureProcess = undefined;
+        });
+        const response = json({ ok: true, running: true, startedAt: captureStartedAt }, 202);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);

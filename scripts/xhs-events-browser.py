@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import sys
 
-from xhs_cli.auth import cookie_str_to_dict, get_saved_cookie_string
+from xhs_cli.auth import cookie_str_to_dict, get_cookie_string
 from xhs_cli.client import XhsClient
 
 
@@ -14,7 +14,7 @@ EVENTS_URL = "https://creator.xiaohongshu.com/new/events"
 
 
 def main() -> int:
-    cookie = get_saved_cookie_string()
+    cookie = get_cookie_string()
     if not cookie:
         print(json.dumps({"ok": False, "status": "login_required"}, ensure_ascii=False))
         return 1
@@ -27,16 +27,16 @@ def main() -> int:
             print(json.dumps({"ok": False, "status": "creator_login_required", "url": page.url}, ensure_ascii=False))
             return 1
 
-        default_sort = page.get_by_text("默认排序", exact=True)
+        default_sort = page.get_by_text("默认排序", exact=True).locator("visible=true")
         if default_sort.count():
             try:
                 default_sort.first.click(timeout=3_000)
                 page.wait_for_timeout(300)
             except Exception:
                 pass
-        latest = page.get_by_text("最新排序", exact=True)
+        latest = page.get_by_text("最新排序", exact=True).locator("visible=true")
         if not latest.count():
-            latest = page.get_by_text("最新发布", exact=True)
+            latest = page.get_by_text("最新发布", exact=True).locator("visible=true")
         if latest.count():
             try:
                 latest.first.click(timeout=3_000)
@@ -61,7 +61,7 @@ def main() -> int:
                   const image = card.querySelector(':scope > img');
                   found.push({
                     activityId,
-                    sourceUrl: `${location.origin}${location.pathname}#activity=${activityId}`,
+                    sourceUrl: `https://fe.xiaohongshu.com/ditto/vincent/${activityId}?fullscreen=true&naviHidden=yes&source=creator_activity_center`,
                     title: title || '小红书创作活动',
                     description: clean(card.querySelector('.desc')?.textContent),
                     displayDate: clean(card.querySelector('.time')?.textContent),
