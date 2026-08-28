@@ -35,6 +35,16 @@ write_stamp() {
   print -r -- "$2" > "$1"
 }
 
+venv_portable() {
+  local venv_bin="$1"
+  local script="$2"
+  local script_path="$venv_bin/$script"
+  [[ -x "$script_path" ]] || return 1
+  local shebang
+  shebang="$(head -1 "$script_path" 2>/dev/null)"
+  [[ "$shebang" == "#!$venv_bin/python" || "$shebang" == "#!$venv_bin/python3" ]]
+}
+
 retry_network_step() {
   local attempt=1
   while ! "$@"; do
@@ -88,14 +98,14 @@ DISCOVERY_FINGERPRINT="$(fingerprint "$DISCOVERY_ROOT/pyproject.toml" "$DISCOVER
 
 engine_ready=0
 if [[ "${FORCE_SETUP:-0}" != "1" ]] && stamp_matches "$ENGINE_STAMP" "$ENGINE_FINGERPRINT"; then
-  if "$ENGINE_ROOT/.venv/bin/python" -c 'import curl_cffi, fastapi, lxml, yaml' 2>/dev/null; then
+  if venv_portable "$ENGINE_ROOT/.venv/bin" "pip3" && "$ENGINE_ROOT/.venv/bin/python" -c 'import curl_cffi, fastapi, lxml, yaml' 2>/dev/null; then
     engine_ready=1
   fi
 fi
 
 discovery_ready=0
 if [[ "${FORCE_SETUP:-0}" != "1" ]] && stamp_matches "$DISCOVERY_STAMP" "$DISCOVERY_FINGERPRINT"; then
-  if [[ -x "$DISCOVERY_ROOT/.venv/bin/xhs" ]] && "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, xhs_cli' 2>/dev/null; then
+  if venv_portable "$DISCOVERY_ROOT/.venv/bin" "xhs" && "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, xhs_cli' 2>/dev/null; then
     discovery_ready=1
   fi
 fi

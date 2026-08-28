@@ -187,7 +187,11 @@ async function uninstall() {
 const command = process.argv[2] || "status";
 if (command === "install") await install();
 else if (command === "tick") await tick();
-else if (command === "run") console.log(JSON.stringify(await runCapture("manual")));
+else if (command === "run") {
+  const result = await runCapture("manual");
+  console.log(JSON.stringify(result));
+  if (!result.ok) process.exitCode = 1;
+}
 else if (command === "status") await status();
 else if (command === "uninstall") await uninstall();
 else throw new Error(`未知定时器命令：${command}`);
