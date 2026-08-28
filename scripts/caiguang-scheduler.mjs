@@ -21,6 +21,11 @@ const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
 const installedSourceRoot = path.join(appData, "source");
 const installedScheduler = path.join(installedSourceRoot, "scripts", "caiguang-scheduler.mjs");
 
+const copyUnlessSameFile = async (source, destination) => {
+  if (path.resolve(source) === path.resolve(destination)) return;
+  await cp(source, destination);
+};
+
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
 };
@@ -82,7 +87,7 @@ async function tick() {
   await migrateLegacyData(appData);
   console.error("[scheduler] tick:migrated");
   const preferences = await readJson(preferencesPath, { automaticCaptureEnabled: false, captureTime: "02:00", pushTime: "11:00" });
-  if (!schedulerEnabled(preferences)) { console.error("[scheduler] tick:disabled"); return; }
+  if (!schedulerEnabled(preferences)) return;
   const state = await readJson(statePath, {});
   const now = clock();
   console.error(`[scheduler] tick:clock ${now.date} ${now.time}`);
@@ -127,9 +132,9 @@ async function install() {
   // so background work never stalls behind an invisible macOS privacy prompt.
   await mkdir(path.join(installedSourceRoot, "scripts"), { recursive: true });
   await mkdir(path.join(installedSourceRoot, "desktop"), { recursive: true });
-  await cp(fileURLToPath(import.meta.url), installedScheduler);
-  await cp(path.join(projectRoot, "scripts", "scheduler-policy.mjs"), path.join(installedSourceRoot, "scripts", "scheduler-policy.mjs"));
-  await cp(path.join(projectRoot, "desktop", "data-migration.mjs"), path.join(installedSourceRoot, "desktop", "data-migration.mjs"));
+  await copyUnlessSameFile(fileURLToPath(import.meta.url), installedScheduler);
+  await copyUnlessSameFile(path.join(projectRoot, "scripts", "scheduler-policy.mjs"), path.join(installedSourceRoot, "scripts", "scheduler-policy.mjs"));
+  await copyUnlessSameFile(path.join(projectRoot, "desktop", "data-migration.mjs"), path.join(installedSourceRoot, "desktop", "data-migration.mjs"));
   await writeFile(localRuntimeRunner, [
     "#!/bin/zsh",
     `export HOME=${JSON.stringify(os.homedir())}`,
