@@ -565,16 +565,15 @@ export default function Home() {
     }, 260);
   }, [reviewTourStep, reviewTourTransitioning]);
 
-  const finishReviewTourAndCapture = useCallback(() => {
+  const finishReviewTour = useCallback(() => {
     if (reviewTourTransitioning) return;
     setReviewTourTransitioning(true);
     window.setTimeout(() => {
       localStorage.setItem(reviewTourCompleteStorageKey, "1");
       setReviewTourStep(null);
       setReviewTourTransitioning(false);
-      void startManualCapture(true);
     }, 280);
-  }, [reviewTourTransitioning, startManualCapture]);
+  }, [reviewTourTransitioning]);
 
   useEffect(() => {
     if (reviewTourStep === null) return;
@@ -1821,7 +1820,7 @@ export default function Home() {
             <div className="gallery-position-group">
               <span className="gallery-position" aria-label={`当前第 ${galleryIndex + 1} 张，共 ${current.gallery?.length ?? 1} 张`}>{galleryIndex + 1}/{current.gallery?.length ?? 1}</span>
               {desktopAppMode && (
-                <button type="button" className={`capture-now ${manualCapture.state}`} onClick={() => reviewTourStep === 3 ? finishReviewTourAndCapture() : void startManualCapture()}
+                <button type="button" className={`capture-now ${manualCapture.state}`} onClick={() => void startManualCapture()}
                   disabled={manualCapture.state === "running"} aria-label="立即执行一次本地抓取"
                   title="立即抓取（完全在本地执行，不使用 Codex）">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 11V6.7a1.45 1.45 0 0 1 2.9 0V10m0 0V4.8a1.45 1.45 0 0 1 2.9 0V10m0 0V6a1.45 1.45 0 0 1 2.9 0v5m0 0V8.3a1.45 1.45 0 0 1 2.9 0v5.2c0 4.1-2.7 7-6.8 7h-.8c-2.1 0-3.8-.8-5.1-2.4l-2.4-3a1.55 1.55 0 0 1 2.3-2.1l1.2 1.1V11Z" /></svg>
@@ -1858,12 +1857,12 @@ export default function Home() {
             </>}
             {reviewTourStep === 3 && <>
               <h2>试试第一次抓取</h2>
-              <p>高光区域是本地抓手。完成引导后会执行首次抓取：创作服务中心最新一条，以及每个已启用埋点账号的最新一篇，不回填历史。</p>
+              <p>高光区域是本地抓手。完成引导后，由你自己点击抓手开始首次采集：抓取创作服务中心最新一条，以及每个已启用埋点账号的最新一条，不回填历史。完成按钮不会自动抓取。</p>
             </>}
             <div className="review-tour-controls">
               <button type="button" className="review-tour-back" onClick={() => moveReviewTour(-1)} disabled={reviewTourStep === 0 || reviewTourTransitioning}>上一步</button>
               {reviewTourStep < 3 && <button type="button" className="review-tour-next" onClick={() => moveReviewTour(1)} disabled={reviewTourTransitioning}>下一步</button>}
-              {reviewTourStep === 3 && <button type="button" className="review-tour-next" onClick={finishReviewTourAndCapture} disabled={reviewTourTransitioning}>完成</button>}
+              {reviewTourStep === 3 && <button type="button" className="review-tour-next" onClick={finishReviewTour} disabled={reviewTourTransitioning}>完成</button>}
             </div>
           </div>
         </section>
