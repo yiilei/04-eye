@@ -1831,6 +1831,7 @@ export default function Home() {
               {manualCapture.message && <span className={`capture-now-message ${manualCapture.state}`} role="status" aria-live="polite">
                 <span>{manualCapture.message}</span>
                 {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
+                {manualCapture.state !== "running" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
               </span>}
             </div>
             <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo} disabled={!history.length && !decisions[current.id]}>{decisions[current.id] ? "重新选择" : "撤回上一步"}</button>

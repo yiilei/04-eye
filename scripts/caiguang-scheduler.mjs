@@ -1,5 +1,5 @@
-import { execFileSync, spawnSync } from "node:child_process";
-import { access, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { access, chmod, cp, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -17,6 +17,9 @@ const launchAgent = path.join(os.homedir(), "Library", "LaunchAgents", "com.yile
 const wrapper = path.join(projectRoot, "plugins", "caiguang", "scripts", "caiguang");
 const localRuntimeRoot = path.join(os.homedir(), "Library", "Application Support", "Caiguang", "runtime");
 const localRuntimeNode = path.join(localRuntimeRoot, "node");
+const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
+const installedSourceRoot = path.join(appData, "source");
+const installedScheduler = path.join(installedSourceRoot, "scripts", "caiguang-scheduler.mjs");
 
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
@@ -43,13 +46,28 @@ function notify(title, message) {
 async function runCapture(reason = "scheduled") {
   await mkdir(logRoot, { recursive: true });
   const now = clock();
-  const result = spawnSync(wrapper, ["auto"], {
-    cwd: projectRoot, encoding: "utf8", timeout: 60 * 60 * 1000,
-    env: { ...process.env, SHARP_EYE_HOME: appData },
-  });
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  await writeFile(path.join(logRoot, `${now.date}-capture.log`), `${output}\n`);
-  const ok = result.status === 0;
+  const captureLog = path.join(logRoot, `${now.date}-capture.log`);
+  const logHandle = await open(captureLog, "w");
+  let status = 1;
+  try {
+    const child = spawn(wrapper, ["auto"], {
+      cwd: projectRoot,
+      env: { ...process.env, SHARP_EYE_HOME: appData },
+      stdio: ["ignore", logHandle.fd, logHandle.fd],
+    });
+    status = await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        resolve(124);
+      }, 60 * 60 * 1000);
+      child.once("error", () => { clearTimeout(timeout); resolve(1); });
+      child.once("exit", (code) => { clearTimeout(timeout); resolve(code ?? 1); });
+    });
+  } finally {
+    await logHandle.close();
+  }
+  const output = await readFile(captureLog, "utf8").catch(() => "");
+  const ok = status === 0;
   const state = await readJson(statePath, {});
   state.lastCaptureDate = now.date;
   state.lastCaptureAt = new Date().toISOString();
@@ -60,13 +78,18 @@ async function runCapture(reason = "scheduled") {
 }
 
 async function tick() {
+  console.error("[scheduler] tick:start");
   await migrateLegacyData(appData);
+  console.error("[scheduler] tick:migrated");
   const preferences = await readJson(preferencesPath, { automaticCaptureEnabled: false, captureTime: "02:00", pushTime: "11:00" });
-  if (!schedulerEnabled(preferences)) return;
+  if (!schedulerEnabled(preferences)) { console.error("[scheduler] tick:disabled"); return; }
   const state = await readJson(statePath, {});
   const now = clock();
+  console.error(`[scheduler] tick:clock ${now.date} ${now.time}`);
   if (captureIsDue(preferences, state, now)) {
+    console.error("[scheduler] tick:capture-due");
     await runCapture("scheduled");
+    console.error("[scheduler] tick:capture-finished");
   }
   const latest = await readJson(statePath, state);
   if (pushIsDue(preferences, latest, now)) {
@@ -76,6 +99,7 @@ async function tick() {
     latest.lastPushAt = new Date().toISOString();
     await atomicJson(statePath, latest);
   }
+  console.error("[scheduler] tick:done");
 }
 
 async function install() {
@@ -84,29 +108,48 @@ async function install() {
   await mkdir(logRoot, { recursive: true });
   await mkdir(localRuntimeRoot, { recursive: true });
   const appCandidates = [
-    path.join(os.homedir(), "Applications", "采光.app", "Contents", "MacOS", "采光"),
-    path.join("/Applications", "采光.app", "Contents", "MacOS", "采光"),
+    path.join(os.homedir(), "Applications", "采光.app", "Contents", "Resources", "runtime", "node"),
+    path.join("/Applications", "采光.app", "Contents", "Resources", "runtime", "node"),
   ];
   let appExecutable = "";
   for (const candidate of appCandidates) {
     try { await access(candidate); appExecutable = candidate; break; } catch { /* try next */ }
   }
-  if (!appExecutable) throw new Error("没有找到已安装的采光.app，无法建立独立后台运行环境");
+  if (!appExecutable) throw new Error("采光.app 缺少独立后台运行环境，请安装最新版采光");
   await rm(localRuntimeNode, { force: true });
-  await symlink(appExecutable, localRuntimeNode);
+  // launchd may stall before JavaScript starts when ProgramArguments points to
+  // a symlink whose target lives inside an application bundle. Keep a private
+  // executable copy in Application Support instead.
+  await cp(appExecutable, localRuntimeNode);
+  await chmod(localRuntimeNode, 0o755);
+  // launchd does not inherit Terminal/Codex access to Desktop and Documents.
+  // Execute the scheduler from the app-owned Application Support source tree
+  // so background work never stalls behind an invisible macOS privacy prompt.
+  await mkdir(path.join(installedSourceRoot, "scripts"), { recursive: true });
+  await mkdir(path.join(installedSourceRoot, "desktop"), { recursive: true });
+  await cp(fileURLToPath(import.meta.url), installedScheduler);
+  await cp(path.join(projectRoot, "scripts", "scheduler-policy.mjs"), path.join(installedSourceRoot, "scripts", "scheduler-policy.mjs"));
+  await cp(path.join(projectRoot, "desktop", "data-migration.mjs"), path.join(installedSourceRoot, "desktop", "data-migration.mjs"));
+  await writeFile(localRuntimeRunner, [
+    "#!/bin/zsh",
+    `export HOME=${JSON.stringify(os.homedir())}`,
+    "export PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "export LANG=zh_CN.UTF-8",
+    `export SHARP_EYE_HOME=${JSON.stringify(appData)}`,
+    `${JSON.stringify(localRuntimeNode)} ${JSON.stringify(installedScheduler)} tick`,
+    "exit $?",
+    "",
+  ].join("\n"));
+  await chmod(localRuntimeRunner, 0o755);
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.yilei.caiguang.scheduler</string>
   <key>ProgramArguments</key><array>
-    <string>${xml(localRuntimeNode)}</string>
-    <string>${xml(fileURLToPath(import.meta.url))}</string>
-    <string>tick</string>
+    <string>/bin/zsh</string>
+    <string>-f</string>
+    <string>${xml(localRuntimeRunner)}</string>
   </array>
-  <key>EnvironmentVariables</key><dict>
-    <key>ELECTRON_RUN_AS_NODE</key><string>1</string>
-    <key>SHARP_EYE_HOME</key><string>${xml(appData)}</string>
-  </dict>
   <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>${xml(path.join(logRoot, "scheduler.stdout.log"))}</string>
@@ -143,3 +186,7 @@ else if (command === "run") console.log(JSON.stringify(await runCapture("manual"
 else if (command === "status") await status();
 else if (command === "uninstall") await uninstall();
 else throw new Error(`未知定时器命令：${command}`);
+
+// Exit explicitly after all awaited writes. This also keeps scheduler ticks
+// deterministic if a future dependency opens a background handle.
+process.exit(process.exitCode || 0);

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.6";
+const version = "0.3.7";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
@@ -19,6 +19,7 @@ const releaseRoot = path.join(root, "release", "desktop");
 const appPath = path.join(releaseRoot, "采光.app");
 const resources = path.join(appPath, "Contents", "Resources");
 const packagedApp = path.join(resources, "app");
+const packagedRuntime = path.join(resources, "runtime");
 const iconSvg = path.join(root, "assets", "app-icon.svg");
 const iconset = path.join(releaseRoot, "caiguang.iconset");
 const iconSource = path.join(releaseRoot, "caiguang-1024.png");
@@ -109,6 +110,13 @@ await mkdir(releaseRoot, { recursive: true });
 await createMacIcon();
 await cp(electronApp, appPath, { recursive: true, verbatimSymlinks: true });
 await mkdir(packagedApp, { recursive: true });
+await mkdir(packagedRuntime, { recursive: true });
+// Background capture must not reuse Electron as a Node substitute. Under
+// launchd the Electron executable can remain stuck in framework bootstrap and
+// prevent later scheduler ticks. Ship the same standalone Node executable that
+// runs this packager so scheduled work is independent from Codex and Electron.
+await cp(process.execPath, path.join(packagedRuntime, "node"));
+await chmod(path.join(packagedRuntime, "node"), 0o755);
 for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, entry), path.join(packagedApp, entry), { recursive: true });
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });
 await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "caiguang", version, type: "module", main: "desktop/main.mjs" }, null, 2));
