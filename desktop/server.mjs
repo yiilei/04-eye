@@ -144,7 +144,10 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
       if (pathname === "/api/desktop/capture-now" && request.method === "POST") {
-        const firstCapture = new URL(request.url).searchParams.get("initial") === "1";
+        const explicitFirstCapture = new URL(request.url).searchParams.get("initial") === "1";
+        // Auto-detect first capture: if no prior capture ever succeeded, treat as first run
+        const schedulerState = await readJson(schedulerStatePath, {});
+        const firstCapture = explicitFirstCapture || !schedulerState.lastCaptureDate;
         if (captureProcess) {
           const response = json({ ok: true, running: true, startedAt: captureStartedAt }, 202);
           outgoing.statusCode = response.status;
