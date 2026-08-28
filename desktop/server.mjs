@@ -185,9 +185,28 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
       if (pathname === "/api/desktop/camoufox-fetch" && request.method === "GET") {
+        const logPath = path.join(dataRoot, "logs", "camoufox-fetch.log");
+        let log = "";
+        try { log = await readFile(logPath, "utf8"); } catch { /* log not created yet */ }
+        let stage = "准备下载";
+        let percent = 0;
+        const downloading = log.match(/Downloading[^\d]*(\d+(?:\.\d+)?)%/g);
+        const extracting = log.match(/Extracting[^\d]*(\d+(?:\.\d+)?)%/g);
+        if (extracting?.length) {
+          stage = "正在解压 Camoufox";
+          percent = Number(extracting.at(-1)?.match(/(\d+(?:\.\d+)?)%/)?.[1] || 0);
+        } else if (downloading?.length) {
+          stage = "正在下载 Camoufox";
+          percent = Number(downloading.at(-1)?.match(/(\d+(?:\.\d+)?)%/)?.[1] || 0);
+        } else if (/Camoufox v[\d.]+[\w.-]* installed/.test(log)) {
+          stage = "正在完成配置";
+          percent = 100;
+        }
         const response = json({
           running: Boolean(camoufoxFetchProcess),
           exitCode: camoufoxFetchExitCode,
+          stage,
+          percent,
         });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));

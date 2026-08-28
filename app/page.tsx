@@ -437,6 +437,7 @@ export default function Home() {
   const [eagleSetupStatus, setEagleSetupStatus] = useState("尚未检测");
   const [onboardingPreview, setOnboardingPreview] = useState(false);
   const [camoufoxStatus, setCamoufoxStatus] = useState<"checking" | "ready" | "downloading" | "failed">("checking");
+  const [camoufoxProgress, setCamoufoxProgress] = useState({ stage: "准备下载", percent: 0 });
   const [reviewTourStep, setReviewTourStep] = useState<number | null>(null);
   const [reviewTourTransitioning, setReviewTourTransitioning] = useState(false);
   const [reviewTourSpotlight, setReviewTourSpotlight] = useState({ left: 0, top: 0, width: 0, height: 0 });
@@ -1062,9 +1063,10 @@ export default function Home() {
         } else {
           // Camoufox not installed — check if a download is already running
           const fetchRes = await fetch("/api/desktop/camoufox-fetch", { cache: "no-store" });
-          const fetchData = await fetchRes.json() as { running?: boolean };
+          const fetchData = await fetchRes.json() as { running?: boolean; stage?: string; percent?: number };
           if (!active) return;
           if (fetchData.running) {
+            setCamoufoxProgress({ stage: fetchData.stage || "正在下载 Camoufox", percent: Math.max(0, Math.min(100, Number(fetchData.percent) || 0)) });
             setCamoufoxStatus("downloading");
           } else if (camoufoxStatus !== "downloading") {
             // Auto-start download
@@ -1075,7 +1077,7 @@ export default function Home() {
       } catch { if (active) setCamoufoxStatus("failed"); }
     };
     void check();
-    const timer = window.setInterval(() => void check(), 5000);
+    const timer = window.setInterval(() => void check(), 1000);
     return () => { active = false; window.clearInterval(timer); };
   }, [onboardingPreview, camoufoxStatus]);
 
@@ -1659,7 +1661,7 @@ export default function Home() {
           <div className="first-run-setup">
             <div className="first-run-intro"><h1><i aria-hidden="true" />开始使用<i aria-hidden="true" /></h1></div>
            <div className="first-run-steps">
-              <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && <span className="completion-check">✓</span>}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>正在下载 Camoufox（约 640MB），请耐心等待…</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
+              <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && <span className="completion-check">✓</span>}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先使用采光独立会话；独立会话不可用时，只读使用 Chrome 当前登录状态，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; if (xhsSetupStatus === "等待登录") { setXhsSetupStatus("已登录"); return; } setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "已在 Chrome 登录" : xhsSetupStatus === "已登录" ? "已登录" : "在 Chrome 登录"}</button></div></div>
              <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
            </div>
