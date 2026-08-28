@@ -59,6 +59,7 @@ export async function checkForUpdate({ currentVersion, fetchImpl = fetch } = {})
       currentVersion,
       latestVersion,
       releaseUrl: typeof release?.html_url === "string" ? release.html_url : null,
+      downloadUrl: (release?.assets || []).find((a) => a.name === `Caiguang-macOS-arm64-v${latestVersion}.zip`)?.browser_download_url || null,
       publishedAt: typeof release?.published_at === "string" ? release.published_at : null,
     };
   } catch (error) {

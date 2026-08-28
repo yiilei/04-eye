@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.10";
+const version = "0.3.11";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app

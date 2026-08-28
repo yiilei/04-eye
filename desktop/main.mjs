@@ -1,8 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile, rm, rename } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
 import { migrateLegacyData } from "./data-migration.mjs";
@@ -141,6 +144,36 @@ ipcMain.handle("caiguang:open-release", (_event, value) => {
   if (!/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/tag\/v[\d.]+$/u.test(url)) return false;
   void shell.openExternal(url);
   return true;
+});
+ipcMain.handle("caiguang:download-update", async (_event, url) => {
+  const downloadUrl = String(url || "");
+  if (!/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/download\/v[\d.]+\/Caiguang-macOS-arm64-v[\d.]+\.zip$/u.test(downloadUrl)) {
+    return { ok: false, error: "无效的下载地址" };
+  }
+  try {
+    const tmpDir = path.join(os.tmpdir(), `caiguang-update-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    const zipPath = path.join(tmpDir, "update.zip");
+    const response = await fetch(downloadUrl, { redirect: "follow" });
+    if (!response.ok || !response.body) throw new Error(`下载失败: HTTP ${response.status}`);
+    await pipeline(response.body, createWriteStream(zipPath));
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("unzip", ["-q", "-o", zipPath, "-d", tmpDir]);
+    const newApp = path.join(tmpDir, "采光.app");
+    if (!existsSync(newApp)) throw new Error("解压后未找到采光.app");
+    const appHome = path.join(os.homedir(), "Applications");
+    const currentApp = path.join(appHome, "采光.app");
+    const backupApp = path.join(appHome, "采光.app.old");
+    if (existsSync(backupApp)) await rm(backupApp, { recursive: true });
+    if (existsSync(currentApp)) await rename(currentApp, backupApp);
+    await execFile("cp", ["-R", newApp, currentApp]);
+    await rm(tmpDir, { recursive: true });
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "更新失败" };
+  }
 });
 
 ipcMain.handle("caiguang:fit-window", (event, requested = {}) => {

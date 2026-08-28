@@ -38,6 +38,7 @@ type DesktopBridge = {
   getRuntimeStatus?: () => Promise<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>;
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
+  downloadUpdate?: (url: string) => Promise<{ ok: boolean; error?: string }>;
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
@@ -457,7 +458,7 @@ export default function Home() {
   const [desktopAppMode, setDesktopAppMode] = useState(false);
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>();
-  const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable"; latestVersion?: string; releaseUrl?: string | null; message?: string }>({ state: "idle" });
+  const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable" | "downloading" | "downloaded" | "download_failed"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string }>({ state: "idle" });
   const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
@@ -501,6 +502,22 @@ export default function Home() {
       setUpdateStatus(result);
     } catch {
       setUpdateStatus({ state: "unavailable", message: "暂时无法检查更新" });
+    }
+  }, []);
+  const downloadAndInstallUpdate = useCallback(async (url: string) => {
+    const bridge = getDesktopBridge();
+    if (!bridge?.downloadUpdate) {
+      setUpdateStatus((prev) => ({ ...prev, state: "download_failed", message: "请在采光桌面应用中更新" }));
+      return;
+    }
+    setUpdateStatus((prev) => ({ ...prev, state: "downloading" }));
+    try {
+      const result = await bridge.downloadUpdate(url);
+      if (!result.ok) {
+        setUpdateStatus((prev) => ({ ...prev, state: "download_failed", message: result.error || "下载失败" }));
+      }
+    } catch (error) {
+      setUpdateStatus((prev) => ({ ...prev, state: "download_failed", message: error instanceof Error ? error.message : "下载失败" }));
     }
   }, []);
   const refreshManualCapture = useCallback(async () => {
@@ -1770,11 +1787,13 @@ export default function Home() {
                 </div>
                 <div className="runtime-update-row">
                   <div className="runtime-update-copy">
-                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "unavailable" ? updateStatus.message : "检查应用更新"}</strong>
-                    <small>只检查公开版本，不会自动覆盖当前应用</small>
+                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "downloading" ? "正在下载更新，应用将自动重启…" : updateStatus.state === "download_failed" ? updateStatus.message || "下载失败" : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "unavailable" ? updateStatus.message : "检查应用更新"}</strong>
+                    <small>{updateStatus.state === "available" ? "点击下载并自动安装，应用将重启" : "只检查公开版本，不会自动覆盖当前应用"}</small>
                   </div>
-                  {updateStatus.state === "available" && updateStatus.releaseUrl ? (
-                    <button type="button" className="runtime-release" onClick={() => void getDesktopBridge()?.openRelease?.(updateStatus.releaseUrl!)}>查看</button>
+                  {updateStatus.state === "available" && updateStatus.downloadUrl ? (
+                    <button type="button" className="runtime-release" disabled={updateStatus.state === "downloading"} onClick={() => void downloadAndInstallUpdate(updateStatus.downloadUrl!)}>下载并安装</button>
+                  ) : updateStatus.state === "downloading" ? (
+                    <button type="button" className="runtime-release" disabled>下载中…</button>
                   ) : (
                     <button type="button" className="runtime-check" disabled={updateStatus.state === "checking"} onClick={() => void checkForAppUpdate()}>{updateStatus.state === "checking" ? "检查中" : "检查"}</button>
                   )}
