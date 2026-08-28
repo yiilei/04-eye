@@ -118,6 +118,16 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
+      if (pathname === "/api/desktop/first-run" && request.method === "GET") {
+        const preferences = await readJson(preferencesPath, {});
+        const response = json({
+          onboardingComplete: preferences.onboardingComplete === true,
+          reviewTourComplete: preferences.reviewTourComplete === true,
+        });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
       if (pathname === "/api/desktop/capture-now" && request.method === "GET") {
         const state = await readJson(schedulerStatePath, {});
         const progress = await readJson(captureProgressPath, {});
@@ -237,13 +247,29 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           response.headers.forEach((value, key) => outgoing.setHeader(key, value));
           return Readable.fromWeb(response.body).pipe(outgoing);
         }
+        const existing = await readJson(preferencesPath, {});
         await atomicJson(preferencesPath, {
+          ...existing,
           schemaVersion: 1,
           automaticCaptureEnabled: payload.automaticCaptureEnabled,
           captureTime: payload.captureTime,
           pushTime: payload.pushTime,
           pinnedAccountIds: payload.pinnedAccountIds.map(String),
           manualPinAccounts: payload.manualPinAccounts,
+          updatedAt: new Date().toISOString(),
+        });
+        const response = json({ ok: true });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/first-run" && request.method === "POST") {
+        const payload = await request.json();
+        const existing = await readJson(preferencesPath, {});
+        await atomicJson(preferencesPath, {
+          ...existing,
+          ...(typeof payload?.onboardingComplete === "boolean" ? { onboardingComplete: payload.onboardingComplete } : {}),
+          ...(typeof payload?.reviewTourComplete === "boolean" ? { reviewTourComplete: payload.reviewTourComplete } : {}),
           updatedAt: new Date().toISOString(),
         });
         const response = json({ ok: true });

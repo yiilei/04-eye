@@ -545,12 +545,16 @@ export default function Home() {
   }, [desktopAppMode, manualCapture.state, refreshManualCapture]);
   const finishOnboarding = useCallback(() => {
     localStorage.setItem(onboardingCompleteStorageKey, "1");
+    if (desktopAppMode) void fetch("/api/desktop/first-run", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ onboardingComplete: true }),
+    });
     setOnboardingPreview(false);
     if (localStorage.getItem(reviewTourCompleteStorageKey) !== "1") setReviewTourStep(0);
     const url = new URL(window.location.href);
     url.searchParams.delete("onboarding");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, []);
+  }, [desktopAppMode]);
 
   const moveReviewTour = useCallback((direction: -1 | 1) => {
     if (reviewTourStep === null || reviewTourTransitioning) return;
@@ -570,10 +574,14 @@ export default function Home() {
     setReviewTourTransitioning(true);
     window.setTimeout(() => {
       localStorage.setItem(reviewTourCompleteStorageKey, "1");
+      if (desktopAppMode) void fetch("/api/desktop/first-run", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reviewTourComplete: true }),
+      });
       setReviewTourStep(null);
       setReviewTourTransitioning(false);
     }, 280);
-  }, [reviewTourTransitioning]);
+  }, [desktopAppMode, reviewTourTransitioning]);
 
   useEffect(() => {
     if (reviewTourStep === null) return;
@@ -917,11 +925,31 @@ export default function Home() {
     } catch { /* ignore invalid local data */ }
     const savedTheme = localStorage.getItem(colorThemeStorageKey);
     if (savedTheme === "light" || savedTheme === "dark") setColorTheme(savedTheme);
-    const onboardingRequested = new URLSearchParams(window.location.search).get("onboarding") === "1";
-    const onboardingComplete = localStorage.getItem(onboardingCompleteStorageKey) === "1";
-    setOnboardingPreview(onboardingRequested || !onboardingComplete);
-    if (!onboardingRequested && onboardingComplete && localStorage.getItem(reviewTourCompleteStorageKey) !== "1") setReviewTourStep(0);
-    setHydrated(true);
+    const query = new URLSearchParams(window.location.search);
+    const onboardingRequested = query.get("onboarding") === "1";
+    const desktopRequested = query.get("desktop") === "1";
+    const applyFirstRunState = (onboardingComplete: boolean, reviewTourComplete: boolean) => {
+      setOnboardingPreview(onboardingRequested || !onboardingComplete);
+      if (!onboardingRequested && onboardingComplete && !reviewTourComplete) setReviewTourStep(0);
+      else setReviewTourStep(null);
+      setHydrated(true);
+    };
+    if (desktopRequested && !onboardingRequested) {
+      void fetch("/api/desktop/first-run", { cache: "no-store" })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error("first-run unavailable")))
+        .then((state: { onboardingComplete?: boolean; reviewTourComplete?: boolean }) => {
+          applyFirstRunState(state.onboardingComplete === true, state.reviewTourComplete === true);
+        })
+        .catch(() => applyFirstRunState(
+          localStorage.getItem(onboardingCompleteStorageKey) === "1",
+          localStorage.getItem(reviewTourCompleteStorageKey) === "1",
+        ));
+    } else {
+      applyFirstRunState(
+        localStorage.getItem(onboardingCompleteStorageKey) === "1",
+        localStorage.getItem(reviewTourCompleteStorageKey) === "1",
+      );
+    }
   }, []);
 
   useEffect(() => {
