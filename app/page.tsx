@@ -480,6 +480,26 @@ export default function Home() {
   const windowResize = useRef<{
     edge: string; x: number; y: number; width: number; height: number; offsetX: number; offsetY: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (!eagleMessage) return;
+    const timer = window.setTimeout(() => setEagleMessage(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [eagleMessage]);
+
+  useEffect(() => {
+    if (!pinLinkMessage) return;
+    const timer = window.setTimeout(() => setPinLinkMessage(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [pinLinkMessage]);
+
+  useEffect(() => {
+    if (manualCapture.state !== "failed") return;
+    const timer = window.setTimeout(() => setManualCapture({
+      state: "idle", message: "", percent: 0, phase: "",
+    }), 3000);
+    return () => window.clearTimeout(timer);
+  }, [manualCapture.state]);
   const viewer = useRef<HTMLDivElement>(null);
   const refreshRuntimeStatus = useCallback(async () => {
     const bridge = getDesktopBridge();
