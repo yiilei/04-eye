@@ -396,8 +396,8 @@ class XhsClient:
     def get_user_posts(self, user_id: str) -> list[dict]:
         """Get a user's published notes by navigating to their profile page.
 
-        Extracts note list from __INITIAL_STATE__.user.notes which contains
-        the first page of the user's published notes.
+        Prefer the legacy __INITIAL_STATE__ payload, then fall back to the
+        rendered note cards used by newer profile pages.
         """
         url = f"https://www.xiaohongshu.com/user/profile/{user_id}"
 
@@ -413,14 +413,15 @@ class XhsClient:
         self._wait_for_data(
             """() => {
                 const s = window.__INITIAL_STATE__;
-                if (!s || !s.user) return false;
-                const n = s.user.notes;
-                if (!n) return false;
-                const d = n._rawValue || n._value || n.value || n;
-                return Array.isArray(d) || (d && typeof d === 'object');
+                const n = s && s.user && s.user.notes;
+                if (n) {
+                    const d = n._rawValue || n._value || n.value || n;
+                    if (Array.isArray(d) || (d && typeof d === 'object')) return true;
+                }
+                return document.querySelectorAll('section.note-item[data-note-id]').length > 0;
             }""",
             timeout=15.0,
-            desc="user.notes",
+            desc="user posts",
             raise_on_timeout=True,
         )
 
@@ -446,6 +447,32 @@ class XhsClient:
                     }
                     return notes;
                 }
+            }
+            const cards = Array.from(document.querySelectorAll('section.note-item[data-note-id]'));
+            if (cards.length) {
+                return cards.map(card => {
+                    const noteId = card.dataset.noteId || '';
+                    const detailLink = Array.from(card.querySelectorAll('a[href]')).find(
+                        link => link.href.includes('/user/profile/') && link.href.includes(`/${noteId}`)
+                    );
+                    let token = '';
+                    try { token = new URL(detailLink?.href || '', location.href).searchParams.get('xsec_token') || ''; }
+                    catch (_) {}
+                    const authorLink = card.querySelector('a.author[href*="/user/profile/"]');
+                    const profileMatch = (authorLink?.getAttribute('href') || '').match(/\\/user\\/profile\\/([^?\\/]+)/);
+                    const nickname = (card.querySelector('.author .name')?.textContent || '').trim();
+                    return {
+                        note_id: noteId,
+                        display_title: (card.querySelector('.title')?.textContent || '').trim(),
+                        xsec_token: token,
+                        interact_info: { sticky: (card.querySelector('.top-wrapper')?.textContent || '').includes('置顶') },
+                        user: {
+                            user_id: profileMatch?.[1] || '',
+                            nickname,
+                            nick_name: nickname,
+                        },
+                    };
+                }).filter(note => note.note_id);
             }
             return null;
         }"""

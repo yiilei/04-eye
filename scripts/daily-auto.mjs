@@ -35,6 +35,6 @@ for (const [index, [name, label, percent, args]] of steps.entries()) {
 const ok = results.every((item) => item.ok);
 writeProgress(ok
   ? { state: "completed", phase: "completed", label: "抓取完成，批阅列表已刷新", percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
-  : { state: "failed", phase: "failed", label: "抓取遇到登录或页面异常", percent: Math.max(6, steps.find((step) => !results.find((result) => result.name === step[0])?.ok)?.[2] || 6), phaseIndex: results.length, phaseCount: steps.length, failedAt: new Date().toISOString() });
+  : { state: "failed", phase: "failed", label: "抓取失败：小红书账号主页加载异常", percent: Math.max(6, steps.find((step) => !results.find((result) => result.name === step[0])?.ok)?.[2] || 6), phaseIndex: results.length, phaseCount: steps.length, failedAt: new Date().toISOString() });
 console.log(JSON.stringify({ ok, results }));
 if (!ok) process.exitCode = 1;
