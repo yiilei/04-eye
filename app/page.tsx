@@ -471,11 +471,17 @@ export default function Home() {
   const [edgeBump, setEdgeBump] = useState<"left" | "right">();
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
   const migrationStarted = useRef(false);
   const pinPreviewLoading = useRef(new Set<string>());
   const appShellRef = useRef<HTMLElement>(null);
+  const viewer = useRef<HTMLDivElement>(null);
+  const setViewerNode = useCallback((element: HTMLDivElement | null) => {
+    viewer.current = element;
+    setViewerElement(element);
+  }, []);
   const windowDrag = useRef<{
     x: number; y: number; originX: number; originY: number;
     left: number; top: number; width: number; height: number;
@@ -503,7 +509,6 @@ export default function Home() {
     }), 3000);
     return () => window.clearTimeout(timer);
   }, [manualCapture.state]);
-  const viewer = useRef<HTMLDivElement>(null);
   const refreshRuntimeStatus = useCallback(async () => {
     const bridge = getDesktopBridge();
     if (!bridge?.getRuntimeStatus) return;
@@ -1240,7 +1245,7 @@ export default function Home() {
   }, [current.sourceUrl]);
 
   useEffect(() => {
-    const element = viewer.current;
+    const element = viewerElement;
     if (!element) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -1280,13 +1285,12 @@ export default function Home() {
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => element.removeEventListener("wheel", onWheel);
-  // The viewer does not exist while first-run onboarding is visible. Rebind
-  // as soon as onboarding closes so trackpad pinch / wheel input reaches the
-  // real canvas instead of being lost for the lifetime of the page.
-  }, [onboardingPreview, usesTallScroll]);
+  // Runtime items and the first-run flow can both mount the canvas after this
+  // effect first runs. Bind to the actual node so every remount restores input.
+  }, [usesTallScroll, viewerElement]);
 
   useEffect(() => {
-    const element = viewer.current;
+    const element = viewerElement;
     if (!element) return;
     let dragging = false;
     let startX = 0;
@@ -1324,9 +1328,7 @@ export default function Home() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", stopDragging);
     };
-  // Same lifecycle rule as wheel zoom: the middle-button pan target is only
-  // mounted after onboarding has completed.
-  }, [onboardingPreview]);
+  }, [viewerElement]);
 
   const moveGallery = useCallback((direction: -1 | 1) => {
     if (!current.gallery?.length) return;
@@ -1727,7 +1729,7 @@ export default function Home() {
           </div>
         </nav>
 
-        <section className={`viewer ${mediaMode}`} ref={viewer} aria-label={`${current.title}完整长图`}>
+        <section className={`viewer ${mediaMode}`} ref={setViewerNode} aria-label={`${current.title}完整长图`}>
           <div className="media-stage" style={{
             transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             ...(usesTallScroll ? {} : { aspectRatio: `${displayedDimensions.width} / ${displayedDimensions.height}` }),
