@@ -909,7 +909,8 @@ export default function Home() {
       })
       .then((preferences) => {
         if (!active) return;
-        setAutomaticCaptureEnabled(preferences.automaticCaptureEnabled === true);
+        // Default to ON for fresh installs where the preference has not been explicitly set
+        setAutomaticCaptureEnabled(preferences.automaticCaptureEnabled !== false);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.captureTime ?? "")) setCaptureTime(preferences.captureTime!);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.pushTime ?? "")) setPushTime(preferences.pushTime!);
         if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);

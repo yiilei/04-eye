@@ -113,7 +113,10 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
       if (pathname === "/api/desktop/preferences" && request.method === "GET") {
-        const response = json(await readJson(preferencesPath, {}));
+        const stored = await readJson(preferencesPath, {});
+        // New installs default to automatic capture ON so users don't forget to enable it
+        if (stored.automaticCaptureEnabled === undefined) stored.automaticCaptureEnabled = true;
+        const response = json(stored);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
