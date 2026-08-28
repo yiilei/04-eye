@@ -1827,7 +1827,7 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="settings-automation-row">
-                  <div><strong>抓取创作服务 H5</strong><small>关闭后仅抓取埋点账号帖子</small></div>
+                  <strong>抓取 H5</strong>
                   <button
                     type="button"
                     className={`automation-switch ${creatorH5CaptureEnabled ? "is-on" : "is-off"}`}
