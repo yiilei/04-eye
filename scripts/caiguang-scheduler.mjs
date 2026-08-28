@@ -74,10 +74,10 @@ async function runCapture(reason = "scheduled") {
   const output = await readFile(captureLog, "utf8").catch(() => "");
   const ok = status === 0;
   const state = await readJson(statePath, {});
-  state.lastCaptureDate = now.date;
   state.lastCaptureAt = new Date().toISOString();
   state.lastCaptureStatus = ok ? "completed" : "needs_attention";
   state.lastCaptureReason = reason;
+  if (ok) state.lastCaptureDate = now.date;
   await atomicJson(statePath, state);
   return { ok, output };
 }

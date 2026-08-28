@@ -444,6 +444,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [colorTheme, setColorTheme] = useState<ColorTheme>("dark");
   const [automaticCaptureEnabled, setAutomaticCaptureEnabled] = useState(false);
+  const [creatorH5CaptureEnabled, setCreatorH5CaptureEnabled] = useState(false);
   const [captureTime, setCaptureTime] = useState("02:00");
   const [pushTime, setPushTime] = useState("11:00");
   const [pinSearch, setPinSearch] = useState("");
@@ -926,13 +927,14 @@ export default function Home() {
       .then(async (response) => {
         if (!response.ok) throw new Error("preferences unavailable");
         return response.json() as Promise<{
-          automaticCaptureEnabled?: boolean; captureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
+          automaticCaptureEnabled?: boolean; creatorH5CaptureEnabled?: boolean; captureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
         }>;
       })
       .then((preferences) => {
         if (!active) return;
         // Default to ON for fresh installs where the preference has not been explicitly set
         setAutomaticCaptureEnabled(preferences.automaticCaptureEnabled !== false);
+        setCreatorH5CaptureEnabled(preferences.creatorH5CaptureEnabled === true);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.captureTime ?? "")) setCaptureTime(preferences.captureTime!);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.pushTime ?? "")) setPushTime(preferences.pushTime!);
         if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
@@ -960,6 +962,7 @@ export default function Home() {
     try {
       const schedule = JSON.parse(localStorage.getItem(scheduleStorageKey) || "{}");
       setAutomaticCaptureEnabled(schedule.automaticCaptureEnabled === true);
+      setCreatorH5CaptureEnabled(schedule.creatorH5CaptureEnabled === true);
       if (/^\d{2}:\d{2}$/.test(schedule.captureTime)) setCaptureTime(schedule.captureTime);
       if (/^\d{2}:\d{2}$/.test(schedule.pushTime)) setPushTime(schedule.pushTime);
     } catch { /* ignore invalid local data */ }
@@ -1162,18 +1165,18 @@ export default function Home() {
     }
   }, [hydrated, manualPinAccounts]);
   useEffect(() => {
-    if (hydrated) localStorage.setItem(scheduleStorageKey, JSON.stringify({ automaticCaptureEnabled, captureTime, pushTime }));
-  }, [automaticCaptureEnabled, captureTime, pushTime, hydrated]);
+    if (hydrated) localStorage.setItem(scheduleStorageKey, JSON.stringify({ automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, pushTime }));
+  }, [automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, pushTime, hydrated]);
   useEffect(() => {
     if (!desktopAppMode || !desktopPreferencesReady) return;
     const timer = window.setTimeout(() => {
       void fetch("/api/desktop/preferences", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ automaticCaptureEnabled, captureTime, pushTime, pinnedAccountIds, manualPinAccounts }),
+        body: JSON.stringify({ automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, pushTime, pinnedAccountIds, manualPinAccounts }),
       }).catch(() => undefined);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [automaticCaptureEnabled, captureTime, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
+  }, [automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
 
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
@@ -1823,6 +1826,20 @@ export default function Home() {
                     <span className="automation-switch-knob" aria-hidden="true" />
                   </button>
                 </div>
+                <div className="settings-automation-row">
+                  <div><strong>抓取创作服务 H5</strong><small>关闭后仅抓取埋点账号帖子</small></div>
+                  <button
+                    type="button"
+                    className={`automation-switch ${creatorH5CaptureEnabled ? "is-on" : "is-off"}`}
+                    role="switch"
+                    aria-checked={creatorH5CaptureEnabled}
+                    aria-label="抓取创作服务 H5"
+                    onClick={() => setCreatorH5CaptureEnabled((enabled) => !enabled)}
+                  >
+                    <span className="automation-switch-label">{creatorH5CaptureEnabled ? "on" : "off"}</span>
+                    <span className="automation-switch-knob" aria-hidden="true" />
+                  </button>
+                </div>
                 <div className="settings-time-panel">
                   <div className="settings-row">
                     <div><strong>抓取时间</strong></div>
@@ -1960,7 +1977,7 @@ export default function Home() {
             </>}
             {reviewTourStep === 3 && <>
               <h2>试试第一次抓取</h2>
-              <p>高光区域是本地抓手。完成引导后，由你自己点击抓手开始首次采集：抓取创作服务中心最新一条，以及每个已启用埋点账号的最新一条，不回填历史。完成按钮不会自动抓取。</p>
+              <p>高光区域是本地抓手。完成引导后，由你自己点击抓手开始首次采集：默认抓取每个已启用埋点账号的最新一条，不回填历史；如需创作服务 H5，可在设置中打开。完成按钮不会自动抓取。</p>
             </>}
             <div className="review-tour-controls">
               <button type="button" className="review-tour-back" onClick={() => moveReviewTour(-1)} disabled={reviewTourStep === 0 || reviewTourTransitioning}>上一步</button>

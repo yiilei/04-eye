@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -8,9 +8,16 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const progressPath = path.join(dataHome, "data", "capture-progress.json");
+const preferencesPath = path.join(dataHome, "data", "user-preferences.json");
+let creatorH5CaptureEnabled = false;
+try {
+  creatorH5CaptureEnabled = JSON.parse(readFileSync(preferencesPath, "utf8")).creatorH5CaptureEnabled === true;
+} catch { /* fresh installs keep H5 capture off */ }
 const steps = [
   ["verify_pending_pins", "验证待验证账号", 12, [path.join(root, "scripts", "xhs-verify-pins.mjs"), "--write"]],
-  ["discover_creator_events", "发现最新创作活动", 30, [path.join(root, "scripts", "xhs-events-discover.mjs"), "--write"]],
+  ...(creatorH5CaptureEnabled
+    ? [["discover_creator_events", "发现最新创作活动", 30, [path.join(root, "scripts", "xhs-events-discover.mjs"), "--write"]]]
+    : []),
   ["discover_pinned_accounts", "检查埋点账号的新帖子", 52, [path.join(root, "scripts", "xhs-discover.mjs"), "--write"]],
   ["capture_validate_report", "抓取素材与文案并校验", 72, [path.join(root, "scripts", "daily-pipeline.mjs")]],
 ];
@@ -28,7 +35,7 @@ writeProgress({ state: "running", phase: "starting", label: "准备本地抓取"
 for (const [index, [name, label, percent, args]] of steps.entries()) {
   writeProgress({ state: "running", phase: name, label, percent, phaseIndex: index + 1, phaseCount: steps.length });
   const result = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8", timeout: 60 * 60 * 1000,
-    env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    env: { ...process.env, CAIGUANG_CAPTURE_CREATOR_H5: creatorH5CaptureEnabled ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   results.push({ name, ok: result.status === 0, status: result.status, output: output.split("\n").filter(Boolean).at(-1) || "" });
 }

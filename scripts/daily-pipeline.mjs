@@ -22,6 +22,7 @@ const skipBuild = process.argv.includes("--skip-build");
 const now = new Date();
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(now);
 const nowIso = now.toISOString();
+const creatorH5CaptureEnabled = process.env.CAIGUANG_CAPTURE_CREATOR_H5 === "1";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const atomicJson = async (file, value) => {
@@ -80,14 +81,18 @@ async function main() {
   const browserCaptureTasks = queue.tasks.filter((task) => task.status === "needs_browser_capture");
   const report = { schemaVersion: 1, date: today, startedAt: nowIso, mode: dryRun ? "dry-run" : "run",
     checkedAccounts: queue.checkedAccounts.length, pending: queue.tasks.filter((task) => task.status === "pending").length,
-    h5AwaitingCapture: queue.tasks.filter((task) => task.status === "needs_h5_capture").length,
+    h5AwaitingCapture: creatorH5CaptureEnabled
+      ? queue.tasks.filter((task) => task.status === "needs_h5_capture").length
+      : 0,
     pendingPinVerification: Array.isArray(pendingPins.accounts) ? pendingPins.accounts.filter((account) => account.status === "pending_verification").length : 0,
     completed: [], retrying: [], browserCapture: browserCaptureTasks.map((task) => ({
       id: task.id, type: task.type, title: task.title, error: task.error || task.lastError || "本地解析器不可用", failureType: task.failureType || "parser_incompatible",
     })), failed: [], skipped: [], validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
-    for (const task of queue.tasks.filter((item) => item.type === "h5_event" ? h5TaskIsDue(item, now) : noteTaskIsDue(item, now))) {
+    for (const task of queue.tasks.filter((item) => item.type === "h5_event"
+      ? creatorH5CaptureEnabled && h5TaskIsDue(item, now)
+      : noteTaskIsDue(item, now))) {
       try {
         if (task.type === "note") {
           const account = accountFor(pins, task.accountKey);
@@ -128,6 +133,7 @@ async function main() {
 
     for (const check of queue.checkedAccounts) {
       if (check.accountKey === "creator-events") {
+        if (!creatorH5CaptureEnabled) continue;
         if (check.status !== "verified") report.failed.push({ id: "creator-events", type: "activity_check", title: "创作服务中心", error: check.error || `活动检查未完成：${check.status}` });
         continue;
       }

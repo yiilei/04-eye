@@ -118,6 +118,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         const stored = await readJson(preferencesPath, {});
         // New installs default to automatic capture ON so users don't forget to enable it
         if (stored.automaticCaptureEnabled === undefined) stored.automaticCaptureEnabled = true;
+        if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled = false;
         const response = json(stored);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
@@ -231,7 +232,9 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         const explicitFirstCapture = new URL(request.url).searchParams.get("initial") === "1";
         // Auto-detect first capture: if no prior capture ever succeeded, treat as first run
         const schedulerState = await readJson(schedulerStatePath, {});
-        const firstCapture = explicitFirstCapture || !schedulerState.lastCaptureDate;
+        const firstCapture = explicitFirstCapture
+          || !schedulerState.lastCaptureDate
+          || schedulerState.lastCaptureStatus !== "completed";
         if (captureProcess) {
           const response = json({ ok: true, running: true, startedAt: captureStartedAt }, 202);
           outgoing.statusCode = response.status;
@@ -327,6 +330,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         const payload = await request.json();
         const validTime = (value) => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
         if (typeof payload?.automaticCaptureEnabled !== "boolean"
+          || typeof payload?.creatorH5CaptureEnabled !== "boolean"
           || !validTime(payload?.captureTime) || !validTime(payload?.pushTime)
           || !Array.isArray(payload?.pinnedAccountIds) || !Array.isArray(payload?.manualPinAccounts)) {
           const response = json({ ok: false, error: "invalid preferences" }, 400);
@@ -339,6 +343,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           ...existing,
           schemaVersion: 1,
           automaticCaptureEnabled: payload.automaticCaptureEnabled,
+          creatorH5CaptureEnabled: payload.creatorH5CaptureEnabled,
           captureTime: payload.captureTime,
           pushTime: payload.pushTime,
           pinnedAccountIds: payload.pinnedAccountIds.map(String),
