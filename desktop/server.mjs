@@ -33,6 +33,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   let captureProcess;
   let captureStartedAt = null;
   let captureExitCode = null;
+  let camoufoxFetchProcess;
+  let camoufoxFetchExitCode = null;
   await mkdir(path.dirname(registryPath), { recursive: true });
   await mkdir(reviewRoot, { recursive: true });
   await mkdir(trashRoot, { recursive: true });
@@ -121,20 +123,80 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
-      if (pathname === "/api/desktop/first-run" && request.method === "GET") {
-        const preferences = await readJson(preferencesPath, {});
+     if (pathname === "/api/desktop/first-run" && request.method === "GET") {
+       const preferences = await readJson(preferencesPath, {});
+       const response = json({
+         onboardingComplete: preferences.onboardingComplete === true,
+         reviewTourComplete: preferences.reviewTourComplete === true,
+       });
+       outgoing.statusCode = response.status;
+       response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+       return Readable.fromWeb(response.body).pipe(outgoing);
+     }
+      if (pathname === "/api/desktop/camoufox-status" && request.method === "GET") {
+        const venvPython = path.join(installedSourceRoot, "vendor", "xhs-cli", ".venv", "bin", "python");
+        let installed = false;
+        let version = null;
+        try {
+          const { execFileSync } = await import("node:child_process");
+          const output = execFileSync(venvPython, ["-m", "camoufox", "list", "--path"], { encoding: "utf8", timeout: 8000, env: process.env });
+          installed = /\(active\)/.test(output);
+          const match = output.match(/v[\d.]+[\w.-]*/);
+          if (match) version = match[0];
+        } catch { /* venv not ready yet */ }
+        const response = json({ installed, version, ready: installed });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/camoufox-fetch" && request.method === "POST") {
+        const venvPython = path.join(installedSourceRoot, "vendor", "xhs-cli", ".venv", "bin", "python");
+        try {
+          await access(venvPython);
+        } catch {
+          const response = json({ ok: false, error: "Python 环境未就绪，请等待安装完成" }, 503);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        if (camoufoxFetchProcess) {
+          const response = json({ ok: true, running: true }, 202);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        const logPath = path.join(dataRoot, "logs", "camoufox-fetch.log");
+        await mkdir(path.dirname(logPath), { recursive: true });
+        const { spawn } = await import("node:child_process");
+        const logFd = await (await import("node:fs/promises")).open(logPath, "w");
+        const child = spawn(venvPython, ["-m", "camoufox", "fetch"], {
+          cwd: installedSourceRoot, env: process.env,
+          stdio: ["ignore", logFd.createWriteStream(), logFd.createWriteStream()],
+        });
+        camoufoxFetchProcess = child;
+        child.once("exit", (code) => {
+          camoufoxFetchProcess = undefined;
+          camoufoxFetchExitCode = code ?? -1;
+        });
+        child.once("error", () => { camoufoxFetchProcess = undefined; camoufoxFetchExitCode = -1; });
+        const response = json({ ok: true, running: true }, 202);
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/camoufox-fetch" && request.method === "GET") {
         const response = json({
-          onboardingComplete: preferences.onboardingComplete === true,
-          reviewTourComplete: preferences.reviewTourComplete === true,
+          running: Boolean(camoufoxFetchProcess),
+          exitCode: camoufoxFetchExitCode,
         });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
-      if (pathname === "/api/desktop/capture-now" && request.method === "GET") {
-        const state = await readJson(schedulerStatePath, {});
-        const progress = await readJson(captureProgressPath, {});
-        const response = json({
+     if (pathname === "/api/desktop/capture-now" && request.method === "GET") {
+       const state = await readJson(schedulerStatePath, {});
+       const progress = await readJson(captureProgressPath, {});
+       const response = json({
           ok: true,
           running: Boolean(captureProcess),
           startedAt: captureStartedAt,

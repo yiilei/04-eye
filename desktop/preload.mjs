@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("sharpEyeDesktop", {
   platform: "macOS",
-  version: "0.3.13",
+  version: "0.3.14",
   fitWindow: (request) => ipcRenderer.invoke("caiguang:fit-window", request),
   getRuntimeStatus: () => ipcRenderer.invoke("caiguang:runtime-status"),
   checkForUpdate: () => ipcRenderer.invoke("caiguang:check-update"),
