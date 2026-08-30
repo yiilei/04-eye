@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile, rm, rename } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, writeFile, rm, rename } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
@@ -166,7 +166,8 @@ ipcMain.handle("caiguang:open-release", (_event, value) => {
 });
 ipcMain.handle("caiguang:download-update", async (_event, url) => {
   const downloadUrl = String(url || "");
-  if (!/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/download\/v[\d.]+\/Caiguang-macOS-arm64-v[\d.]+\.zip$/u.test(downloadUrl)) {
+  const updateMatch = downloadUrl.match(/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/download\/v([\d.]+)\/Caiguang-(?:Full-Installer-)?macOS-arm64-v([\d.]+)\.zip$/u);
+  if (!updateMatch || updateMatch[1] !== updateMatch[2]) {
     return { ok: false, error: "无效的下载地址" };
   }
   try {
@@ -178,14 +179,28 @@ ipcMain.handle("caiguang:download-update", async (_event, url) => {
     await pipeline(response.body, createWriteStream(zipPath));
     const { execFileSync } = await import("node:child_process");
     execFileSync("unzip", ["-q", "-o", zipPath, "-d", tmpDir]);
-    const newApp = path.join(tmpDir, "采光.app");
-    if (!existsSync(newApp)) throw new Error("解压后未找到采光.app");
+    const newApp = [
+      path.join(tmpDir, "采光.app"),
+      path.join(tmpDir, "采光-完整安装包", "采光.app"),
+    ].find((candidate) => existsSync(candidate));
+    if (!newApp) throw new Error("解压后未找到采光.app");
+    execFileSync("codesign", ["--verify", "--deep", "--strict", newApp]);
+    const bundledVersion = execFileSync("plutil", ["-extract", "CFBundleShortVersionString", "raw", path.join(newApp, "Contents", "Info.plist")], { encoding: "utf8" }).trim();
+    if (bundledVersion !== updateMatch[1]) throw new Error(`安装包版本不一致：${bundledVersion}`);
     const appHome = path.join(os.homedir(), "Applications");
     const currentApp = path.join(appHome, "采光.app");
     const backupApp = path.join(appHome, "采光.app.old");
+    const stagedApp = path.join(appHome, "采光.app.updating");
+    if (existsSync(stagedApp)) await rm(stagedApp, { recursive: true });
+    await cp(newApp, stagedApp, { recursive: true, verbatimSymlinks: true });
     if (existsSync(backupApp)) await rm(backupApp, { recursive: true });
     if (existsSync(currentApp)) await rename(currentApp, backupApp);
-    await execFile("cp", ["-R", newApp, currentApp]);
+    try {
+      await rename(stagedApp, currentApp);
+    } catch (error) {
+      if (!existsSync(currentApp) && existsSync(backupApp)) await rename(backupApp, currentApp);
+      throw error;
+    }
     await rm(tmpDir, { recursive: true });
     app.relaunch();
     app.exit(0);

@@ -11,10 +11,14 @@ test("compares semantic app versions", () => {
 test("reports an update from the release endpoint", async () => {
   const result = await checkForUpdate({
     currentVersion: "0.3.4",
-    fetchImpl: async () => new Response(JSON.stringify({ tag_name: "v0.3.5", html_url: "https://example.test/release", published_at: "2026-08-26T00:00:00Z" }), { status: 200 }),
+    fetchImpl: async () => new Response(JSON.stringify({
+      tag_name: "v0.3.5", html_url: "https://example.test/release", published_at: "2026-08-26T00:00:00Z",
+      assets: [{ name: "Caiguang-Full-Installer-macOS-arm64-v0.3.5.zip", browser_download_url: "https://example.test/full.zip" }],
+    }), { status: 200 }),
   });
   assert.equal(result.state, "available");
   assert.equal(result.latestVersion, "0.3.5");
+  assert.equal(result.downloadUrl, "https://example.test/full.zip");
 });
 
 test("detects Codex without reading authentication content", () => {
