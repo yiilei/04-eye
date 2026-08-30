@@ -10,18 +10,18 @@ const executable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const configDir = path.join(appData, "xhs-cli");
 const command = process.argv[2] || "status";
-if (!new Set(["login", "status", "logout", "whoami"]).has(command)) throw new Error(`不支持的登录态命令：${command}`);
+if (!new Set(["login", "login-chrome", "status", "logout", "whoami"]).has(command)) throw new Error(`不支持的登录态命令：${command}`);
 
 await mkdir(configDir, { recursive: true, mode: 0o700 });
-// Login creates a Caiguang-owned session. It never reads or modifies Chrome.
-const args = command === "login" ? ["login", "--qrcode"] : [command];
+const args = command === "login" ? ["login", "--qrcode"]
+  : command === "login-chrome" ? ["login", "--browser"] : [command];
 const child = spawn(executable, args, {
   cwd: root,
   stdio: "inherit",
   env: {
     ...process.env,
     XHS_CLI_CONFIG_DIR: configDir,
-    XHS_CLI_DISABLE_BROWSER_COOKIE: "1",
+    XHS_CLI_DISABLE_BROWSER_COOKIE: command === "login-chrome" ? "0" : "1",
   },
 });
 child.on("exit", (code, signal) => {

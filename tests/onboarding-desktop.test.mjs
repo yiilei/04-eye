@@ -15,10 +15,10 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
 
   assert.match(main, /captureCookieFile/);
   assert.match(main, /cookies\.a1 && cookies\.web_session/);
-  assert.match(main, /sessionSource === "isolated_qrcode"/);
+  assert.match(main, /"isolated_qrcode", "chrome_snapshot"/);
   assert.doesNotMatch(main, /session\.defaultSession\.cookies/);
   assert.match(main, /采光-登录小红书\.command/);
-  assert.doesNotMatch(main, /login --browser/);
+  assert.match(main, /login", "--browser/);
   assert.match(main, /login --qrcode/);
   assert.match(main, /Google Chrome/);
   assert.match(main, /openXhsChromeLogin/);
@@ -28,20 +28,18 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(preload, /onXhsLoginChanged/);
   assert.match(page, /setXhsSetupStatus\("已登录"\)/);
   assert.match(page, /setInterval\(\(\) => void checkEagle\(\), 1_500\)/);
-  assert.match(page, /已在 Chrome 登录/);
-  assert.match(page, /在 Chrome 登录/);
-  assert.match(page, /优先使用采光独立会话/);
-  assert.match(page, /只读使用 Chrome 当前登录状态/);
+  assert.match(page, /使用 Chrome 登录/);
+  assert.match(page, /优先只读复制 Chrome 当前登录状态/);
   assert.match(page, /completeAfterChromeReturn/);
-  assert.match(page, /document\.visibilityState === "visible"/);
-  assert.doesNotMatch(page, /同步 Chrome 中已登录/);
+  assert.match(page, /document\.visibilityState !== "visible"/);
+  assert.match(page, /正在同步/);
   assert.match(sessionScript, /\["login", "--qrcode"\]/);
-  assert.match(sessionScript, /XHS_CLI_DISABLE_BROWSER_COOKIE: "1"/);
-  assert.doesNotMatch(sessionScript, /--browser/);
+  assert.match(sessionScript, /XHS_CLI_DISABLE_BROWSER_COOKIE: command === "login-chrome" \? "0" : "1"/);
+  assert.match(sessionScript, /"login-chrome" \? \["login", "--browser"\]/);
   assert.match(authScript, /CAIGUANG_CHROME_FALLBACK/);
   assert.match(authScript, /browser_cookie3/);
   assert.doesNotMatch(authScript, /cookie_file = chrome_root|save_cookies\(.*browser/i);
-  assert.match(authScript, /SAFE_SESSION_SOURCES = \{"isolated_qrcode"\}/);
+  assert.match(authScript, /SAFE_SESSION_SOURCES = \{"isolated_qrcode", "chrome_snapshot"\}/);
   assert.match(authScript, /CAIGUANG_CHROME_FALLBACK/);
 });
 

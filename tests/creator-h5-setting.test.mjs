@@ -7,7 +7,7 @@ const pipeline = await readFile(new URL("../scripts/daily-pipeline.mjs", import.
 const server = await readFile(new URL("../desktop/server.mjs", import.meta.url), "utf8");
 
 test("creator H5 capture defaults off and gates discovery and retries", () => {
-  assert.match(server, /stored\.creatorH5CaptureEnabled === undefined\) stored\.creatorH5CaptureEnabled = false/);
+  assert.match(server, /stored\.creatorH5CaptureEnabled === undefined\) stored\.creatorH5CaptureEnabled = true/);
   assert.match(dailyAuto, /creatorH5CaptureEnabled === true/);
   assert.match(dailyAuto, /\?\s*\[\["discover_creator_events"/);
   assert.match(pipeline, /creatorH5CaptureEnabled && h5TaskIsDue/);

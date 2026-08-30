@@ -9,10 +9,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const progressPath = path.join(dataHome, "data", "capture-progress.json");
 const preferencesPath = path.join(dataHome, "data", "user-preferences.json");
-let creatorH5CaptureEnabled = false;
+let creatorH5CaptureEnabled = true;
 try {
   creatorH5CaptureEnabled = JSON.parse(readFileSync(preferencesPath, "utf8")).creatorH5CaptureEnabled === true;
-} catch { /* fresh installs keep H5 capture off */ }
+} catch { /* fresh installs capture creator-center H5 by default */ }
 const steps = [
   ["verify_pending_pins", "验证待验证账号", 12, [path.join(root, "scripts", "xhs-verify-pins.mjs"), "--write"]],
   ...(creatorH5CaptureEnabled

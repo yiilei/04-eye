@@ -118,7 +118,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         const stored = await readJson(preferencesPath, {});
         // New installs default to automatic capture ON so users don't forget to enable it
         if (stored.automaticCaptureEnabled === undefined) stored.automaticCaptureEnabled = true;
-        if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled = false;
+if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled = true;
         const response = json(stored);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
@@ -129,6 +129,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
        const response = json({
          onboardingComplete: preferences.onboardingComplete === true,
          reviewTourComplete: preferences.reviewTourComplete === true,
+         statsNoticeAcknowledged: preferences.statsNoticeAcknowledged === true,
        });
        outgoing.statusCode = response.status;
        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
@@ -362,6 +363,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           ...existing,
           ...(typeof payload?.onboardingComplete === "boolean" ? { onboardingComplete: payload.onboardingComplete } : {}),
           ...(typeof payload?.reviewTourComplete === "boolean" ? { reviewTourComplete: payload.reviewTourComplete } : {}),
+          ...(typeof payload?.statsNoticeAcknowledged === "boolean" ? { statsNoticeAcknowledged: payload.statsNoticeAcknowledged } : {}),
           updatedAt: new Date().toISOString(),
         });
         const response = json({ ok: true });

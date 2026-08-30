@@ -175,7 +175,11 @@ def main() -> int:
                 contentWidth: appRect.width,
                 contentHeight: Math.max(1, end),
                 videos: [...new Set([...videos, ...resources])],
-                excludedRecommendations: Boolean(notes),
+                // A missing recommendation container means the activity page
+                // already ends at its own content. When one exists, the
+                // screenshot is cut before it and the container is hidden.
+                excludedRecommendations: true,
+                recommendationBoundaryFound: Boolean(notes),
                 deviceScaleFactor: devicePixelRatio,
               };
             }""",
@@ -220,6 +224,7 @@ def main() -> int:
         "video": downloaded_video,
         "videoCandidates": len(capture["videos"]),
         "excludedRecommendations": capture["excludedRecommendations"],
+        "recommendationBoundaryFound": capture["recommendationBoundaryFound"],
         "deviceScaleFactor": capture["deviceScaleFactor"],
         "contentWidth": capture["contentWidth"],
         "contentHeight": capture["contentHeight"],

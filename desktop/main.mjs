@@ -42,7 +42,7 @@ async function hasXhsCaptureLogin() {
   try {
     const saved = JSON.parse(await readFile(captureCookieFile(), "utf8"));
     const cookies = saved?.cookies || {};
-    return saved?.sessionSource === "isolated_qrcode" && Boolean(cookies.a1 && cookies.web_session);
+    return ["isolated_qrcode", "chrome_snapshot"].includes(saved?.sessionSource) && Boolean(cookies.a1 && cookies.web_session);
   } catch {
     return false;
   }
@@ -118,6 +118,25 @@ async function openXhsCaptureLogin() {
 // It only opens the user's existing Chrome profile.  In particular, this
 // deliberately does not read, copy or modify any browser cookies.
 async function openXhsChromeLogin() {
+  if ((await publishXhsLoginStatus()).loggedIn) return { loggedIn: true };
+  const executable = findCaptureEngine();
+  if (executable) {
+    await mkdir(captureConfigDir(), { recursive: true, mode: 0o700 });
+    const imported = await new Promise((resolve) => {
+      execFile(executable, ["login", "--browser"], {
+        cwd: appRoot,
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          XHS_CLI_CONFIG_DIR: captureConfigDir(),
+          CAIGUANG_CHROME_FALLBACK: "1",
+        },
+      }, (error) => resolve(!error));
+    });
+    if (imported && (await publishXhsLoginStatus()).loggedIn) {
+      return { loggedIn: true, sessionSource: "chrome_snapshot" };
+    }
+  }
   try {
     await new Promise((resolve, reject) => {
       execFile("/usr/bin/open", ["-a", "Google Chrome", "https://www.xiaohongshu.com/explore"], (error) => {
@@ -125,10 +144,10 @@ async function openXhsChromeLogin() {
         else resolve();
       });
     });
-    return { chromeOpened: true };
+    return { loggedIn: false, chromeOpened: true };
   } catch {
     await shell.openExternal("https://www.xiaohongshu.com/explore");
-    return { chromeOpened: true };
+    return { loggedIn: false, chromeOpened: true };
   }
 }
 

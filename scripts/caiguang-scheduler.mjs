@@ -86,7 +86,7 @@ async function tick() {
   console.error("[scheduler] tick:start");
   await migrateLegacyData(appData);
   console.error("[scheduler] tick:migrated");
-  const preferences = await readJson(preferencesPath, { automaticCaptureEnabled: false, captureTime: "02:00", pushTime: "11:00" });
+const preferences = await readJson(preferencesPath, { automaticCaptureEnabled: true, creatorH5CaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" });
   if (!schedulerEnabled(preferences)) return;
   const state = await readJson(statePath, {});
   const now = clock();
@@ -172,7 +172,7 @@ async function status() {
   console.log(JSON.stringify({
     ok: result.status === 0,
     installed: result.status === 0,
-    preferences: await readJson(preferencesPath, { automaticCaptureEnabled: false, captureTime: "02:00", pushTime: "11:00" }),
+preferences: await readJson(preferencesPath, { automaticCaptureEnabled: true, creatorH5CaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" }),
     state: await readJson(statePath, {}),
   }));
   if (result.status !== 0) process.exitCode = 1;

@@ -71,7 +71,8 @@ case "$command_name" in
     [[ -x vendor/XHS-Downloader/.venv/bin/python ]] || { echo "XHS-Downloader 未安装" >&2; exit 1; }
     echo "采光环境正常：Node $node_version · pnpm $pnpm_version · 两个采集引擎已就绪"
     ;;
-  login) run_node scripts/xhs-session.mjs login "$@" ;;
+login) run_node scripts/xhs-session.mjs login "$@" ;;
+login-chrome) run_node scripts/xhs-session.mjs login-chrome "$@" ;;
   status) run_node scripts/xhs-session.mjs status "$@" ;;
   logout) run_node scripts/xhs-session.mjs logout "$@" ;;
   check) run_node scripts/daily-pipeline.mjs --dry-run "$@" ;;

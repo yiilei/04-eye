@@ -71,6 +71,16 @@ function h5Arguments(task) {
   return args;
 }
 
+function h5FallbackArguments(task, error) {
+  const args = [path.join(root, "scripts", "register-h5-fallback.mjs"),
+    "--slug", task.slug, "--title", task.title, "--source-url", task.sourceUrl,
+    "--date", task.captureDate || today, "--display-date", task.displayDate || task.captureDate || today,
+    "--error", error];
+  if (task.coverUrl) args.push("--cover-url", task.coverUrl);
+  if (task.sourceDir) args.push("--source-dir", path.resolve(root, task.sourceDir));
+  return args;
+}
+
 async function main() {
   await mkdir(reportsDir, { recursive: true });
   const queue = await readJson(queuePath);
@@ -117,7 +127,17 @@ async function main() {
         if (task.type === "h5_event") {
           const retry = scheduleH5Retry(task, message, now);
           const entry = { id: task.id, type: task.type, title: task.title, error: message, attempts: retry.attempts };
-          if (retry.terminal) report.failed.push(entry);
+          if (retry.terminal) {
+            try {
+              const output = run(process.execPath, h5FallbackArguments(task, message));
+              const fallback = JSON.parse(output.split("\n").at(-1));
+              report.failed.push({ ...entry, fallback: fallback.ok ? fallback.manifest : null,
+                error: `${message}；已保留封面与原链接，可在批阅页打开体验` });
+            } catch (fallbackError) {
+              const fallbackMessage = fallbackError instanceof Error ? fallbackError.message.split("\n").at(-1) : String(fallbackError);
+              report.failed.push({ ...entry, error: `${message}；生成失败兜底也失败：${fallbackMessage}` });
+            }
+          }
           else report.retrying.push({ ...entry, nextAttemptAt: retry.nextAttemptAt });
         } else {
           const transition = transitionNoteFailure(task, message, now);
