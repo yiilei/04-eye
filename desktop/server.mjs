@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import worker from "../dist/server/index.js";
@@ -30,7 +31,9 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   const schedulerStatePath = path.join(dataRoot, "data", "scheduler-state.json");
   const captureProgressPath = path.join(dataRoot, "data", "capture-progress.json");
   const installedSourceRoot = path.join(dataRoot, "source");
-  const installedScheduler = path.join(installedSourceRoot, "scripts", "caiguang-scheduler.mjs");
+  const bundledRuntimeRoot = path.resolve(appRoot, "..", "runtime", "project");
+  const runtimeRoot = existsSync(path.join(bundledRuntimeRoot, "scripts", "caiguang-scheduler.mjs")) ? bundledRuntimeRoot : installedSourceRoot;
+  const installedScheduler = path.join(runtimeRoot, "scripts", "caiguang-scheduler.mjs");
   let captureProcess;
   let captureStartedAt = null;
   let captureExitCode = null;
@@ -140,7 +143,7 @@ if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled
        return Readable.fromWeb(response.body).pipe(outgoing);
      }
       if (pathname === "/api/desktop/camoufox-status" && request.method === "GET") {
-        const venvPython = path.join(installedSourceRoot, "vendor", "xhs-cli", ".venv", "bin", "python");
+        const venvPython = path.join(runtimeRoot, "vendor", "xhs-cli", ".venv", "bin", "python");
         let installed = false;
         let version = null;
         try {
@@ -156,7 +159,7 @@ if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
       if (pathname === "/api/desktop/camoufox-fetch" && request.method === "POST") {
-        const venvPython = path.join(installedSourceRoot, "vendor", "xhs-cli", ".venv", "bin", "python");
+        const venvPython = path.join(runtimeRoot, "vendor", "xhs-cli", ".venv", "bin", "python");
         try {
           await access(venvPython);
         } catch {
@@ -176,7 +179,7 @@ if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled
         const { spawn } = await import("node:child_process");
         const logFd = await (await import("node:fs/promises")).open(logPath, "w");
         const child = spawn(venvPython, ["-m", "camoufox", "fetch"], {
-          cwd: installedSourceRoot, env: process.env,
+          cwd: runtimeRoot, env: process.env,
           stdio: ["ignore", logFd.createWriteStream(), logFd.createWriteStream()],
         });
         camoufoxFetchProcess = child;
@@ -257,7 +260,7 @@ if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled
         captureStartedAt = new Date().toISOString();
         captureExitCode = null;
         const child = spawn(process.execPath, [installedScheduler, "run"], {
-          cwd: installedSourceRoot,
+          cwd: runtimeRoot,
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0" },
           stdio: "ignore",
         });

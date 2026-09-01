@@ -6,6 +6,7 @@ PLUGIN_ROOT="${SCRIPT_DIR:h}"
 PROJECT_ROOT="${PLUGIN_ROOT:h:h}"
 
 for candidate in \
+  "$PROJECT_ROOT/../node" \
   "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node" \
   "$HOME/.cache/codex-runtimes/codex-workspace/dependencies/node/bin/node" \
   "/opt/homebrew/bin/node" \

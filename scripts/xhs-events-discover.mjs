@@ -12,6 +12,7 @@ const queuePath = path.join(appData, "data", "xhs-capture-queue.json");
 const statePath = path.join(appData, "data", "xhs-events-state.json");
 const cliConfig = path.join(appData, "xhs-cli");
 const python = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "python");
+const xhsRoot = path.join(root, "vendor", "xhs-cli");
 const browserScript = path.join(root, "scripts", "xhs-events-browser.py");
 
 const readJson = async (file, fallback) => {
@@ -37,7 +38,13 @@ export function diffEvents(events, state, previousLatestEventId = "") {
 function runBrowser() {
   const output = execFileSync(python, [browserScript], {
     cwd: root, encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1", NO_COLOR: "1" },
+    env: {
+      ...process.env,
+      PYTHONPATH: [xhsRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      XHS_CLI_CONFIG_DIR: cliConfig,
+      CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1",
+      NO_COLOR: "1",
+    },
   }).trim();
   return JSON.parse(output.split("\n").at(-1));
 }

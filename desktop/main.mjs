@@ -8,6 +8,10 @@ import { startDesktopServer } from "./server.mjs";
 import { migrateLegacyData } from "./data-migration.mjs";
 import { checkForUpdate, getCodexStatus } from "./runtime-status.mjs";
 
+// Embedded Python lives inside the signed app bundle. Never let any child
+// process create or update bytecode beside signed resources.
+process.env.PYTHONDONTWRITEBYTECODE = "1";
+
 const desktopDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(desktopDir, "..");
 let serverHandle;
@@ -64,12 +68,16 @@ async function publishXhsLoginStatus() {
 
 function findCaptureEngine() {
   const candidates = [
+    path.join(process.resourcesPath, "runtime", "project", "vendor", "xhs-cli", ".venv", "bin", "xhs"),
     path.join(appRoot, "vendor", "xhs-cli", ".venv", "bin", "xhs"),
+    path.join(app.getPath("userData"), "source", "vendor", "xhs-cli", ".venv", "bin", "xhs"),
     process.env.CAIGUANG_PROJECT_ROOT && path.join(process.env.CAIGUANG_PROJECT_ROOT, "vendor", "xhs-cli", ".venv", "bin", "xhs"),
     path.join(app.getPath("documents"), "ChatGPT", "小红书创作活动获取", "vendor", "xhs-cli", ".venv", "bin", "xhs"),
   ].filter(Boolean);
   return candidates.find((candidate) => existsSync(candidate));
 }
+
+const captureProjectRoot = (executable) => path.resolve(path.dirname(executable), "../../../..");
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
@@ -121,7 +129,7 @@ async function openXhsChromeLogin() {
     await mkdir(captureConfigDir(), { recursive: true, mode: 0o700 });
     const imported = await new Promise((resolve) => {
       execFile(executable, ["login", "--browser"], {
-        cwd: appRoot,
+        cwd: captureProjectRoot(executable),
         timeout: 60_000,
         env: {
           ...process.env,
@@ -155,7 +163,7 @@ async function syncXhsChromeLogin() {
   await mkdir(captureConfigDir(), { recursive: true, mode: 0o700 });
   const imported = await new Promise((resolve) => {
     execFile(executable, ["login", "--browser"], {
-      cwd: appRoot,
+      cwd: captureProjectRoot(executable),
       timeout: 60_000,
       env: {
         ...process.env,
@@ -238,6 +246,15 @@ async function createWindow() {
 app.setName("采光");
 app.whenReady().then(async () => {
   await migrateLegacyData(app.getPath("userData"));
+  const runtimeNode = path.join(process.resourcesPath, "runtime", "node");
+  const scheduler = path.join(process.resourcesPath, "runtime", "project", "scripts", "caiguang-scheduler.mjs");
+  if (existsSync(runtimeNode) && existsSync(scheduler)) {
+    await new Promise((resolve) => execFile(runtimeNode, [scheduler, "install"], {
+      cwd: path.dirname(path.dirname(scheduler)),
+      timeout: 20_000,
+      env: { ...process.env, SHARP_EYE_HOME: app.getPath("userData") },
+    }, () => resolve()));
+  }
   const icon = nativeImage.createFromPath(path.join(appRoot, "assets", "app-icon.png"));
   if (process.platform === "darwin" && !icon.isEmpty()) app.dock.setIcon(icon);
   await createWindow();

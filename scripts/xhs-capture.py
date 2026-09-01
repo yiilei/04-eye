@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -64,6 +65,21 @@ def image_size(path: Path) -> tuple[int, int]:
     if result.returncode or not width or not height:
         raise RuntimeError(f"无法读取图片尺寸：{path.name}")
     return int(width.group(1)), int(height.group(1))
+
+
+def video_poster(video: Path, target: Path) -> dict:
+    """Create a local poster without requiring an extra bundled media tool."""
+    with tempfile.TemporaryDirectory(prefix="caiguang-poster-") as temporary:
+        result = subprocess.run(
+            ["qlmanage", "-t", "-s", "1600", "-o", temporary, str(video)],
+            text=True, capture_output=True,
+        )
+        generated = Path(temporary) / f"{video.name}.png"
+        if result.returncode or not generated.is_file():
+            raise RuntimeError("视频已下载，但系统无法生成封面")
+        shutil.copy2(generated, target)
+    width, height = image_size(target)
+    return {"path": target.name, "width": width, "height": height, "sha256": sha256(target)}
 
 
 def read_metadata(database: Path, post_id: str) -> dict:
@@ -165,6 +181,7 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
     # A standalone video can include one poster image. It remains a video post;
     # the poster must not make it look like a mixed gallery in the manifest.
     source_type = "note_video" if loose_videos else "note_gallery"
+    poster = video_poster(target / loose_videos[0], target / "poster.png") if loose_videos and not normalized_images else None
     manifest = {
         "schemaVersion": 1, "id": slug, "platform": "xiaohongshu",
         "sourceType": source_type,
@@ -182,7 +199,7 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
             "sourceIndex、尺寸、SHA-256 与 Live Photo 配对，并验证源序号连续。"
             if normalized_images else ""
         ),
-        "images": normalized_images, "videos": loose_videos,
+        "images": normalized_images, "videos": loose_videos, "poster": poster,
         "expected": {"imageCount": len(normalized_images),
                      "livePhotoCount": sum("livePhotoVideo" in image for image in normalized_images),
                      "videoCount": len(loose_videos)},
@@ -198,6 +215,7 @@ def validate(manifest: Path) -> None:
     base = manifest.parent
     images = data.get("images", [])
     videos = data.get("videos", [])
+    poster = data.get("poster")
     expected = data.get("expected", {})
     if images and data.get("carouselOrderVerified") is not True:
         raise RuntimeError("组图轮播顺序未经核验")
@@ -226,6 +244,12 @@ def validate(manifest: Path) -> None:
             validate_mp4(base / live)
     for video in videos:
         validate_mp4(base / video)
+    if videos and not images:
+        if not poster:
+            raise RuntimeError("视频帖缺少封面")
+        poster_path = base / poster["path"]
+        if not poster_path.is_file() or image_size(poster_path) != (poster["width"], poster["height"]):
+            raise RuntimeError("视频封面缺失或尺寸不一致")
     if live_count != expected.get("livePhotoCount"):
         raise RuntimeError("Live Photo 数量与清单不一致")
 
@@ -244,7 +268,8 @@ def register_for_app(manifest: Path) -> None:
     public_prefix = f"/media/{relative_folder}"
     local_prefix = str(manifest.parent)
     images = data["images"]
-    first = images[0] if images else {"path": "", "width": 1080, "height": 1440}
+    poster = data.get("poster")
+    first = images[0] if images else (poster or {"path": "", "width": 1080, "height": 1440})
     gallery = [f"{public_prefix}/{image['path']}" for image in images]
     local_gallery = [f"{local_prefix}/{image['path']}" for image in images]
     live_photos = {str(image["index"] - 1): f"{public_prefix}/{image['livePhotoVideo']}"
@@ -264,10 +289,14 @@ def register_for_app(manifest: Path) -> None:
         "caption": data.get("caption", ""),
         "summary": f"{account} · {' · '.join(counts)}", "date": data["capturedAt"][:10],
         "capturedAt": data["capturedAt"][:10], "width": first["width"], "height": first["height"],
-        "fallback": False, "cover": gallery[0] if gallery else "", "image": gallery[0] if gallery else "",
-        "gallery": gallery, "galleryLocalPaths": local_gallery,
-        "imageDimensions": [{"width": image["width"], "height": image["height"]} for image in images],
-        "localPath": local_gallery[0] if local_gallery else "", "sourceUrl": data["sourceUrl"],
+        "fallback": False,
+        "cover": gallery[0] if gallery else (f"{public_prefix}/{poster['path']}" if poster else ""),
+        "image": gallery[0] if gallery else (f"{public_prefix}/{poster['path']}" if poster else ""),
+        "gallery": gallery if gallery else ([f"{public_prefix}/{poster['path']}"] if poster else []),
+        "galleryLocalPaths": local_gallery if local_gallery else ([f"{local_prefix}/{poster['path']}"] if poster else []),
+        "imageDimensions": [{"width": image["width"], "height": image["height"]} for image in images]
+          if images else ([{"width": poster["width"], "height": poster["height"]}] if poster else []),
+        "localPath": local_gallery[0] if local_gallery else (f"{local_prefix}/{poster['path']}" if poster else ""), "sourceUrl": data["sourceUrl"],
         "sourceQuality": data["sourceQuality"],
     }
     if live_photos:

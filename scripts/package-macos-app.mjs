@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.26";
+const version = "0.3.27";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
@@ -20,6 +20,9 @@ const appPath = path.join(releaseRoot, "采光.app");
 const resources = path.join(appPath, "Contents", "Resources");
 const packagedApp = path.join(resources, "app");
 const packagedRuntime = path.join(resources, "runtime");
+const packagedRuntimeProject = path.join(packagedRuntime, "project");
+const bundledPythonRoot = process.env.CAIGUANG_PYTHON_ROOT
+  || path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "python");
 const iconSvg = path.join(root, "assets", "app-icon.svg");
 const iconset = path.join(releaseRoot, "caiguang.iconset");
 const iconSource = path.join(releaseRoot, "caiguang-1024.png");
@@ -51,42 +54,13 @@ const sourceFilter = (source) => {
 async function createCompletePackage() {
   const completeName = "采光-完整安装包";
   const completeRoot = path.join(releaseRoot, completeName);
-  const sourceRoot = path.join(completeRoot, "Codex自动化与源代码");
-  await mkdir(sourceRoot, { recursive: true });
+  await mkdir(completeRoot, { recursive: true });
   await cp(appPath, path.join(completeRoot, "采光.app"), { recursive: true, verbatimSymlinks: true });
 
-  for (const entry of ["app", "assets", "build", "db", "desktop", "plugins", "scripts", "skills", "starter", "tests", "vendor", "worker"]) {
-    await cp(path.join(root, entry), path.join(sourceRoot, entry), { recursive: true, verbatimSymlinks: true, filter: sourceFilter });
-  }
-  for (const entry of ["account-avatars", "brand"]) {
-    await cp(path.join(root, "public", entry), path.join(sourceRoot, "public", entry), { recursive: true, filter: sourceFilter });
-  }
-  await cp(path.join(root, "public", "favicon.svg"), path.join(sourceRoot, "public", "favicon.svg"));
-  for (const entry of [".agents", ".openai"]) {
-    await cp(path.join(root, entry), path.join(sourceRoot, entry), { recursive: true, filter: sourceFilter });
-  }
-
-  for (const entry of [
-    ".gitignore", "AGENTS.md", "AUTOMATION.md", "INSTALL_WITH_CODEX.md", "PROJECT-TODO.md", "README.md",
-    "drizzle.config.ts", "eslint.config.mjs", "next-env.d.ts", "next.config.ts", "package.json",
-    "pnpm-lock.yaml", "pnpm-workspace.yaml", "postcss.config.mjs", "tsconfig.json", "vite.config.ts",
-  ]) {
-    const source = path.join(root, entry);
-    if (existsSync(source)) await cp(source, path.join(sourceRoot, entry));
-  }
-
-  await mkdir(path.join(sourceRoot, "data", "reports"), { recursive: true });
-  await cp(path.join(root, "data", "xhs-account-pins.json"), path.join(sourceRoot, "data", "xhs-account-pins.json"));
-  await cp(path.join(root, "data", "xhs-media-policy.json"), path.join(sourceRoot, "data", "xhs-media-policy.json"));
-  await writeFile(path.join(sourceRoot, "data", "xhs-capture-queue.json"), `${JSON.stringify({
-    schemaVersion: 1, createdAt: new Date().toISOString(), checkedAccounts: [], tasks: [],
-  }, null, 2)}\n`);
-  await writeFile(path.join(sourceRoot, "data", "generated-review-items.json"), "[]\n");
-
   const packageGuides = {
-    "00-先看这里.md": "# 采光\n\n请先阅读 `Codex自动化与源代码/INSTALL_WITH_CODEX.md`，再打开采光.app。\n",
-    "发给Codex.txt": "请阅读当前目录中 `Codex自动化与源代码/INSTALL_WITH_CODEX.md`，完成本地安装、登录与首次采集。\n",
-    "开始安装.command": "#!/bin/zsh\nset -e\nbase_dir=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nopen \"$base_dir/采光.app\"\n",
+    "00-先看这里.md": "# 采光\n\n双击 `开始安装.command`。采光已内置 MCP、采集器、下载器和定时任务，不需要外置源码或 Codex 运行。\n",
+    "发给Codex.txt": "请将当前目录的采光.app安装到 ~/Applications 并打开。应用已内置所有本地运行组件。\n",
+    "开始安装.command": "#!/bin/zsh\nset -e\nbase_dir=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\napps_dir=\"$HOME/Applications\"\ntarget=\"$apps_dir/采光.app\"\nstaging=\"$apps_dir/.采光.installing.app\"\nbackup=\"$apps_dir/.采光.previous.app\"\nmkdir -p \"$apps_dir\"\nrm -rf \"$staging\" \"$backup\"\nditto \"$base_dir/采光.app\" \"$staging\"\ncodesign --verify --deep --strict \"$staging\"\nosascript -e 'tell application \"采光\" to quit' >/dev/null 2>&1 || true\n[[ -d \"$target\" ]] && mv \"$target\" \"$backup\"\nif ! mv \"$staging\" \"$target\"; then\n  [[ -d \"$backup\" ]] && mv \"$backup\" \"$target\"\n  exit 1\nfi\nopen \"$target\"\nrm -rf \"$backup\"\n",
   };
   for (const [entry, fallback] of Object.entries(packageGuides)) {
     const source = path.join(root, "packaging", entry);
@@ -97,7 +71,7 @@ async function createCompletePackage() {
   await chmod(path.join(completeRoot, "开始安装.command"), 0o755);
   await writeFile(path.join(completeRoot, "版本信息.txt"), [
     `采光 ${version}`, "系统：macOS", "架构：Apple Silicon (arm64)",
-    "包含：桌面应用、完整源代码、Codex Skill、采集与校验脚本、公开账号埋点、安装指引", "",
+    "包含：桌面应用、Node/Python 运行时、MCP、采集与校验脚本、下载器、公开账号埋点和定时任务", "",
   ].join("\n"));
 
   const completeZip = path.join(releaseRoot, `${completeName}-macOS-arm64.zip`);
@@ -122,6 +96,52 @@ await mkdir(packagedRuntime, { recursive: true });
 // runs this packager so scheduled work is independent from Codex and Electron.
 await cp(process.execPath, path.join(packagedRuntime, "node"));
 await chmod(path.join(packagedRuntime, "node"), 0o755);
+if (!existsSync(bundledPythonRoot)) throw new Error("未找到可嵌入的 Python 3.12 运行时");
+const pythonRuntimeFilter = (source) => !source.split(path.sep).includes("__pycache__") && !source.endsWith(".pyc");
+await cp(bundledPythonRoot, path.join(packagedRuntime, "python"), { recursive: true, verbatimSymlinks: true, filter: pythonRuntimeFilter });
+// The Codex Python distribution also contains document/spreadsheet/PDF tools
+// (~286 MB) that 采光 never imports. Both capture engines carry isolated,
+// complete environments, so the base runtime only needs the standard library.
+await rm(path.join(packagedRuntime, "python", "lib", "python3.12", "site-packages"), { recursive: true, force: true });
+await mkdir(path.join(packagedRuntime, "python", "lib", "python3.12", "site-packages"), { recursive: true });
+for (const brokenLink of ["lib/pkgconfig/python3.pc", "lib/pkgconfig/python3-embed.pc", "share/man/man1/python3.1"]) {
+  await rm(path.join(packagedRuntime, "python", brokenLink), { force: true });
+}
+const runtimeFilter = (source) => {
+  const blocked = new Set([".git", ".pytest_cache", "__pycache__", ".DS_Store", "Download"]);
+  return !source.split(path.sep).some((part) => blocked.has(part)) && !source.endsWith(".pyc");
+};
+for (const entry of ["data", "desktop", "plugins", "public", "scripts", "vendor"]) {
+  await cp(path.join(root, entry), path.join(packagedRuntimeProject, entry), { recursive: true, verbatimSymlinks: true, filter: runtimeFilter });
+}
+await cp(path.join(root, "node_modules"), path.join(packagedRuntimeProject, "node_modules"), { recursive: true, verbatimSymlinks: true });
+for (const entry of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
+  await cp(path.join(root, entry), path.join(packagedRuntimeProject, entry));
+}
+for (const engine of ["xhs-cli", "XHS-Downloader"]) {
+  const bin = path.join(packagedRuntimeProject, "vendor", engine, ".venv", "bin");
+  await rm(path.join(bin, "python"), { force: true });
+  await rm(path.join(bin, "python3"), { force: true });
+  await symlink("../../../../../python/bin/python3", path.join(bin, "python3"));
+  await symlink("python3", path.join(bin, "python"));
+}
+// Installation/build tooling is not used after packaging. Removing it keeps
+// the two isolated engines intact while avoiding ~45 MB of duplicate pip,
+// compiler and upstream test payloads.
+for (const relative of [
+  "vendor/xhs-cli/.venv/lib/python3.12/site-packages/PyObjCTest",
+  "vendor/xhs-cli/.venv/lib/python3.12/site-packages/Cython",
+  "vendor/xhs-cli/.venv/lib/python3.12/site-packages/pip",
+  "vendor/XHS-Downloader/.venv/lib/python3.12/site-packages/pip",
+  "vendor/xhs-cli/tests",
+]) await rm(path.join(packagedRuntimeProject, relative), { recursive: true, force: true });
+// Editable installs record the absolute source checkout in a .pth file. The
+// checkout is deliberately not shipped, so remove the stale pointer and make
+// every launcher resolve modules from the embedded vendor directory instead.
+await rm(path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".venv", "lib", "python3.12", "site-packages", "_editable_impl_xhs_cli.pth"), { force: true });
+const portableXhs = path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".venv", "bin", "xhs");
+await writeFile(portableXhs, "#!/bin/zsh\nset -e\nBIN_DIR=\"${0:A:h}\"\nXHS_ROOT=\"${BIN_DIR:h:h}\"\nexport PYTHONPATH=\"$XHS_ROOT${PYTHONPATH:+:$PYTHONPATH}\"\nexport PYTHONDONTWRITEBYTECODE=1\nexec \"$BIN_DIR/python\" -c 'from xhs_cli.cli import cli; cli()' \"$@\"\n");
+await chmod(portableXhs, 0o755);
 for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, entry), path.join(packagedApp, entry), { recursive: true });
 // desktop/server.mjs imports the shared cleanup module at runtime. Keep this
 // small script in the app-only bundle as well as in the complete source bundle.

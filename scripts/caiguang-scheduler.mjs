@@ -15,11 +15,9 @@ const statePath = path.join(dataRoot, "scheduler-state.json");
 const logRoot = path.join(appData, "logs");
 const launchAgent = path.join(os.homedir(), "Library", "LaunchAgents", "com.yilei.caiguang.scheduler.plist");
 const wrapper = path.join(projectRoot, "plugins", "caiguang", "scripts", "caiguang");
-const localRuntimeRoot = path.join(os.homedir(), "Library", "Application Support", "Caiguang", "runtime");
+const localRuntimeRoot = path.join(appData, "runtime");
 const localRuntimeNode = path.join(localRuntimeRoot, "node");
 const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
-const installedSourceRoot = path.join(appData, "source");
-const installedScheduler = path.join(installedSourceRoot, "scripts", "caiguang-scheduler.mjs");
 
 const copyUnlessSameFile = async (source, destination) => {
   if (path.resolve(source) === path.resolve(destination)) return;
@@ -127,21 +125,17 @@ async function install() {
   // executable copy in Application Support instead.
   await cp(appExecutable, localRuntimeNode);
   await chmod(localRuntimeNode, 0o755);
-  // launchd does not inherit Terminal/Codex access to Desktop and Documents.
-  // Execute the scheduler from the app-owned Application Support source tree
-  // so background work never stalls behind an invisible macOS privacy prompt.
-  await mkdir(path.join(installedSourceRoot, "scripts"), { recursive: true });
-  await mkdir(path.join(installedSourceRoot, "desktop"), { recursive: true });
-  await copyUnlessSameFile(fileURLToPath(import.meta.url), installedScheduler);
-  await copyUnlessSameFile(path.join(projectRoot, "scripts", "scheduler-policy.mjs"), path.join(installedSourceRoot, "scripts", "scheduler-policy.mjs"));
-  await copyUnlessSameFile(path.join(projectRoot, "desktop", "data-migration.mjs"), path.join(installedSourceRoot, "desktop", "data-migration.mjs"));
+  // Runtime code is embedded in the signed app. Only the writable Node copy,
+  // runner, logs and user state live in Application Support.
+  const schedulerEntry = fileURLToPath(import.meta.url);
   await writeFile(localRuntimeRunner, [
     "#!/bin/zsh",
     `export HOME=${JSON.stringify(os.homedir())}`,
     "export PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
     "export LANG=zh_CN.UTF-8",
+    "export PYTHONDONTWRITEBYTECODE=1",
     `export SHARP_EYE_HOME=${JSON.stringify(appData)}`,
-    `${JSON.stringify(localRuntimeNode)} ${JSON.stringify(installedScheduler)} tick`,
+    `${JSON.stringify(localRuntimeNode)} ${JSON.stringify(schedulerEntry)} tick`,
     "exit $?",
     "",
   ].join("\n"));

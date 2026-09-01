@@ -77,6 +77,17 @@ async function validate(relativeManifest) {
       errors.push(error.message);
     }
   }
+  if (data.sourceType === "note_video" && !data.images.length) {
+    if (!data.poster?.path) errors.push("视频帖缺少封面");
+    else {
+      try {
+        const poster = path.resolve(base, data.poster.path);
+        await access(poster);
+        const actual = imageSize(poster);
+        if (actual.width !== data.poster.width || actual.height !== data.poster.height) errors.push("视频封面尺寸与清单不一致");
+      } catch (error) { errors.push(error.message); }
+    }
+  }
   if (errors.length) throw new Error(`${data.id}\n- ${errors.join("\n- ")}`);
   return `${data.id}: PASS · ${data.images.length} 张图片 · ${liveCount} 个 Live Photo 配对 · ${videos.length} 个视频 · 无重复图`;
 }
