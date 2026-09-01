@@ -98,17 +98,20 @@ test("failed H5 previews can never be imported into Eagle as complete material",
 });
 
 test("reviewed media is treated as temporary bridge storage", async () => {
-  const [server, auto, page, cleanup] = await Promise.all([
+  const [server, auto, page, cleanup, packager] = await Promise.all([
     readFile(new URL("../desktop/server.mjs", import.meta.url), "utf8"),
     readFile(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../scripts/review-cache-cleanup.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/package-macos-app.mjs", import.meta.url), "utf8"),
   ]);
   assert.match(server, /cleanupReviewedMedia\(dataRoot\)/);
   assert.match(auto, /cleanup_reviewed_media/);
   assert.match(page, /下次抓取或重新打开采光时会永久删除本地文件/);
   assert.match(cleanup, /decision === "kept"/);
   assert.match(cleanup, /purgedRejected/);
+  assert.match(packager, /packagedApp, "scripts"/);
+  assert.match(packager, /review-cache-cleanup\.mjs/);
 });
 
 test("onboarding stays usable in compact windows and its public assets resolve", async () => {

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.24";
+const version = "0.3.25";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
@@ -118,6 +118,10 @@ await mkdir(packagedRuntime, { recursive: true });
 await cp(process.execPath, path.join(packagedRuntime, "node"));
 await chmod(path.join(packagedRuntime, "node"), 0o755);
 for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, entry), path.join(packagedApp, entry), { recursive: true });
+// desktop/server.mjs imports the shared cleanup module at runtime. Keep this
+// small script in the app-only bundle as well as in the complete source bundle.
+await mkdir(path.join(packagedApp, "scripts"), { recursive: true });
+await cp(path.join(root, "scripts", "review-cache-cleanup.mjs"), path.join(packagedApp, "scripts", "review-cache-cleanup.mjs"));
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });
 await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "caiguang", version, type: "module", main: "desktop/main.mjs" }, null, 2));
 await cp(iconFile, path.join(resources, "caiguang.icns"));
