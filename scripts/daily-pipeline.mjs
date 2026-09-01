@@ -8,11 +8,10 @@ import { clearNoteFailure, noteTaskIsDue, transitionNoteFailure } from "./note-c
 
 const root = process.cwd();
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
-const dataDir = path.join(root, "data");
+const dataDir = path.join(dataHome, "data");
 const queuePath = path.join(dataDir, "xhs-capture-queue.json");
 const pinsPath = path.join(dataDir, "xhs-account-pins.json");
 const policyPath = path.join(dataDir, "xhs-media-policy.json");
-const workspacePendingPinsPath = path.join(dataDir, "xhs-pending-pins.json");
 const appPendingPinsPath = path.join(dataHome, "data", "xhs-pending-pins.json");
 const registryPath = path.join(dataHome, "data", "generated-review-items.json");
 const reportsDir = path.join(dataDir, "reports");
@@ -99,7 +98,7 @@ async function main() {
   const queue = await readJson(queuePath);
   const pins = await readJson(pinsPath);
   const policy = await readJson(policyPath);
-  const pendingPins = await readJson(appPendingPinsPath).catch(() => readJson(workspacePendingPinsPath).catch(() => ({ accounts: [] })));
+  const pendingPins = await readJson(appPendingPinsPath).catch(() => ({ accounts: [] }));
   validateConfiguration(queue, pins, policy);
   const browserCaptureTasks = queue.tasks.filter((task) => task.status === "needs_browser_capture");
   const report = { schemaVersion: 1, date: today, startedAt: nowIso, mode: dryRun ? "dry-run" : "run",
@@ -221,6 +220,7 @@ async function main() {
     report.build = skipBuild ? "skipped" : "not_required_runtime_refresh";
   }
 
+  report.pending = queue.tasks.filter((task) => ["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "needs_browser_capture"].includes(task.status)).length;
   report.finishedAt = new Date().toISOString();
   report.registryItems = await readJson(registryPath).then((items) => items.length).catch(() => 0);
   const duplicateTitleCounts = report.completed.reduce((counts, item) => {

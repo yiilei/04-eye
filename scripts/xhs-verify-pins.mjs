@@ -7,9 +7,8 @@ import { fileURLToPath } from "node:url";
 import { normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts } from "./xhs-discover.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const pinsPath = path.join(root, "data", "xhs-account-pins.json");
-const workspacePendingPath = path.join(root, "data", "xhs-pending-pins.json");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
+const pinsPath = path.join(appData, "data", "xhs-account-pins.json");
 const appPendingPath = path.join(appData, "data", "xhs-pending-pins.json");
 const preferencesPath = path.join(appData, "data", "user-preferences.json");
 const xhsExecutable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs");
@@ -58,6 +57,8 @@ function validateIdentity(pending, identity, profileId) {
   if (!identity.displayName) return "主页未返回账号名称";
   if (!identity.xiaohongshuId) return "主页未返回小红书号";
   if (identity.profileId && identity.profileId !== profileId) return `内部 ID 不一致：${identity.profileId}`;
+  const expectedName = usableExpected(pending.displayName);
+  if (expectedName && expectedName !== identity.displayName) return `账号名称不一致：${identity.displayName}`;
   const expectedId = usableExpected(pending.xiaohongshuId);
   if (expectedId && expectedId !== identity.xiaohongshuId) return `小红书号不一致：${identity.xiaohongshuId}`;
   return "";
@@ -65,10 +66,9 @@ function validateIdentity(pending, identity, profileId) {
 
 export async function verifyPendingPins(options = {}) {
   const pins = await readJson(pinsPath, { version: 1, accounts: [] });
-  const workspacePending = await readJson(workspacePendingPath, { schemaVersion: 1, accounts: [] });
   const appPending = await readJson(appPendingPath, { schemaVersion: 1, accounts: [] });
   const pendingById = new Map();
-  for (const account of [...(workspacePending.accounts || []), ...(appPending.accounts || [])]) {
+  for (const account of appPending.accounts || []) {
     const profileId = profileIdFrom(account);
     if (profileId && account.status === "pending_verification") pendingById.set(profileId, { ...account, profileId });
   }
@@ -83,9 +83,21 @@ export async function verifyPendingPins(options = {}) {
   const verifiedIds = new Set();
   for (const [profileId, pending] of pendingById) {
     try {
-      const profilePayload = JSON.parse(runXhs(["user", profileId, "--json"]));
       const postsPayload = JSON.parse(runXhs(["user-posts", profileId, "--json"]));
-      const identity = mergeIdentity(profileIdentity(profilePayload), profileIdentityFromPosts(postsPayload), profileId);
+      const postsIdentity = profileIdentityFromPosts(postsPayload);
+      let profilePayload = {};
+      const postsAreEnough = postsIdentity.displayName
+        && postsIdentity.profileId === profileId
+        && usableExpected(pending.xiaohongshuId);
+      if (!postsAreEnough) {
+        try { profilePayload = JSON.parse(runXhs(["user", profileId, "--json"])); } catch { /* posts provide a fixed-profile fallback */ }
+      }
+      const pendingIdentity = {
+        displayName: usableExpected(pending.displayName),
+        xiaohongshuId: usableExpected(pending.xiaohongshuId),
+        profileId,
+      };
+      const identity = mergeIdentity(profileIdentity(profilePayload), mergeIdentity(postsIdentity, pendingIdentity, profileId), profileId);
       const identityError = validateIdentity(pending, identity, profileId);
       if (identityError) throw new Error(identityError);
       const posts = normalizePosts(postsPayload, { searchKey: identity.xiaohongshuId });
@@ -121,11 +133,12 @@ export async function verifyPendingPins(options = {}) {
     pins.updatedAt = now;
     await atomicJson(pinsPath, pins);
     const pendingDocument = { schemaVersion: 1, updatedAt: now, accounts: remaining };
-    await atomicJson(workspacePendingPath, pendingDocument);
     await atomicJson(appPendingPath, pendingDocument);
     const preferences = await readJson(preferencesPath, null);
     if (preferences) {
       preferences.pinnedAccountIds = [...new Set([...(preferences.pinnedAccountIds || []), ...verifiedIds])];
+      preferences.manualPinAccounts = (preferences.manualPinAccounts || [])
+        .filter((account) => !verifiedIds.has(profileIdFrom(account)));
       preferences.updatedAt = now;
       await atomicJson(preferencesPath, preferences);
     }

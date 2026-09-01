@@ -290,12 +290,14 @@ def capture(args: argparse.Namespace) -> dict:
     slug = args.slug or post_id
     metadata: dict = {}
     engine_log = "offline fixture"
+    generated_stage: Path | None = None
     if args.source_dir:
         source_root = args.source_dir.resolve()
         if not source_root.exists():
             raise RuntimeError(f"离线素材目录不存在：{source_root}")
     else:
         stage = STAGING / f"{args.date}-{post_id}"
+        generated_stage = stage
         stage.mkdir(parents=True, exist_ok=True)
         source_root, metadata, engine_log = run_engine(args.url, stage)
 
@@ -304,6 +306,8 @@ def capture(args: argparse.Namespace) -> dict:
     validate(manifest)
     if args.output_root.resolve() == DEFAULT_OUTPUT.resolve():
         register_for_app(manifest)
+        if generated_stage is not None:
+            shutil.rmtree(generated_stage, ignore_errors=True)
     data = json.loads(manifest.read_text(encoding="utf-8"))
     return {"ok": True, "id": data["id"],
             "images": data["expected"]["imageCount"],

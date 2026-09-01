@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const queuePath = path.join(root, "data", "xhs-capture-queue.json");
-const statePath = path.join(root, "data", "xhs-events-state.json");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
+const queuePath = path.join(appData, "data", "xhs-capture-queue.json");
+const statePath = path.join(appData, "data", "xhs-events-state.json");
 const cliConfig = path.join(appData, "xhs-cli");
 const python = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "python");
 const browserScript = path.join(root, "scripts", "xhs-events-browser.py");

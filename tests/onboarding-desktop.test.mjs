@@ -23,16 +23,29 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(main, /Google Chrome/);
   assert.match(main, /openXhsChromeLogin/);
   assert.match(main, /caiguang:open-xhs-login/);
+  assert.match(main, /caiguang:sync-xhs-login/);
   assert.match(main, /caiguang:xhs-login-status/);
+  assert.doesNotMatch(main, /caiguang:open-app-management-settings/);
+  assert.doesNotMatch(main, /caiguang:download-update/);
   assert.match(preload, /openXhsLogin/);
+  assert.match(preload, /syncXhsLogin/);
+  assert.doesNotMatch(preload, /openAppManagementSettings/);
+  assert.doesNotMatch(preload, /downloadUpdate/);
   assert.match(preload, /onXhsLoginChanged/);
   assert.match(page, /setXhsSetupStatus\("已登录"\)/);
+  assert.match(page, /bridge\?\.getXhsLoginStatus\?\.\(\)/);
+  assert.match(page, /bridge\?\.onXhsLoginChanged\?\.\(/);
   assert.match(page, /setInterval\(\(\) => void checkEagle\(\), 1_500\)/);
   assert.match(page, /使用 Chrome 登录/);
   assert.match(page, /优先只读复制 Chrome 当前登录状态/);
   assert.match(page, /completeAfterChromeReturn/);
+  assert.match(page, /bridge\.syncXhsLogin\(\)/);
+  assert.doesNotMatch(page, /completeAfterChromeReturn[\s\S]{0,500}bridge\.openXhsLogin\(\)/);
   assert.match(page, /document\.visibilityState !== "visible"/);
   assert.match(page, /正在同步/);
+  assert.doesNotMatch(page, /系统权限：允许应用更新/);
+  assert.doesNotMatch(page, /下载并安装/);
+  assert.match(page, /把版本页链接发给 Codex/);
   assert.match(sessionScript, /\["login", "--qrcode"\]/);
   assert.match(sessionScript, /XHS_CLI_DISABLE_BROWSER_COOKIE: command === "login-chrome" \? "0" : "1"/);
   assert.match(sessionScript, /"login-chrome" \? \["login", "--browser"\]/);
@@ -123,6 +136,7 @@ test("onboarding stays usable in compact windows and its public assets resolve",
   ]);
 
   assert.match(css, /\.first-run-setup \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.first-run-footer \{[^}]*position: sticky;[^}]*bottom: -1px/);
   assert.match(css, /width: min\(calc\(100vw - 64px\),calc\(\(100vh - 64px\) \* 4 \/ 3\)\)/);
   assert.doesNotMatch(page, /caiguang-icon\.svg/);
   assert.doesNotMatch(layout, /caiguang-icon\.svg/);
@@ -130,4 +144,10 @@ test("onboarding stays usable in compact windows and its public assets resolve",
   assert.match(pendingRoute, /process\.env\.INIT_CWD \|\| process\.env\.PWD/);
   assert.match(pendingRoute, /mkdir\(path\.dirname\(pendingPath\), \{ recursive: true \}\)/);
   assert.match(page, /if \(!hydrated \|\| !desktopAppMode\) return;[\s\S]*fetch\("\/api\/pending-pins"/);
+});
+
+test("desktop packager replaces rather than merges the previous app payload", async () => {
+  const packager = await readFile(new URL("scripts/package-macos-app.mjs", root), "utf8");
+  assert.match(packager, /await rm\(packagedApp, \{ recursive: true, force: true \}\)/);
+  assert.match(packager, /await rm\(packagedRuntime, \{ recursive: true, force: true \}\)/);
 });

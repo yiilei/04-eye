@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-23T18:55:00.000Z",
+  "updatedAt": "2026-09-01T09:40:58.327Z",
   "accounts": [
     {
       "searchKey": "63044481856",
@@ -12,8 +12,8 @@
       "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/600e72c904b7c90001c6e3bf.jpg?imageView2/2/w/540/format/webp|imageMogr2/strip2",
       "avatarLocalPath": "/account-avatars/59f985684eacab1ce3cc5409.webp",
       "avatarVerifiedAt": "2026-08-14T20:38:45+08:00",
-      "lastSeenPostId": "6a7efc7000000000050213c7",
-      "lastCheckedAt": "2026-08-17T03:09:36.000Z",
+      "lastSeenPostId": "6a95660e000000000400924c",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
       "status": "verified"
     },
     {
@@ -27,7 +27,7 @@
       "avatarLocalPath": "/account-avatars/6821ceac000000000e01159c.webp",
       "avatarVerifiedAt": "2026-08-14T20:38:45+08:00",
       "lastSeenPostId": "6a55aaf80000000008030e27",
-      "lastCheckedAt": "2026-08-17T03:09:36.000Z",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
       "status": "verified"
     },
     {
@@ -40,8 +40,8 @@
       "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31v28bd9jis605pg661f0slajjuqtdoo?imageView2/2/w/540/format/webp|imageMogr2/strip2",
       "avatarLocalPath": "/account-avatars/6606305e0000000003025553.webp",
       "avatarVerifiedAt": "2026-08-14T20:38:45+08:00",
-      "lastSeenPostId": "6a79719d000000003203315d",
-      "lastCheckedAt": "2026-08-17T03:09:36.000Z",
+      "lastSeenPostId": "6a914a71000000001e017e98",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
       "status": "verified"
     },
     {
@@ -54,8 +54,8 @@
       "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo323o5eeke0ae05nvmv3608198csja0p0?imageView2/2/w/540/format/webp|imageMogr2/strip2",
       "avatarLocalPath": "/account-avatars/5ff6f8cc0000000001000528.webp",
       "avatarVerifiedAt": "2026-08-14T20:38:45+08:00",
-      "lastSeenPostId": "6a5af061000000000503af45",
-      "lastCheckedAt": "2026-08-17T03:09:36.000Z",
+      "lastSeenPostId": "6a87b4f400000000050317bd",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
       "status": "verified"
     },
     {
@@ -68,8 +68,8 @@
       "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31up1uv5734005q18gk03jpsm9bvrsio?imageView2/2/w/540/format/webp|imageMogr2/strip2",
       "avatarLocalPath": "/account-avatars/68288500000000000e01e796.webp",
       "avatarVerifiedAt": "2026-08-14T20:38:45+08:00",
-      "lastSeenPostId": "6a5d80bd000000000f005899",
-      "lastCheckedAt": "2026-08-17T03:09:36.000Z",
+      "lastSeenPostId": "6a94dc670000000026036afa",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
       "status": "verified"
     },
     {
@@ -129,21 +129,6 @@
       "status": "verified"
     },
     {
-      "searchKey": "27760936764",
-      "xiaohongshuId": "27760936764",
-      "displayName": "RED LAND",
-      "previousDisplayName": "RED LAND（蹲答题搭子版）",
-      "group": "high_frequency_operations",
-      "profileId": "685ce6320000000008039c70",
-      "profileUrl": "https://www.xiaohongshu.com/user/profile/685ce6320000000008039c70",
-      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo323rlnhb0n0005q2ssop2773gbb59v10?imageView2/2/w/540/format/webp|imageMogr2/strip2",
-      "avatarLocalPath": "/account-avatars/685ce6320000000008039c70.webp",
-      "avatarVerifiedAt": "2026-08-14T20:38:45+08:00",
-      "lastSeenPostId": "6a81c44a0000000021021b1e",
-      "lastCheckedAt": "2026-08-17T03:09:36.000Z",
-      "status": "verified"
-    },
-    {
       "searchKey": "2636836395",
       "xiaohongshuId": "2636836395",
       "displayName": "北风",
@@ -152,7 +137,7 @@
       "profileUrl": "https://www.xiaohongshu.com/user/profile/601bf388000000000101d9ca",
       "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo319do4g346g0g5o0rue40bmeacolfpro",
       "lastSeenPostId": "6a72e7c8000000003301f6ba",
-      "lastCheckedAt": "2026-08-23T18:55:00.000Z",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
       "status": "verified"
     },
     {
@@ -164,7 +149,79 @@
       "profileUrl": "https://www.xiaohongshu.com/user/profile/583d8dd95e87e760a932787d",
       "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/672d7a3e899e802225905745.jpg",
       "lastSeenPostId": "6a3ba50d0000000006033c46",
-      "lastCheckedAt": "2026-08-23T18:55:00.000Z",
+      "lastCheckedAt": "2026-09-01T09:02:27.184Z",
+      "status": "verified"
+    },
+    {
+      "searchKey": "Sihua_",
+      "xiaohongshuId": "Sihua_",
+      "displayName": "思花",
+      "group": "manual",
+      "profileId": "6041ed6c0000000001005c1f",
+      "profileUrl": "https://www.xiaohongshu.com/user/profile/6041ed6c0000000001005c1f",
+      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31e86rq3dgc005o21tlm08n0v7a0237o",
+      "lastSeenPostId": "6a94112e00000000080135e6",
+      "lastCheckedAt": "2026-09-01T09:36:01.468Z",
+      "status": "verified"
+    },
+    {
+      "searchKey": "9478702136",
+      "xiaohongshuId": "9478702136",
+      "displayName": "天猫国际 DesignStudio",
+      "group": "manual",
+      "profileId": "60974b9b0000000001003dfb",
+      "profileUrl": "https://www.xiaohongshu.com/user/profile/60974b9b0000000001003dfb",
+      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo3238780137o005o4n9edg8ffr4s91v48",
+      "lastSeenPostId": "6a6896d20000000014006cad",
+      "lastCheckedAt": "2026-09-01T09:36:01.468Z",
+      "status": "verified"
+    },
+    {
+      "searchKey": "3861550485",
+      "xiaohongshuId": "3861550485",
+      "displayName": "BORDOJO",
+      "group": "manual",
+      "profileId": "62ec7ae1000000001f015394",
+      "profileUrl": "https://www.xiaohongshu.com/user/profile/62ec7ae1000000001f015394",
+      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31cocm5m6gs005oncfbgnqksktr1u42g",
+      "lastSeenPostId": "6a6c52a90000000028002083",
+      "lastCheckedAt": "2026-09-01T09:36:01.468Z",
+      "status": "verified"
+    },
+    {
+      "searchKey": "StudioKoi",
+      "xiaohongshuId": "StudioKoi",
+      "displayName": "Studio Koi 闊以",
+      "group": "manual",
+      "profileId": "67b064b5000000000e013f9d",
+      "profileUrl": "https://www.xiaohongshu.com/user/profile/67b064b5000000000e013f9d",
+      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31lnau9114q005ptgciqjifst3ocvel8",
+      "lastSeenPostId": "6a60a85e000000000f033d8e",
+      "lastCheckedAt": "2026-09-01T09:36:01.468Z",
+      "status": "verified"
+    },
+    {
+      "searchKey": "6282839574",
+      "xiaohongshuId": "6282839574",
+      "displayName": "快手生活服务设计中心",
+      "group": "manual",
+      "profileId": "629495a80000000021021b10",
+      "profileUrl": "https://www.xiaohongshu.com/user/profile/629495a80000000021021b10",
+      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31oioobb55m005okkimk8c6ogjcad3r8",
+      "lastSeenPostId": "6a3e74eb000000002103d801",
+      "lastCheckedAt": "2026-09-01T09:36:01.468Z",
+      "status": "verified"
+    },
+    {
+      "searchKey": "26849390459",
+      "xiaohongshuId": "26849390459",
+      "displayName": "Kwai-Design",
+      "group": "manual",
+      "profileId": "68ae7835000000001900c4a4",
+      "profileUrl": "https://www.xiaohongshu.com/user/profile/68ae7835000000001900c4a4",
+      "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31lvkf48klu005q5ef0qm9h54kvlja08",
+      "lastSeenPostId": "6a75c3940000000008013abc",
+      "lastCheckedAt": "2026-09-01T09:36:01.468Z",
       "status": "verified"
     }
   ]

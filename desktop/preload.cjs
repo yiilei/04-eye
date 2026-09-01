@@ -2,13 +2,13 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("sharpEyeDesktop", {
   platform: "macOS",
-  version: "0.3.25",
+  version: "0.3.26",
   fitWindow: (request) => ipcRenderer.invoke("caiguang:fit-window", request),
   getRuntimeStatus: () => ipcRenderer.invoke("caiguang:runtime-status"),
   checkForUpdate: () => ipcRenderer.invoke("caiguang:check-update"),
   openRelease: (url) => ipcRenderer.invoke("caiguang:open-release", url),
-  downloadUpdate: (url) => ipcRenderer.invoke("caiguang:download-update", url),
   openXhsLogin: () => ipcRenderer.invoke("caiguang:open-xhs-login"),
+  syncXhsLogin: () => ipcRenderer.invoke("caiguang:sync-xhs-login"),
   getXhsLoginStatus: () => ipcRenderer.invoke("caiguang:xhs-login-status"),
   onXhsLoginChanged: (callback) => {
     const listener = (_event, status) => callback(status);

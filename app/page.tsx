@@ -38,9 +38,8 @@ type DesktopBridge = {
   getRuntimeStatus?: () => Promise<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>;
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
-  downloadUpdate?: (url: string) => Promise<{ ok: boolean; error?: string }>;
-  openAppManagementSettings?: () => Promise<boolean>;
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
+  syncXhsLogin?: () => Promise<{ loggedIn?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
   onLibraryChanged?: (callback: (status: { updatedAt?: string }) => void) => () => void;
@@ -466,7 +465,7 @@ export default function Home() {
   const [desktopAppMode, setDesktopAppMode] = useState(false);
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>();
-  const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable" | "downloading" | "downloaded" | "download_failed"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string }>({ state: "idle" });
+  const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string }>({ state: "idle" });
   const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
@@ -535,22 +534,6 @@ export default function Home() {
       setUpdateStatus(result);
     } catch {
       setUpdateStatus({ state: "unavailable", message: "暂时无法检查更新" });
-    }
-  }, []);
-  const downloadAndInstallUpdate = useCallback(async (url: string) => {
-    const bridge = getDesktopBridge();
-    if (!bridge?.downloadUpdate) {
-      setUpdateStatus((prev) => ({ ...prev, state: "download_failed", message: "请在采光桌面应用中更新" }));
-      return;
-    }
-    setUpdateStatus((prev) => ({ ...prev, state: "downloading" }));
-    try {
-      const result = await bridge.downloadUpdate(url);
-      if (!result.ok) {
-        setUpdateStatus((prev) => ({ ...prev, state: "download_failed", message: result.error || "下载失败" }));
-      }
-    } catch (error) {
-      setUpdateStatus((prev) => ({ ...prev, state: "download_failed", message: error instanceof Error ? error.message : "下载失败" }));
     }
   }, []);
   const refreshManualCapture = useCallback(async () => {
@@ -1031,6 +1014,22 @@ export default function Home() {
   }, [colorTheme, hydrated]);
 
   useEffect(() => {
+    if (!onboardingPreview) return;
+    const bridge = getDesktopBridge();
+    let active = true;
+    void bridge?.getXhsLoginStatus?.().then((status) => {
+      if (active && status.loggedIn) setXhsSetupStatus("已登录");
+    }).catch(() => undefined);
+    const unsubscribe = bridge?.onXhsLoginChanged?.((status) => {
+      if (active && status.loggedIn) setXhsSetupStatus("已登录");
+    });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [onboardingPreview]);
+
+  useEffect(() => {
     const fitOnboardingFrame = () => {
       const availableWidth = Math.max(480, window.innerWidth - 64);
       const availableHeight = Math.max(360, window.innerHeight - 64);
@@ -1098,21 +1097,21 @@ export default function Home() {
     return () => { active = false; window.clearInterval(timer); };
   }, [camoufoxStatus, desktopAppMode, onboardingPreview]);
 
-  // The first-run flow opens the user's existing Chrome profile rather than
-  // creating a separate QR-login device.  We intentionally do not inspect
-  // Chrome cookies; returning focus to 采光 is therefore the explicit local
-  // completion signal for the login step.
+  // Returning from Chrome only retries the local session import. It must never
+  // reopen Chrome, otherwise every focus/visibility event creates another tab.
   useEffect(() => {
     if (!onboardingPreview || xhsSetupStatus !== "等待登录") return;
     const resetTimer = window.setTimeout(() => setXhsSetupStatus((current) => current === "等待登录" ? "未登录" : current), 45_000);
+    let syncing = false;
     const completeAfterChromeReturn = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || syncing) return;
       const bridge = getDesktopBridge();
-      if (!bridge?.openXhsLogin) return;
-      void bridge.openXhsLogin().then((status) => {
+      if (!bridge?.syncXhsLogin) return;
+      syncing = true;
+      void bridge.syncXhsLogin().then((status) => {
         if (status.loggedIn) setXhsSetupStatus("已登录");
         else if (status.error) setXhsSetupStatus("未登录");
-      });
+      }).catch(() => setXhsSetupStatus("未登录")).finally(() => { syncing = false; });
     };
     addEventListener("focus", completeAfterChromeReturn);
     document.addEventListener("visibilitychange", completeAfterChromeReturn);
@@ -1685,7 +1684,6 @@ export default function Home() {
             <div className="first-run-intro"><h1><i aria-hidden="true" />开始使用<i aria-hidden="true" /></h1></div>
            <div className="first-run-steps">
               <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && (desktopAppMode ? <span className="completion-check">✓</span> : <span className="preview-status">网页预览</span>)}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
-             <div className="first-run-step"><span><strong>系统权限：允许应用更新</strong><small>仅用于采光下载安装新版本，不影响日常抓取。首次开启后请重启采光一次。</small></span><div className="first-run-action"><button type="button" onClick={() => void getDesktopBridge()?.openAppManagementSettings?.()}>打开系统设置</button></div></div>
              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "使用 Chrome 登录"}</button></div></div>
              <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
              <div className={`first-run-step first-run-stats ${statsNoticeAcknowledged ? "is-complete" : ""}`}>
@@ -1696,12 +1694,14 @@ export default function Home() {
                </div>
              </div>
            </div>
-           <button
-             type="button"
-             className="first-run-enter"
-             disabled={xhsSetupStatus !== "已登录" || eagleSetupStatus !== "已连接" || !statsNoticeAcknowledged}
-              onClick={finishOnboarding}
-            >进入批阅页</button>
+           <div className="first-run-footer">
+             <button
+               type="button"
+               className="first-run-enter"
+               disabled={xhsSetupStatus !== "已登录" || eagleSetupStatus !== "已连接" || !statsNoticeAcknowledged}
+               onClick={finishOnboarding}
+             >进入批阅页</button>
+           </div>
           </div>
         </section>
       </main>
@@ -1887,13 +1887,11 @@ export default function Home() {
                 </div>
                 <div className="runtime-update-row">
                   <div className="runtime-update-copy">
-                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "downloading" ? "正在下载更新，应用将自动重启…" : updateStatus.state === "download_failed" ? updateStatus.message || "下载失败" : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "unavailable" ? updateStatus.message : "检查应用更新"}</strong>
-                    <small>{updateStatus.state === "available" ? "点击下载并自动安装，应用将重启" : "只检查公开版本，不会自动覆盖当前应用"}</small>
+                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "unavailable" ? updateStatus.message : "检查新版本"}</strong>
+                    <small>{updateStatus.state === "available" ? "把版本页链接发给 Codex，即可按 GitHub 最新版本更新" : "只检查 GitHub 公开版本，不会下载或修改应用"}</small>
                   </div>
-                  {updateStatus.state === "available" && updateStatus.downloadUrl ? (
-                    <button type="button" className="runtime-release" disabled={updateStatus.state === "downloading"} onClick={() => void downloadAndInstallUpdate(updateStatus.downloadUrl!)}>下载并安装</button>
-                  ) : updateStatus.state === "downloading" ? (
-                    <button type="button" className="runtime-release" disabled>下载中…</button>
+                  {updateStatus.state === "available" && updateStatus.releaseUrl ? (
+                    <button type="button" className="runtime-release" onClick={() => void getDesktopBridge()?.openRelease?.(updateStatus.releaseUrl!)}>查看版本</button>
                   ) : (
                     <button type="button" className="runtime-check" disabled={updateStatus.state === "checking"} onClick={() => void checkForAppUpdate()}>{updateStatus.state === "checking" ? "检查中" : "检查"}</button>
                   )}

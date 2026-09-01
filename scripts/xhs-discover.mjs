@@ -6,10 +6,10 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const pinsPath = path.join(root, "data", "xhs-account-pins.json");
-const queuePath = path.join(root, "data", "xhs-capture-queue.json");
-const xhsExecutable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
+const pinsPath = path.join(appData, "data", "xhs-account-pins.json");
+const queuePath = path.join(appData, "data", "xhs-capture-queue.json");
+const xhsExecutable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs");
 const cliConfig = path.join(appData, "xhs-cli");
 const preferencesPath = path.join(appData, "data", "user-preferences.json");
 

@@ -734,13 +734,13 @@ html[data-theme="light"] .window-controls > .sidebar-toggle::after { border-colo
 html:has(.first-run-shell), body:has(.first-run-shell) { min-width: 0; }
 .first-run-shell { position: fixed; inset: 0; width: auto; height: auto; padding: 32px; background: transparent; }
 .first-run-guide { width: min(calc(100vw - 64px),calc((100vh - 64px) * 4 / 3)); height: min(calc(100vh - 64px),calc((100vw - 64px) * 3 / 4)); max-width: none; max-height: none; min-height: 0; aspect-ratio: 4 / 3; overflow: hidden; background: var(--glass-strong); border: 1px solid var(--line); border-radius: 28px; box-shadow: 0 30px 90px rgba(0,0,0,.28); }
-.first-run-setup { height: 100%; min-height: 0; padding: 48px 54px 58px; overflow-y: auto; color: var(--text); background: var(--glass-strong); border: 0; border-radius: 0; box-shadow: none; }
+.first-run-setup { height: 100%; min-height: 0; padding: 34px 54px 28px; overflow-y: auto; color: var(--text); background: var(--glass-strong); border: 0; border-radius: 0; box-shadow: none; }
 .first-run-toolbar { display: flex; align-items: center; justify-content: space-between; width: 100%; }
 .onboarding-lights { gap: 8px; }
 .onboarding-lights i { width: 12px; height: 12px; }
 .first-run-wordmark { color: var(--text); font-size: 14px; font-weight: 650; }
 .first-run-wordmark img { width: 25px; height: 25px; }
-.first-run-intro { margin: clamp(86px,14vh,138px) 0 74px; text-align: center; }
+.first-run-intro { margin: clamp(34px,6vh,62px) 0 34px; text-align: center; }
 .first-run-intro h1 { color: var(--text); font-size: clamp(54px,6.1vw,80px); font-weight: 650; letter-spacing: -.06em; }
 .first-run-steps { width: min(720px,100%); margin: 0 auto; border-top-color: var(--line); }
 .first-run-step { grid-template-columns: 58px minmax(0,1fr) 76px 92px; min-height: 92px; padding: 16px 0; gap: 14px; border-bottom-color: var(--line); }
@@ -777,6 +777,8 @@ html:has(.first-run-shell), body:has(.first-run-shell) { min-width: 0; }
 .first-run-enter { align-self: flex-end; min-width: 108px; height: 34px; margin-top: auto; color: #111; background: var(--accent); border: 0; border-radius: 999px; font-size: 11px; font-weight: 700; transition: opacity .16s ease, background .16s ease; }
 .first-run-enter:hover:not(:disabled) { background: #ffed3b; }
 .first-run-enter:disabled { color: rgba(17,17,17,.42); background: rgba(255,230,0,.32); cursor: default; }
+.first-run-footer { position: sticky; bottom: -1px; z-index: 3; display: flex; justify-content: flex-end; width: min(720px,100%); margin: 0 auto; padding: 18px 0 2px; background: linear-gradient(to bottom, transparent, var(--glass-strong) 28%); }
+.first-run-footer .first-run-enter { margin-top: 0; }
 
 /* The packaged macOS app already owns the native window chrome. Avoid
    rendering a second rounded window and a duplicate traffic-light group. */

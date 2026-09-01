@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.25";
+const version = "0.3.26";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
@@ -109,6 +109,11 @@ await rm(releaseRoot, { recursive: true, force: true });
 await mkdir(releaseRoot, { recursive: true });
 await createMacIcon();
 await cp(electronApp, appPath, { recursive: true, verbatimSymlinks: true });
+// When reusing an installed 采光 shell, remove its previous application
+// payload before copying the fresh build. Recursive cp merges directories and
+// would otherwise retain obsolete hashed chunks and retired IPC handlers.
+await rm(packagedApp, { recursive: true, force: true });
+await rm(packagedRuntime, { recursive: true, force: true });
 await mkdir(packagedApp, { recursive: true });
 await mkdir(packagedRuntime, { recursive: true });
 // Background capture must not reuse Electron as a Node substitute. Under

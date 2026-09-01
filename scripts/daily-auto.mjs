@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -7,9 +7,16 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
+const dataDir = path.join(dataHome, "data");
 const progressPath = path.join(dataHome, "data", "capture-progress.json");
 const preferencesPath = path.join(dataHome, "data", "user-preferences.json");
-const queuePath = path.join(root, "data", "xhs-capture-queue.json");
+const queuePath = path.join(dataDir, "xhs-capture-queue.json");
+mkdirSync(dataDir, { recursive: true });
+for (const name of ["xhs-account-pins.json", "xhs-media-policy.json", "xhs-capture-queue.json", "xhs-events-state.json", "xhs-pending-pins.json"]) {
+  const target = path.join(dataDir, name);
+  const seed = path.join(root, "data", name);
+  if (!existsSync(target) && existsSync(seed)) copyFileSync(seed, target);
+}
 let creatorH5CaptureEnabled = true;
 try {
   creatorH5CaptureEnabled = JSON.parse(readFileSync(preferencesPath, "utf8")).creatorH5CaptureEnabled === true;

@@ -125,6 +125,11 @@ try {
   await writeFile(registryTemp, `${JSON.stringify(nextRegistry, null, 2)}\n`);
   await rename(registryTemp, registryPath);
   if (previousMoved) await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+  // The reviewed copy is now complete and atomically registered. The H5
+  // capture directory is only evidence/staging and must not duplicate it.
+  if (sourceDir.includes(`${path.sep}data${path.sep}h5-staging${path.sep}`)) {
+    await rm(sourceDir, { recursive: true, force: true });
+  }
 } catch (error) {
   await rm(registryTemp, { force: true }).catch(() => {});
   if (stagedInstalled) await rm(targetDir, { recursive: true, force: true }).catch(() => {});

@@ -1,8 +1,10 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
-const queuePath = path.resolve(process.cwd(), "data", "xhs-capture-queue.json");
+const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
+const queuePath = path.join(dataHome, "data", "xhs-capture-queue.json");
 const queue = JSON.parse(await readFile(queuePath, "utf8"));
 const command = process.argv.slice(2).find((value) => value !== "--") || "status";
 
