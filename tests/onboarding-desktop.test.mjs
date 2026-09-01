@@ -37,6 +37,8 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(page, /bridge\?\.onXhsLoginChanged\?\.\(/);
   assert.match(page, /setInterval\(\(\) => void checkEagle\(\), 1_500\)/);
   assert.match(page, /使用 Chrome 登录/);
+  assert.match(page, /当前版本为测试版本/);
+  assert.match(page, /first-run-test-version/);
   assert.match(page, /优先只读复制 Chrome 当前登录状态/);
   assert.match(page, /completeAfterChromeReturn/);
   assert.match(page, /bridge\.syncXhsLogin\(\)/);

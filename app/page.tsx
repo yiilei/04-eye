@@ -1681,7 +1681,10 @@ export default function Home() {
             </div>
           </div>}
           <div className="first-run-setup">
-            <div className="first-run-intro"><h1><i aria-hidden="true" />开始使用<i aria-hidden="true" /></h1></div>
+            <div className="first-run-intro">
+              <h1><i aria-hidden="true" />开始使用<i aria-hidden="true" /></h1>
+              <p className="first-run-test-version">当前版本为测试版本</p>
+            </div>
            <div className="first-run-steps">
               <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && (desktopAppMode ? <span className="completion-check">✓</span> : <span className="preview-status">网页预览</span>)}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "使用 Chrome 登录"}</button></div></div>
