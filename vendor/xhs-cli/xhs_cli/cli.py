@@ -100,7 +100,7 @@ def cli(verbose: bool):
 
 @cli.command()
 @click.option("--qrcode", is_flag=True, help="Force QR code login")
-@click.option("--browser", is_flag=True, help="Deprecated: Chrome session import is disabled")
+@click.option("--browser", is_flag=True, help="Copy the current Chrome Xiaohongshu session")
 @click.option("--cookie", "cookie_str", default=None, help="Deprecated: external session import is disabled")
 @click.pass_context
 def login(ctx: click.Context, qrcode: bool, browser: bool, cookie_str: str | None):
@@ -114,11 +114,19 @@ def login(ctx: click.Context, qrcode: bool, browser: bool, cookie_str: str | Non
         sys.exit(1)
 
     if browser:
-        console.print(
-            "[red]❌ Chrome session import is disabled to protect the primary browser login. "
-            "Run `xhs login --qrcode` to create an isolated Caiguang session.[/red]"
-        )
-        sys.exit(2)
+        from .auth import import_browser_session
+        cookie = import_browser_session()
+        if not cookie:
+            console.print("[yellow]⚠️  Chrome 中没有可用的小红书登录状态。[/yellow]")
+            sys.exit(2)
+        cookie_dict = cookie_str_to_dict(cookie)
+        verify_result = _verify_cookies(cookie_dict)
+        if verify_result is False:
+            clear_cookies()
+            console.print("[red]❌ Chrome 小红书登录状态已失效。[/red]")
+            sys.exit(2)
+        console.print("[green]✅ 已只读复制 Chrome 小红书登录状态。[/green]")
+        return
 
     if cookie_provided:
         console.print(

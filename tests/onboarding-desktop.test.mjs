@@ -84,3 +84,47 @@ test("automatic capture switch persists and gates the local scheduler", async ()
   assert.match(server, /automaticCaptureEnabled: payload\.automaticCaptureEnabled/);
   assert.match(server, /creatorH5CaptureEnabled: payload\.creatorH5CaptureEnabled/);
 });
+
+test("failed H5 previews can never be imported into Eagle as complete material", async () => {
+  const [page, fallback] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("scripts/register-h5-fallback.mjs", root), "utf8"),
+  ]);
+
+  assert.match(page, /decisions\[item\.id\] === "kept" && !eagleItems\[item\.id\] && !item\.previewOnly/);
+  assert.match(page, /当前是失败兜底预览。采光会定时补抓完整活动/);
+  assert.doesNotMatch(page, /已标记保留；现在开始下载完整原帖/);
+  assert.match(fallback, /已保留封面和创作服务中心入口/);
+});
+
+test("reviewed media is treated as temporary bridge storage", async () => {
+  const [server, auto, page, cleanup] = await Promise.all([
+    readFile(new URL("../desktop/server.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/review-cache-cleanup.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(server, /cleanupReviewedMedia\(dataRoot\)/);
+  assert.match(auto, /cleanup_reviewed_media/);
+  assert.match(page, /下次抓取或重新打开采光时会永久删除本地文件/);
+  assert.match(cleanup, /decision === "kept"/);
+  assert.match(cleanup, /purgedRejected/);
+});
+
+test("onboarding stays usable in compact windows and its public assets resolve", async () => {
+  const [css, page, layout, pendingRoute] = await Promise.all([
+    readFile(new URL("app/globals.css", root), "utf8"),
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/layout.tsx", root), "utf8"),
+    readFile(new URL("app/api/pending-pins/route.ts", root), "utf8"),
+  ]);
+
+  assert.match(css, /\.first-run-setup \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /width: min\(calc\(100vw - 64px\),calc\(\(100vh - 64px\) \* 4 \/ 3\)\)/);
+  assert.doesNotMatch(page, /caiguang-icon\.svg/);
+  assert.doesNotMatch(layout, /caiguang-icon\.svg/);
+  assert.match(layout, /favicon\.svg/);
+  assert.match(pendingRoute, /process\.env\.INIT_CWD \|\| process\.env\.PWD/);
+  assert.match(pendingRoute, /mkdir\(path\.dirname\(pendingPath\), \{ recursive: true \}\)/);
+  assert.match(page, /if \(!hydrated \|\| !desktopAppMode\) return;[\s\S]*fetch\("\/api\/pending-pins"/);
+});

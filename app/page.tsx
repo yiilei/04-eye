@@ -39,6 +39,7 @@ type DesktopBridge = {
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
   downloadUpdate?: (url: string) => Promise<{ ok: boolean; error?: string }>;
+  openAppManagementSettings?: () => Promise<boolean>;
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
@@ -263,7 +264,7 @@ async function readImageSize(source: string) {
 
 async function validateReviewItem(item: ReviewItem) {
   if (item.fallback || item.previewOnly) {
-    throw new Error("完整页面抓取失败，已保留封面和原链接；可点击上方链接进入原活动体验");
+    throw new Error("完整页面抓取失败，当前仅保留封面和创作服务中心入口；补抓完成前不会导入 Eagle");
   }
   const sources = item.gallery ?? [item.image];
   if (!sources.length || new Set(sources).size !== sources.length) throw new Error("图片为空或存在重复项");
@@ -705,7 +706,7 @@ export default function Home() {
   const displayDate = current.date;
   const livePhotoCount = current.livePhotos ? Object.keys(current.livePhotos).length : current.livePhotoVideo ? 1 : 0;
   const materialLabel = current.previewOnly
-    ? "快速预览 · 留下后下载完整素材"
+    ? "活动未上线 · 当前仅保留封面"
     : current.gallery
       ? `${current.gallery.length} 张图片${livePhotoCount ? ` · ${livePhotoCount} 个 Live Photo` : ""}`
       : current.videoPost
@@ -1103,6 +1104,7 @@ export default function Home() {
   // completion signal for the login step.
   useEffect(() => {
     if (!onboardingPreview || xhsSetupStatus !== "等待登录") return;
+    const resetTimer = window.setTimeout(() => setXhsSetupStatus((current) => current === "等待登录" ? "未登录" : current), 45_000);
     const completeAfterChromeReturn = () => {
       if (document.visibilityState !== "visible") return;
       const bridge = getDesktopBridge();
@@ -1115,6 +1117,7 @@ export default function Home() {
     addEventListener("focus", completeAfterChromeReturn);
     document.addEventListener("visibilitychange", completeAfterChromeReturn);
     return () => {
+      window.clearTimeout(resetTimer);
       removeEventListener("focus", completeAfterChromeReturn);
       document.removeEventListener("visibilitychange", completeAfterChromeReturn);
     };
@@ -1151,7 +1154,7 @@ export default function Home() {
   useEffect(() => { if (hydrated) localStorage.setItem(pinnedAccountsStorageKey, JSON.stringify(pinnedAccountIds)); }, [pinnedAccountIds, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem(manualPinAccountsStorageKey, JSON.stringify(manualPinAccounts)); }, [manualPinAccounts, hydrated]);
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !desktopAppMode) return;
     const pending = manualPinAccounts.filter((account) => account.status === "pending_verification" && pinnedAccountIds.includes(account.profileId));
     const timer = window.setTimeout(() => {
       void fetch("/api/pending-pins", {
@@ -1160,7 +1163,7 @@ export default function Home() {
       }).catch(() => undefined);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [hydrated, manualPinAccounts, pinnedAccountIds]);
+  }, [desktopAppMode, hydrated, manualPinAccounts, pinnedAccountIds]);
   useEffect(() => {
     if (!hydrated) return;
     const missing = manualPinAccounts.filter((account) => account.status === "pending_verification"
@@ -1200,7 +1203,7 @@ export default function Home() {
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
     migrationStarted.current = true;
-    const pending = reviewItems.filter((item) => decisions[item.id] === "kept" && !eagleItems[item.id]);
+    const pending = reviewItems.filter((item) => decisions[item.id] === "kept" && !eagleItems[item.id] && !item.previewOnly);
     if (!pending.length) return;
     void (async () => {
       for (const item of pending) {
@@ -1464,13 +1467,14 @@ export default function Home() {
         setEagleMessage("这条素材已经进入 Eagle，不能再从批阅页标记删除");
         return;
       }
+      setEagleError(false);
+      setEagleMessage("已移入临时撤回区；下次抓取或重新打开采光时会永久删除本地文件");
       commitDecision(decision);
       return;
     }
     if (current.previewOnly) {
       setEagleError(false);
-      setEagleMessage("已标记保留；现在开始下载完整原帖，完成核对后再进入 Eagle");
-      commitDecision(decision);
+      setEagleMessage("当前是失败兜底预览。采光会定时补抓完整活动；补抓完成前不会导入 Eagle，也不会把它误记为已保留");
       return;
     }
     if (!eagleItems[current.id]) {
@@ -1681,6 +1685,7 @@ export default function Home() {
             <div className="first-run-intro"><h1><i aria-hidden="true" />开始使用<i aria-hidden="true" /></h1></div>
            <div className="first-run-steps">
               <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && (desktopAppMode ? <span className="completion-check">✓</span> : <span className="preview-status">网页预览</span>)}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
+             <div className="first-run-step"><span><strong>系统权限：允许应用更新</strong><small>仅用于采光下载安装新版本，不影响日常抓取。首次开启后请重启采光一次。</small></span><div className="first-run-action"><button type="button" onClick={() => void getDesktopBridge()?.openAppManagementSettings?.()}>打开系统设置</button></div></div>
              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "使用 Chrome 登录"}</button></div></div>
              <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
              <div className={`first-run-step first-run-stats ${statsNoticeAcknowledged ? "is-complete" : ""}`}>
@@ -1950,6 +1955,12 @@ export default function Home() {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.2 13.8a4 4 0 0 0 5.6 0l2-2a4 4 0 0 0-5.6-5.6l-1.1 1.1M13.8 10.2a4 4 0 0 0-5.6 0l-2 2a4 4 0 1 0 5.6 5.6l1.1-1.1" /></svg>
               </a>
             </div>
+            {current.previewOnly && (
+              <div className="fallback-notice" role="status" aria-live="polite">
+                <strong>活动正文暂未上线</strong>
+                <span>采光已保留封面、失败原因和创作服务中心入口。它不是完整素材，暂时不能通过 YES 导入 Eagle；下次定时抓取或手动抓取时会继续尝试。</span>
+              </div>
+            )}
             {quality.state === "failed" && <p className="quality-alert">{quality.message}</p>}
             <div className="actions">
               <button className="reject" onClick={() => void decide("rejected")} disabled={Boolean(syncingId) || Boolean(eagleItems[current.id])}>NO</button>
@@ -2013,7 +2024,7 @@ export default function Home() {
       </main>}
       {!desktopAppMode && <div className="desktop-dock" aria-label="桌面应用栏">
         <button className="dock-icon finder-icon" aria-label="访达" title="访达">◒</button>
-        <button className={`dock-icon review-app-icon ${appVisible ? "running" : ""}`} onClick={reopenApplication} aria-label="打开采光" title="采光"><img src="/caiguang-icon.svg" alt="" /></button>
+        <button className={`dock-icon review-app-icon ${appVisible ? "running" : ""}`} onClick={reopenApplication} aria-label="打开采光" title="采光"><img src="/favicon.svg" alt="" /></button>
         <button className="dock-icon" aria-label="浏览器" title="浏览器">◎</button>
         <button className="dock-icon" aria-label="照片" title="照片">✿</button>
         <span className="dock-divider" />

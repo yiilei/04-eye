@@ -9,11 +9,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const progressPath = path.join(dataHome, "data", "capture-progress.json");
 const preferencesPath = path.join(dataHome, "data", "user-preferences.json");
+const queuePath = path.join(root, "data", "xhs-capture-queue.json");
 let creatorH5CaptureEnabled = true;
 try {
   creatorH5CaptureEnabled = JSON.parse(readFileSync(preferencesPath, "utf8")).creatorH5CaptureEnabled === true;
 } catch { /* fresh installs capture creator-center H5 by default */ }
 const steps = [
+  ["cleanup_reviewed_media", "清理已处理的本地中转素材", 6, [path.join(root, "scripts", "review-cache-cleanup.mjs")]],
   ["verify_pending_pins", "验证待验证账号", 12, [path.join(root, "scripts", "xhs-verify-pins.mjs"), "--write"]],
   ...(creatorH5CaptureEnabled
     ? [["discover_creator_events", "发现最新创作活动", 30, [path.join(root, "scripts", "xhs-events-discover.mjs"), "--write"]]]
@@ -40,8 +42,15 @@ for (const [index, [name, label, percent, args]] of steps.entries()) {
   results.push({ name, ok: result.status === 0, status: result.status, output: output.split("\n").filter(Boolean).at(-1) || "" });
 }
 const ok = results.every((item) => item.ok);
+let fallbackCount = 0;
+try {
+  const queue = JSON.parse(readFileSync(queuePath, "utf8"));
+  fallbackCount = queue.tasks.filter((task) => task.type === "h5_event" && task.status === "fallback_pending").length;
+} catch {
+  try { fallbackCount = Number(JSON.parse(results.find((item) => item.name === "capture_validate_report")?.output || "{}").fallbacks || 0); } catch { /* status stays generic */ }
+}
 writeProgress(ok
-  ? { state: "completed", phase: "completed", label: "抓取完成，批阅列表已刷新", percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
-  : { state: "failed", phase: "failed", label: "抓取失败：小红书账号主页加载异常", percent: Math.max(6, steps.find((step) => !results.find((result) => result.name === step[0])?.ok)?.[2] || 6), phaseIndex: results.length, phaseCount: steps.length, failedAt: new Date().toISOString() });
+  ? { state: "completed", phase: "completed", label: fallbackCount ? `抓取完成，${fallbackCount} 项等待活动发布` : "抓取完成，批阅列表已刷新", percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
+  : { state: "failed", phase: "failed", label: results.find((item) => !item.ok)?.output || "抓取未完成，请查看日报", percent: Math.max(6, steps.find((step) => !results.find((result) => result.name === step[0])?.ok)?.[2] || 6), phaseIndex: results.length, phaseCount: steps.length, failedAt: new Date().toISOString() });
 console.log(JSON.stringify({ ok, results }));
 if (!ok) process.exitCode = 1;

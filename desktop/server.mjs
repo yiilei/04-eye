@@ -5,6 +5,7 @@ import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:
 import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
+import { cleanupReviewedMedia } from "../scripts/review-cache-cleanup.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -38,6 +39,9 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   await mkdir(path.dirname(registryPath), { recursive: true });
   await mkdir(reviewRoot, { recursive: true });
   await mkdir(trashRoot, { recursive: true });
+  // Review media is a bridge, not a permanent library. A restart closes the
+  // previous undo window and purges already rejected/imported local copies.
+  await cleanupReviewedMedia(dataRoot);
   try { await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot); }
   catch { await writeFile(registryPath, "[]\n"); }
 

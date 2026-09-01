@@ -48,19 +48,15 @@ class ChromeSessionIsolationTests(unittest.TestCase):
         saved = json.loads((self.config / "cookies.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["sessionSource"], "isolated_qrcode")
 
-    def test_deprecated_browser_import_stays_disabled_and_fallback_is_explicit(self):
-        result = subprocess.run(
-            [str(XHS), "login", "--browser"], cwd=ROOT, env=self.env,
-            text=True, capture_output=True,
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("Chrome session import is disabled", result.stdout)
+    def test_chrome_snapshot_requires_explicit_user_action_and_external_cookie_import_stays_disabled(self):
         source = AUTH.read_text(encoding="utf-8")
+        cli_source = (ROOT / "vendor" / "xhs-cli" / "xhs_cli" / "cli.py").read_text(encoding="utf-8")
         capture_source = CAPTURE.read_text(encoding="utf-8")
-        for forbidden in ("Google/Chrome", "chrome_root", "cookie_file = chrome_root"):
-            self.assertNotIn(forbidden, source)
         self.assertIn('CAIGUANG_CHROME_FALLBACK', source)
         self.assertIn('if os.environ.get("CAIGUANG_CHROME_FALLBACK", "0") != "1"', source)
+        self.assertIn('if browser:', cli_source)
+        self.assertIn('import_browser_session()', cli_source)
+        self.assertIn('save_cookies(cookie, source="chrome_snapshot")', source)
         self.assertNotIn('parser.add_argument("--cookie"', capture_source)
         self.assertNotIn('command.extend(["--cookie"', capture_source)
 

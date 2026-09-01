@@ -1,7 +1,8 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const pendingPath = path.join(process.cwd(), "data", "xhs-pending-pins.json");
+const runtimeRoot = process.env.CAIGUANG_SOURCE_ROOT || process.env.INIT_CWD || process.env.PWD || process.cwd();
+const pendingPath = path.join(runtimeRoot, "data", "xhs-pending-pins.json");
 
 type PendingPin = {
   searchKey: string;
@@ -25,6 +26,7 @@ async function readPending() {
 }
 
 async function writePending(accounts: PendingPin[]) {
+  await mkdir(path.dirname(pendingPath), { recursive: true });
   const temporary = `${pendingPath}.tmp`;
   await writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, updatedAt: new Date().toISOString(), accounts }, null, 2)}\n`);
   await rename(temporary, pendingPath);

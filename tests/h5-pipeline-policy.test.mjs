@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { clearH5Retry, h5TaskIsDue, MAX_H5_ATTEMPTS, scheduleH5Retry } from "../scripts/h5-retry-policy.mjs";
+import { clearH5Retry, h5FailureIsPermanent, h5TaskIsDue, MAX_H5_ATTEMPTS, scheduleH5PublicationRetry, scheduleH5Retry } from "../scripts/h5-retry-policy.mjs";
 import { isolatedXhsEnv } from "../scripts/xhs-runtime-env.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,6 +37,34 @@ test("H5 transient failures retry twice before becoming terminal", () => {
   clearH5Retry(task);
   assert.equal(task.attempts, undefined);
   assert.equal(task.nextAttemptAt, undefined);
+});
+
+test("unpublished H5 is permanent while network timeouts remain retryable", () => {
+  assert.equal(h5FailureIsPermanent("创作服务中心已展示活动，但活动 H5 尚未发布或链接已失效"), true);
+  assert.equal(h5FailureIsPermanent("network timeout"), false);
+});
+
+test("unpublished H5 keeps a low-frequency retry after fallback registration", () => {
+  const task = { type: "h5_event", status: "needs_h5_capture" };
+  const now = new Date("2026-08-31T02:00:00.000Z");
+  const retry = scheduleH5PublicationRetry(task, "活动尚未发布", now);
+  assert.equal(task.status, "fallback_pending");
+  assert.equal(h5TaskIsDue(task, now), false);
+  assert.equal(h5TaskIsDue(task, new Date(retry.nextAttemptAt)), true);
+});
+
+test("completed capture status includes all H5 activities still waiting for publication", async () => {
+  const source = await readFile(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8");
+  assert.match(source, /task\.type === "h5_event" && task\.status === "fallback_pending"/);
+  assert.match(source, /抓取完成，\$\{fallbackCount\} 项等待活动发布/);
+});
+
+test("daily report distinguishes queued H5 work and unpublished fallbacks", async () => {
+  const source = await readFile(new URL("../scripts/daily-pipeline.mjs", import.meta.url), "utf8");
+  assert.match(source, /本轮 H5 任务/);
+  assert.match(source, /活动尚未上线（兜底记录）/);
+  assert.match(source, /下一次定时抓取或手动抓取时继续尝试/);
+  assert.match(source, /duplicateTitleCounts/);
 });
 
 test("rejected H5 evidence leaves no partial review directory", async () => {

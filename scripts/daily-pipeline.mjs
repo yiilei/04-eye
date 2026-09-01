@@ -3,7 +3,7 @@ import { open, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promis
 import path from "node:path";
 import process from "node:process";
 import os from "node:os";
-import { clearH5Retry, h5TaskIsDue, scheduleH5Retry } from "./h5-retry-policy.mjs";
+import { clearH5Retry, h5FailureIsPermanent, h5TaskIsDue, scheduleH5PublicationRetry, scheduleH5Retry } from "./h5-retry-policy.mjs";
 import { clearNoteFailure, noteTaskIsDue, transitionNoteFailure } from "./note-capture-policy.mjs";
 
 const root = process.cwd();
@@ -31,6 +31,19 @@ const atomicJson = async (file, value) => {
   await rename(temporary, file);
 };
 const run = (command, args) => execFileSync(command, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const captureErrorMessage = (error) => {
+  const chunks = [error?.stdout, error?.stderr, error instanceof Error ? error.message : String(error)]
+    .map((value) => String(value || "").trim()).filter(Boolean);
+  for (const line of chunks.flatMap((chunk) => chunk.split("\n")).map((line) => line.trim())) {
+    if (!line.startsWith("{") || !line.endsWith("}")) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed.error || parsed.status) return parsed.error || parsed.status;
+    } catch { /* keep looking for a structured child-process error */ }
+  }
+  const raw = chunks[0] || "未知抓取错误";
+  return raw.split("\n").map((line) => line.trim()).filter(Boolean).at(-1) || raw;
+};
 const requireFields = (value, fields, label) => {
   for (const field of fields) if (!value[field]) throw new Error(`${label} 缺少 ${field}`);
 };
@@ -95,7 +108,7 @@ async function main() {
       ? queue.tasks.filter((task) => task.status === "needs_h5_capture").length
       : 0,
     pendingPinVerification: Array.isArray(pendingPins.accounts) ? pendingPins.accounts.filter((account) => account.status === "pending_verification").length : 0,
-    completed: [], retrying: [], browserCapture: browserCaptureTasks.map((task) => ({
+    completed: [], retrying: [], fallbacks: [], browserCapture: browserCaptureTasks.map((task) => ({
       id: task.id, type: task.type, title: task.title, error: task.error || task.lastError || "本地解析器不可用", failureType: task.failureType || "parser_incompatible",
     })), failed: [], skipped: [], validation: "not_run", build: "not_run" };
 
@@ -123,8 +136,24 @@ async function main() {
         if (task.type === "h5_event") clearH5Retry(task);
         else clearNoteFailure(task);
       } catch (error) {
-        const message = error instanceof Error ? error.message.split("\n").at(-1) : String(error);
+        const message = captureErrorMessage(error);
         if (task.type === "h5_event") {
+          const permanentFailure = h5FailureIsPermanent(message);
+          if (permanentFailure) {
+            const retry = scheduleH5PublicationRetry(task, message, now);
+            try {
+              const output = run(process.execPath, h5FallbackArguments(task, message));
+              const fallback = JSON.parse(output.split("\n").at(-1));
+              report.fallbacks.push({ id: task.id, type: task.type, title: task.title, error: message,
+                fallback: fallback.ok ? fallback.manifest : null, attempts: retry.attempts, nextAttemptAt: retry.nextAttemptAt });
+            } catch (fallbackError) {
+              const fallbackMessage = captureErrorMessage(fallbackError);
+              report.failed.push({ id: task.id, type: task.type, title: task.title,
+                error: `${message}；生成失败兜底也失败：${fallbackMessage}` });
+            }
+            await atomicJson(queuePath, queue);
+            continue;
+          }
           const retry = scheduleH5Retry(task, message, now);
           const entry = { id: task.id, type: task.type, title: task.title, error: message, attempts: retry.attempts };
           if (retry.terminal) {
@@ -194,26 +223,38 @@ async function main() {
 
   report.finishedAt = new Date().toISOString();
   report.registryItems = await readJson(registryPath).then((items) => items.length).catch(() => 0);
+  const duplicateTitleCounts = report.completed.reduce((counts, item) => {
+    counts.set(item.title, (counts.get(item.title) || 0) + 1);
+    return counts;
+  }, new Map());
+  const reportTitle = (item) => duplicateTitleCounts.get(item.title) > 1
+    ? `${item.title}（活动 ${String(item.id).replace(/^h5-/, "").slice(-6)}）`
+    : item.title;
+  const localTime = (value) => value
+    ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value))
+    : "下一次运行";
   const reportBase = path.join(reportsDir, `${today}-daily`);
   await atomicJson(`${reportBase}.json`, report);
   const markdown = [`# ${today} 小红书视觉采集日报`, "",
     `- 检查账号：${report.checkedAccounts}`,
     `- 待处理任务：${report.pending}`,
-    `- 待提取 H5：${report.h5AwaitingCapture}`,
+    `- 本轮 H5 任务：${report.h5AwaitingCapture}`,
+    `- 等待活动上线：${report.fallbacks.length}`,
     `- 待验证账号：${report.pendingPinVerification}`,
     `- 完成：${report.completed.length}`,
     `- 失败：${report.failed.length}`,
     `- 素材校验：${report.validation}`,
     `- 批阅页构建：${report.build}`,
-    "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${item.title}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
+    "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${reportTitle(item)}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
     ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
     ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
+    ...(report.fallbacks.length ? ["", "## 活动尚未上线（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。已尝试 ${item.attempts} 次，${localTime(item.nextAttemptAt)} 起具备重试资格，将在下一次定时抓取或手动抓取时继续尝试。`)] : []),
     ...(report.browserCapture.length ? ["", "## MyFlicker 自动接管", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}，需从已授权页面提取完整媒体清单`)] : []),
     ...(report.failed.length ? ["", "## 需要用户处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
-  const ok = report.failed.length === 0 && report.browserCapture.length === 0;
+  const ok = report.failed.length === 0 && report.browserCapture.length === 0 && report.retrying.length === 0;
   console.log(JSON.stringify({ ok, mode: report.mode, checkedAccounts: report.checkedAccounts,
-    pending: report.pending, completed: report.completed.length, browserCapture: report.browserCapture.length, failed: report.failed.length,
+    pending: report.pending, completed: report.completed.length, fallbacks: report.fallbacks.length, browserCapture: report.browserCapture.length, failed: report.failed.length,
     validation: report.validation, build: report.build, report: path.relative(root, `${reportBase}.md`) }));
   if (!dryRun && !ok) process.exitCode = 1;
 }

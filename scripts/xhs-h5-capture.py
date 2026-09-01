@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 import time
 from contextlib import ExitStack
@@ -25,6 +26,44 @@ NOTES_SELECTORS = (
 
 def valid_mp4(payload: bytes) -> bool:
     return len(payload) >= 1024 and b"ftyp" in payload[:64]
+
+
+def permanent_page_error(body_text: str) -> str | None:
+    markers = ("该应用不存在", "请前往发布系统进行录入&发布")
+    if any(marker in body_text for marker in markers):
+        return "创作服务中心已展示活动，但活动 H5 尚未发布或链接已失效"
+    return None
+
+
+def jpeg_dimensions(payload: bytes) -> tuple[int, int]:
+    """Read JPEG dimensions without adding Pillow to the clean installer."""
+    if payload[:2] != b"\xff\xd8":
+        raise ValueError("not a JPEG")
+    offset = 2
+    while offset + 9 < len(payload):
+        if payload[offset] != 0xFF:
+            offset += 1
+            continue
+        marker = payload[offset + 1]
+        offset += 2
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            continue
+        if offset + 2 > len(payload):
+            break
+        length = int.from_bytes(payload[offset:offset + 2], "big")
+        if length < 2 or offset + length > len(payload):
+            break
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            height = int.from_bytes(payload[offset + 3:offset + 5], "big")
+            width = int.from_bytes(payload[offset + 5:offset + 7], "big")
+            return width, height
+        offset += length
+    raise ValueError("JPEG dimensions not found")
+
+
+def capture_covers_content(actual_height: int, content_height: float, scale: float) -> bool:
+    expected_height = max(1, round(content_height * scale))
+    return actual_height >= expected_height * 0.92
 
 
 def main() -> int:
@@ -75,7 +114,27 @@ def main() -> int:
             print(json.dumps({"ok": False, "status": "login_required", "url": page.url}, ensure_ascii=False))
             return 1
 
-        page.wait_for_selector("#app", timeout=20_000)
+        body_text = page.locator("body").inner_text(timeout=5_000).strip()
+        permanent_error = permanent_page_error(body_text)
+        if permanent_error:
+            error = {
+                "ok": False,
+                "status": "activity_unpublished",
+                "error": permanent_error,
+                "url": page.url,
+            }
+            print(json.dumps(error, ensure_ascii=False), file=sys.stderr)
+            return 2
+
+        # Activity pages are served by several frontend generations.  Older
+        # pages use #app, while newer campaigns may use data-v-app, main, or a
+        # generated root node.  Wait for real rendered content instead of one
+        # framework-specific selector.
+        page.wait_for_function(
+            """() => document.body && document.body.children.length > 0
+              && (document.body.innerText.trim().length > 20 || document.images.length > 0)""",
+            timeout=20_000,
+        )
 
         # H5 activities load their Chinese web fonts after DOMContentLoaded.
         # Capturing before both fonts and lazy images settle produces visible
@@ -108,7 +167,11 @@ def main() -> int:
         for _ in range(3):
             metrics = page.evaluate(
                 """(selectors) => {
-                  const app = document.querySelector('#app');
+                  const app = document.querySelector('#app')
+                    || document.querySelector('[data-v-app]')
+                    || document.querySelector('main')
+                    || [...document.body.children].sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
+                    || document.body;
                   const notesTitle = [...document.querySelectorAll('*')]
                     .find(el => el.children.length === 0 && el.textContent.trim() === '精选笔记');
                   const notes = selectors.map(s => document.querySelector(s)).find(Boolean)
@@ -137,7 +200,11 @@ def main() -> int:
             page.evaluate("async () => { if (document.fonts?.ready) await document.fonts.ready; }")
             fingerprint = page.evaluate(
                 """() => {
-                  const app = document.querySelector('#app');
+                  const app = document.querySelector('#app')
+                    || document.querySelector('[data-v-app]')
+                    || document.querySelector('main')
+                    || [...document.body.children].sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
+                    || document.body;
                   const text = app?.innerText || '';
                   const images = [...document.images].map(image =>
                     `${image.currentSrc || image.src}:${image.naturalWidth}x${image.naturalHeight}:${image.complete}`
@@ -153,12 +220,15 @@ def main() -> int:
         page.wait_for_timeout(350)
         capture = page.evaluate(
             r"""(selectors) => {
-              const app = document.querySelector('#app');
+              const app = document.querySelector('#app')
+                || document.querySelector('[data-v-app]')
+                || document.querySelector('main')
+                || [...document.body.children].sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
+                || document.body;
               const notesTitle = [...document.querySelectorAll('*')]
                 .find(el => el.children.length === 0 && el.textContent.trim() === '精选笔记');
               const notes = selectors.map(s => document.querySelector(s)).find(Boolean)
                 || notesTitle?.closest('.onix-wrapper') || notesTitle?.closest('.container');
-              if (!app) throw new Error('missing #app');
               const appRect = app.getBoundingClientRect();
               const end = notes ? notes.getBoundingClientRect().top - appRect.top : app.scrollHeight;
               const videos = [...document.querySelectorAll('video')]
@@ -174,6 +244,8 @@ def main() -> int:
               return {
                 contentWidth: appRect.width,
                 contentHeight: Math.max(1, end),
+                contentX: Math.max(0, appRect.left),
+                contentY: Math.max(0, appRect.top),
                 videos: [...new Set([...videos, ...resources])],
                 // A missing recommendation container means the activity page
                 // already ends at its own content. When one exists, the
@@ -186,12 +258,29 @@ def main() -> int:
             NOTES_SELECTORS,
         )
 
-        page.locator("#app").screenshot(
-            path=str(image_path),
+        # Chromium can silently crop a clip taller than the viewport to the
+        # current compositor surface. Grow only the viewport height (the
+        # responsive width stays unchanged) so the complete activity is
+        # paintable before taking the archive screenshot.
+        required_viewport_height = max(900, math.ceil(capture["contentY"] + capture["contentHeight"]) + 2)
+        page.set_viewport_size({"width": args.viewport_width, "height": required_viewport_height})
+        page.wait_for_timeout(350)
+        image_bytes = page.screenshot(
             type="jpeg",
             quality=96,
+            clip={
+                "x": capture["contentX"],
+                "y": capture["contentY"],
+                "width": capture["contentWidth"],
+                "height": capture["contentHeight"],
+            },
             animations="disabled",
         )
+        image_width, image_height = jpeg_dimensions(image_bytes)
+        if not capture_covers_content(image_height, capture["contentHeight"], capture["deviceScaleFactor"]):
+            expected_height = round(capture["contentHeight"] * capture["deviceScaleFactor"])
+            raise RuntimeError(f"H5 截图不完整：页面应约 {expected_height}px 高，实际仅 {image_height}px")
+        image_path.write_bytes(image_bytes)
         thumb_clip = {
             "x": 0,
             "y": 0,
@@ -228,6 +317,8 @@ def main() -> int:
         "deviceScaleFactor": capture["deviceScaleFactor"],
         "contentWidth": capture["contentWidth"],
         "contentHeight": capture["contentHeight"],
+        "imageWidth": image_width,
+        "imageHeight": image_height,
         "browserEngine": browser_engine,
     }
     (output_dir / "capture-result.json").write_text(

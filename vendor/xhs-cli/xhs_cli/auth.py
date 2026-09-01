@@ -25,7 +25,7 @@ TOKEN_CACHE_FILE = CONFIG_DIR / "token_cache.json"
 
 # a1 is required for signing; web_session is required for a stable logged-in session.
 REQUIRED_COOKIES = {"a1", "web_session"}
-SAFE_SESSION_SOURCES = {"isolated_qrcode"}
+SAFE_SESSION_SOURCES = {"isolated_qrcode", "chrome_snapshot"}
 LOGIN_URL = "https://www.xiaohongshu.com/login"
 QR_CREATE_ENDPOINT = "/api/sns/web/v1/login/qrcode/create"
 QR_USERINFO_ENDPOINT = "/api/qrcode/userinfo"
@@ -107,6 +107,26 @@ def _extract_browser_cookies() -> str | None:
     except Exception as exc:
         logger.warning("Chrome fallback was unavailable: %s", exc)
     return None
+
+
+def import_browser_session() -> str | None:
+    """Copy the current Xiaohongshu Chrome session into Caiguang.
+
+    Chrome's cookie database is read-only. Only the Xiaohongshu cookie subset
+    is copied into Caiguang's owner-only config directory.
+    """
+    previous = os.environ.get("CAIGUANG_CHROME_FALLBACK")
+    os.environ["CAIGUANG_CHROME_FALLBACK"] = "1"
+    try:
+        cookie = _extract_browser_cookies()
+    finally:
+        if previous is None:
+            os.environ.pop("CAIGUANG_CHROME_FALLBACK", None)
+        else:
+            os.environ["CAIGUANG_CHROME_FALLBACK"] = previous
+    if cookie:
+        save_cookies(cookie, source="chrome_snapshot")
+    return cookie
 
 
 def qrcode_login() -> str:

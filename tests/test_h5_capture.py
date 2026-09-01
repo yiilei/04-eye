@@ -19,6 +19,19 @@ class H5CaptureTests(unittest.TestCase):
         self.assertFalse(MODULE.valid_mp4(b"<html>not a video</html>" * 100))
         self.assertFalse(MODULE.valid_mp4(b"ftyp"))
 
+    def test_detects_unpublished_activity_error_page(self):
+        message = MODULE.permanent_page_error('{"success":false,"msg":"该应用不存在，请前往发布系统进行录入&发布"}')
+        self.assertIn("尚未发布", message)
+        self.assertIsNone(MODULE.permanent_page_error("正常活动正文"))
+
+    def test_rejects_a_first_screen_masquerading_as_a_full_h5_capture(self):
+        self.assertFalse(MODULE.capture_covers_content(2109, 6066.875, 2.34375))
+        self.assertTrue(MODULE.capture_covers_content(14200, 6066.875, 2.34375))
+
+    def test_reads_jpeg_dimensions_without_optional_image_packages(self):
+        payload = b"\xff\xd8\xff\xc0\x00\x11\x08" + (2109).to_bytes(2, "big") + (1125).to_bytes(2, "big") + b"\x03" + (b"\x00" * 10)
+        self.assertEqual(MODULE.jpeg_dimensions(payload), (1125, 2109))
+
 
 if __name__ == "__main__":
     unittest.main()
