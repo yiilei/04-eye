@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
 import { migrateLegacyData } from "./data-migration.mjs";
 import { checkForUpdate, getCodexStatus } from "./runtime-status.mjs";
+import { requestEagle } from "./eagle-api.mjs";
 
 // Embedded Python lives inside the signed app bundle. Never let any child
 // process create or update bytecode beside signed resources.
@@ -181,6 +182,7 @@ async function syncXhsChromeLogin() {
 ipcMain.handle("caiguang:open-xhs-login", () => openXhsChromeLogin());
 ipcMain.handle("caiguang:sync-xhs-login", () => syncXhsChromeLogin());
 ipcMain.handle("caiguang:xhs-login-status", () => publishXhsLoginStatus());
+ipcMain.handle("caiguang:eagle-request", (_event, request) => requestEagle(request));
 ipcMain.handle("caiguang:runtime-status", () => ({
   version: app.getVersion(),
   codex: getCodexStatus(),

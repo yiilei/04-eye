@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("sharpEyeDesktop", {
   openXhsLogin: () => ipcRenderer.invoke("caiguang:open-xhs-login"),
   syncXhsLogin: () => ipcRenderer.invoke("caiguang:sync-xhs-login"),
   getXhsLoginStatus: () => ipcRenderer.invoke("caiguang:xhs-login-status"),
+  eagleRequest: (request) => ipcRenderer.invoke("caiguang:eagle-request", request),
   onXhsLoginChanged: (callback) => {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on("caiguang:xhs-login-changed", listener);
