@@ -41,6 +41,7 @@ type DesktopBridge = {
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   syncXhsLogin?: () => Promise<{ loggedIn?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
+  eagleRequest?: (request: { path: string; method?: "GET" | "POST"; body?: unknown }) => Promise<{ ok: boolean; status: number; data?: unknown; error?: string }>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
   onLibraryChanged?: (callback: (status: { updatedAt?: string }) => void) => () => void;
 };
@@ -61,6 +62,38 @@ function formatPostCaption(caption?: string) {
 
 const projectRoot = "/Users/yilei/Documents/ChatGPT/小红书创作活动获取/public";
 const eagleBase = "http://127.0.0.1:41595/api";
+
+async function eagleJson<T>(path: string, options: { method?: "GET" | "POST"; body?: unknown } = {}) {
+  const bridge = getDesktopBridge();
+  if (bridge?.eagleRequest) {
+    const response = await bridge.eagleRequest({ path, ...options });
+    if (!response.ok) {
+      const detail = response.status === 401
+        ? "当前 Eagle 的接口鉴权方式不兼容"
+        : response.error || `Eagle 请求失败（${response.status || "无法连接"}）`;
+      throw new Error(detail);
+    }
+    return response.data as EagleResponse<T>;
+  }
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 3_000);
+  try {
+    const response = await fetch(`${eagleBase}${path}`, {
+      method: options.method,
+      headers: options.body === undefined ? undefined : { "Content-Type": "text/plain;charset=UTF-8" },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(response.status === 401 ? "当前 Eagle 的接口鉴权方式不兼容" : `Eagle 请求失败（${response.status}）`);
+    return await response.json() as EagleResponse<T>;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new Error("Eagle 连接超时");
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 const humanitiesRevision = "20260813-order-fix-2";
 
 const legacyItems: ReviewItem[] = [
@@ -298,22 +331,19 @@ async function validateReviewItem(item: ReviewItem) {
 }
 
 async function ensureEagleFolder() {
-  let folderResponse: Response;
+  let folderResult: EagleResponse<Array<{ id: string; name: string; children?: [] }>>;
   try {
-    folderResponse = await fetch(`${eagleBase}/folder/list`, { cache: "no-store" });
+    folderResult = await eagleJson<Array<{ id: string; name: string; children?: [] }>>("/folder/list");
   } catch {
     throw new Error("无法连接 Eagle，请先启动 Eagle 后再点 YES");
   }
-  const folderResult = await folderResponse.json() as EagleResponse<Array<{ id: string; name: string; children?: [] }>>;
   if (folderResult.status !== "success" || !folderResult.data) throw new Error(folderResult.message || "无法读取 Eagle 文件夹");
   const existing = findFolderId(folderResult.data, "小红书");
   if (existing) return existing;
-  const createResponse = await fetch(`${eagleBase}/folder/create`, {
+  const created = await eagleJson<{ id: string }>("/folder/create", {
     method: "POST",
-    headers: { "Content-Type": "text/plain;charset=UTF-8" },
-    body: JSON.stringify({ folderName: "小红书" }),
+    body: { folderName: "小红书" },
   });
-  const created = await createResponse.json() as EagleResponse<{ id: string }>;
   if (created.status !== "success" || !created.data?.id) throw new Error(created.message || "无法自动创建 Eagle / 小红书 文件夹");
   return created.data.id;
 }
@@ -331,20 +361,17 @@ async function importItemToEagle(item: (typeof items)[number], removedPositions:
   const folderId = await ensureEagleFolder();
 
   const addFromPath = async (path: string, name: string, tags: string[]) => {
-    const response = await fetch(`${eagleBase}/item/addFromPath`, {
+    const result = await eagleJson<string>("/item/addFromPath", {
       method: "POST",
-      // text/plain is intentional: it avoids Eagle's unsupported OPTIONS preflight.
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({
+      body: {
         path,
         name,
         website: item.sourceUrl,
         tags,
         folderId,
         annotation: `${item.summary}\n活动时间：${item.date}\n抓取日期：${item.capturedAt}`,
-      }),
+      },
     });
-    const result = await response.json() as EagleResponse<string>;
     if (result.status !== "success") throw new Error(result.message || "Eagle 导入失败");
     return result.data;
   };
@@ -376,8 +403,7 @@ async function importItemToEagle(item: (typeof items)[number], removedPositions:
     let verified = false;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       if (attempt) await new Promise((resolve) => setTimeout(resolve, 500));
-      const checkResponse = await fetch(`${eagleBase}/item/info?id=${encodeURIComponent(eagleId)}`, { cache: "no-store" });
-      const checkResult = await checkResponse.json() as EagleResponse<{ width?: number; height?: number }>;
+      const checkResult = await eagleJson<{ width?: number; height?: number }>(`/item/info?id=${encodeURIComponent(eagleId)}`);
       if (checkResult.status === "success" && checkResult.data?.width === firstExpectedSize.width && checkResult.data?.height === firstExpectedSize.height) {
         verified = true;
         break;
@@ -397,30 +423,25 @@ async function importSingleToEagle(item: ReviewItem, position: number) {
   if (size.width !== expected.width || size.height !== expected.height) throw new Error("当前图片尺寸校验未通过，已阻止导入");
 
   const folderId = await ensureEagleFolder();
-  const response = await fetch(`${eagleBase}/item/addFromPath`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=UTF-8" },
-    body: JSON.stringify({
+  const result = await eagleJson<string>("/item/addFromPath", {
+    method: "POST", body: {
       path, folderId, website: item.sourceUrl,
       name: `${item.title} - 单张精选 ${String(position + 1).padStart(2, "0")}`,
       tags: ["小红书", "单张精选", "账号帖子", "排版"],
       annotation: `${item.summary}\n原帖第 ${position + 1}/${item.gallery.length} 张\n抓取日期：${item.capturedAt}`,
-    }),
+    },
   });
-  const result = await response.json() as EagleResponse<string>;
   if (result.status !== "success" || !result.data) throw new Error(result.message || "单张图片导入 Eagle 失败");
   const ids = [result.data];
   const livePath = item.livePhotoLocalPaths?.[position]
     ?? (item.livePhotoIndex === position ? item.livePhotoLocalPath : undefined);
   if (livePath) {
-    const liveResponse = await fetch(`${eagleBase}/item/addFromPath`, {
-      method: "POST", headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({ path: livePath, folderId, website: item.sourceUrl,
+    const liveResult = await eagleJson<string>("/item/addFromPath", {
+      method: "POST", body: { path: livePath, folderId, website: item.sourceUrl,
         name: `${item.title} - 单张精选 ${String(position + 1).padStart(2, "0")} Live Photo`,
         tags: ["小红书", "单张精选", "账号帖子", "Live Photo", "MP4"],
-        annotation: `${item.summary}\n原帖第 ${position + 1}/${item.gallery.length} 张动态文件\n抓取日期：${item.capturedAt}` }),
+        annotation: `${item.summary}\n原帖第 ${position + 1}/${item.gallery.length} 张动态文件\n抓取日期：${item.capturedAt}` },
     });
-    const liveResult = await liveResponse.json() as EagleResponse<string>;
     if (liveResult.status !== "success" || !liveResult.data) throw new Error(liveResult.message || "Live Photo 导入 Eagle 失败");
     ids.push(liveResult.data);
   }
@@ -1053,8 +1074,8 @@ export default function Home() {
     const checkEagle = async () => {
       if (active) setEagleSetupStatus((status) => status === "已连接" ? status : "检测中…");
       try {
-        const response = await fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" });
-        if (!response.ok) throw new Error("Eagle unavailable");
+        const result = await eagleJson<{ version?: string }>("/application/info");
+        if (result.status !== "success") throw new Error(result.message || "Eagle unavailable");
         if (active) setEagleSetupStatus("已连接");
       } catch {
         if (active) setEagleSetupStatus("等待 Eagle");
@@ -1694,7 +1715,7 @@ export default function Home() {
            <div className="first-run-steps">
               <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && (desktopAppMode ? <span className="completion-check">✓</span> : <span className="preview-status">网页预览</span>)}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "使用 Chrome 登录"}</button></div></div>
-             <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
+             <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void eagleJson<{ version?: string }>("/application/info").then((result) => { if (result.status !== "success") throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
              <div className={`first-run-step first-run-stats ${statsNoticeAcknowledged ? "is-complete" : ""}`}>
                <span><strong>会统计抓取数量</strong><small>仅统计抓取及保留的图片、视频数量；除此之外不收集素材、账号、文案、链接、Cookie 或 Eagle 内容。</small></span>
                <div className="first-run-action stats-notice-action">
