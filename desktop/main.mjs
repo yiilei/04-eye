@@ -83,6 +83,8 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
+// Kept as the isolated QR-session fallback for older launch flows.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function openXhsCaptureLogin() {
   if ((await publishXhsLoginStatus()).loggedIn) return { loggedIn: true };
   if (xhsLoginStarting) return { loggedIn: false, loginStarted: true };

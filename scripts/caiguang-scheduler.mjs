@@ -19,11 +19,6 @@ const localRuntimeRoot = path.join(appData, "runtime");
 const localRuntimeNode = path.join(localRuntimeRoot, "node");
 const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
 
-const copyUnlessSameFile = async (source, destination) => {
-  if (path.resolve(source) === path.resolve(destination)) return;
-  await cp(source, destination);
-};
-
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
 };

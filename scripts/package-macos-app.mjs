@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.28";
+const version = "0.3.29";
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
@@ -45,11 +45,6 @@ async function createMacIcon() {
   }
   await exec("iconutil", ["-c", "icns", iconset, "-o", iconFile]);
 }
-
-const sourceFilter = (source) => {
-  const blocked = new Set([".git", ".venv", ".pytest_cache", "__pycache__", ".DS_Store", "Download"]);
-  return !source.split(path.sep).some((part) => blocked.has(part)) && !source.endsWith(".pyc");
-};
 
 async function createCompletePackage() {
   const completeName = "采光-完整安装包";
@@ -96,6 +91,10 @@ await mkdir(packagedRuntime, { recursive: true });
 // runs this packager so scheduled work is independent from Codex and Electron.
 await cp(process.execPath, path.join(packagedRuntime, "node"));
 await chmod(path.join(packagedRuntime, "node"), 0o755);
+// Codex's bundled Node keeps symbol data that scheduled capture never uses.
+// Removing local symbols saves roughly 24 MB after installation; the whole
+// application is signed again below, so the transformed binary remains valid.
+await exec("strip", ["-x", path.join(packagedRuntime, "node")]);
 if (!existsSync(bundledPythonRoot)) throw new Error("未找到可嵌入的 Python 3.12 运行时");
 const pythonRuntimeFilter = (source) => !source.split(path.sep).includes("__pycache__") && !source.endsWith(".pyc");
 await cp(bundledPythonRoot, path.join(packagedRuntime, "python"), { recursive: true, verbatimSymlinks: true, filter: pythonRuntimeFilter });
@@ -117,6 +116,17 @@ for (const entry of ["data", "desktop", "plugins", "public", "scripts", "vendor"
 await cp(path.join(root, "node_modules"), path.join(packagedRuntimeProject, "node_modules"), { recursive: true, verbatimSymlinks: true });
 for (const entry of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
   await cp(path.join(root, entry), path.join(packagedRuntimeProject, entry));
+}
+// The embedded runtime executes capture scripts and the MCP server; it never
+// builds the web app. Remove Electron, Cloudflare/workerd, TypeScript, Vite,
+// linters, and other development-only packages before signing the bundle.
+// Keeping production dependencies through pnpm's lockfile-aware prune is safer
+// than maintaining a fragile hand-written allowlist of transitive packages.
+await exec("pnpm", ["prune", "--prod", "--ignore-scripts"], { cwd: packagedRuntimeProject });
+const { stdout: runtimeNodeModulesSize } = await exec("du", ["-sk", path.join(packagedRuntimeProject, "node_modules")]);
+const runtimeNodeModulesKilobytes = Number.parseInt(runtimeNodeModulesSize, 10);
+if (!Number.isFinite(runtimeNodeModulesKilobytes) || runtimeNodeModulesKilobytes > 100 * 1024) {
+  throw new Error(`内置 Node 生产依赖异常膨胀：${runtimeNodeModulesKilobytes || "unknown"} KB`);
 }
 for (const engine of ["xhs-cli", "XHS-Downloader"]) {
   const bin = path.join(packagedRuntimeProject, "vendor", engine, ".venv", "bin");
@@ -164,6 +174,10 @@ await exec("plutil", ["-replace", "CFBundleShortVersionString", "-string", versi
 await exec("plutil", ["-replace", "CFBundleVersion", "-string", version, plistPath]);
 await exec("plutil", ["-replace", "CFBundleIconFile", "-string", "caiguang.icns", plistPath]);
 await exec("xattr", ["-cr", appPath]);
+// `strip` invalidates the copied Node executable's original signature. A
+// standalone file is not re-signed by `codesign --deep` consistently, so sign
+// it explicitly before sealing the outer application bundle.
+await exec("codesign", ["--force", "--sign", "-", path.join(packagedRuntime, "node")]);
 await exec("codesign", ["--force", "--deep", "--sign", "-", appPath]);
 
 const appZip = path.join(releaseRoot, "采光-macOS-arm64.zip");
@@ -172,4 +186,4 @@ const completeZip = await createCompletePackage();
 await rm(iconset, { recursive: true, force: true });
 await rm(iconSource, { force: true });
 await rm(iconFile, { force: true });
-console.log(JSON.stringify({ app: appZip, complete: completeZip }));
+console.log(JSON.stringify({ app: appZip, complete: completeZip, runtimeNodeModulesKilobytes }));

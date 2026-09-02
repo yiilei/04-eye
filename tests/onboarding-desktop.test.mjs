@@ -39,6 +39,14 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(page, /使用 Chrome 登录/);
   assert.match(page, /当前版本为测试版本/);
   assert.match(page, /first-run-test-version/);
+  for (const profileId of [
+    "6041ed6c0000000001005c1f",
+    "60974b9b0000000001003dfb",
+    "62ec7ae1000000001f015394",
+    "67b064b5000000000e013f9d",
+    "629495a80000000021021b10",
+    "68ae7835000000001900c4a4",
+  ]) assert.match(page, new RegExp(profileId));
   assert.match(page, /优先只读复制 Chrome 当前登录状态/);
   assert.match(page, /completeAfterChromeReturn/);
   assert.match(page, /bridge\.syncXhsLogin\(\)/);
@@ -152,4 +160,6 @@ test("desktop packager replaces rather than merges the previous app payload", as
   const packager = await readFile(new URL("scripts/package-macos-app.mjs", root), "utf8");
   assert.match(packager, /await rm\(packagedApp, \{ recursive: true, force: true \}\)/);
   assert.match(packager, /await rm\(packagedRuntime, \{ recursive: true, force: true \}\)/);
+  assert.match(packager, /pnpm", \["prune", "--prod", "--ignore-scripts"\]/);
+  assert.match(packager, /runtimeNodeModulesKilobytes > 100 \* 1024/);
 });

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import os from "node:os";

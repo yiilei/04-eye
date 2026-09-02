@@ -238,6 +238,12 @@ const defaultPinnedAccountIds = [
   "68288500000000000e01e796", // yilei_
   "601bf388000000000101d9ca", // 北风
   "583d8dd95e87e760a932787d", // 蟠淘会 TAOBAO DESIGN
+  "6041ed6c0000000001005c1f", // 思花
+  "60974b9b0000000001003dfb", // 天猫国际 DesignStudio
+  "62ec7ae1000000001f015394", // BORDOJO
+  "67b064b5000000000e013f9d", // Studio Koi 闊以
+  "629495a80000000021021b10", // 快手生活服务设计中心
+  "68ae7835000000001900c4a4", // Kwai-Design
 ];
 
 function findFolderId(folders: Array<{ id: string; name: string; children?: Array<{ id: string; name: string; children?: unknown[] }> }>, name: string): string | undefined {
