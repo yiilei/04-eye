@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { diffPosts, latestPostOnly, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, diffPosts, latestPostOnly, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -100,4 +100,12 @@ test("checks only accounts selected in the app while explicit checks still work"
   assert.deepEqual(selectAccounts(accounts, [], ["profile-b"]).map((item) => item.searchKey), ["b"]);
   assert.deepEqual(selectAccounts(accounts, ["a"], []).map((item) => item.searchKey), ["a"]);
   assert.deepEqual(selectAccounts(accounts, [], []).map((item) => item.searchKey), []);
+});
+
+test("adapts account pacing as the enabled pin count grows", () => {
+  assert.deepEqual(accountCapturePolicy(30), { tier: "standard", batchSize: 10, accountDelayMs: [5_000, 9_000], batchDelayMs: [60_000, 120_000] });
+  assert.equal(accountCapturePolicy(31).tier, "cautious");
+  assert.equal(accountCapturePolicy(60).batchSize, 10);
+  assert.equal(accountCapturePolicy(61).tier, "conservative");
+  assert.equal(accountCapturePolicy(100).batchSize, 8);
 });

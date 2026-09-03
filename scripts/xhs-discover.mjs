@@ -123,6 +123,15 @@ export function selectAccounts(accounts, accountKeys = [], pinnedAccountIds) {
   });
 }
 
+export function accountCapturePolicy(accountCount) {
+  if (accountCount <= 30) return { tier: "standard", batchSize: 10, accountDelayMs: [5_000, 9_000], batchDelayMs: [60_000, 120_000] };
+  if (accountCount <= 60) return { tier: "cautious", batchSize: 10, accountDelayMs: [8_000, 14_000], batchDelayMs: [120_000, 180_000] };
+  return { tier: "conservative", batchSize: 8, accountDelayMs: [10_000, 18_000], batchDelayMs: [180_000, 300_000] };
+}
+
+const randomDelay = ([minimum, maximum]) => minimum + Math.floor(Math.random() * (maximum - minimum + 1));
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
 function slugFor(account, post) {
   const safeAccount = account.xiaohongshuId.replace(/[^a-zA-Z0-9_-]+/g, "-");
   return `xhs-${safeAccount}-${post.id}`;
@@ -175,7 +184,7 @@ export async function discover(options = {}) {
   const queue = await readJson(queuePath);
   const preferences = await readJson(preferencesPath).catch(() => null);
   const selected = selectAccounts(pins.accounts, options.accountKeys, preferences?.pinnedAccountIds)
-    .slice(0, options.maxAccounts ?? Infinity);
+    .slice(0, Math.min(100, options.maxAccounts ?? 100));
   if (!selected.length) {
     if (options.accountKeys?.length) throw new Error("没有匹配的已验证账号埋点");
     return { ok: true, status: options.write ? "written" : "dry_run", checked: 0, added: 0, checks: [], tasks: [] };
@@ -187,7 +196,9 @@ export async function discover(options = {}) {
   const checkedAt = new Date().toISOString();
   const checks = [];
   const pendingTasks = [];
-  for (const account of selected) {
+  const ratePolicy = accountCapturePolicy(selected.length);
+  const pacingEnabled = !options.fixture && process.env.CAIGUANG_DISABLE_ACCOUNT_PACING !== "1";
+  for (const [accountIndex, account] of selected.entries()) {
     try {
       const fixturePayload = fixture?.[account.searchKey];
       const postsPayload = fixturePayload?.posts ?? fixturePayload?.notes ?? (fixturePayload ? fixturePayload : JSON.parse(runXhs(["user-posts", account.profileId, "--json"])));
@@ -215,6 +226,13 @@ export async function discover(options = {}) {
       checks.push({ accountKey: account.searchKey, checkedAt, status: "discovery_failed", latestPostId: account.lastSeenPostId,
         error: detail });
     }
+    if (pacingEnabled && accountIndex < selected.length - 1) {
+      const completed = accountIndex + 1;
+      const delay = completed % ratePolicy.batchSize === 0
+        ? randomDelay(ratePolicy.batchDelayMs)
+        : randomDelay(ratePolicy.accountDelayMs);
+      await wait(delay);
+    }
   }
 
   if (options.write) {
@@ -225,7 +243,7 @@ export async function discover(options = {}) {
     await atomicJson(queuePath, queue);
   }
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",
-    checked: checks.length, added: pendingTasks.length, checks, tasks: pendingTasks };
+    checked: checks.length, added: pendingTasks.length, ratePolicy, checks, tasks: pendingTasks };
 }
 
 async function main() {
