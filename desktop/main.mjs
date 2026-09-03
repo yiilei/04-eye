@@ -219,10 +219,19 @@ ipcMain.handle("caiguang:cleanup-capture", async (_event, value) => {
   timer.unref();
   return true;
 });
-ipcMain.handle("caiguang:runtime-status", () => ({
-  version: app.getVersion(),
-  codex: getCodexStatus(),
-}));
+ipcMain.handle("caiguang:runtime-status", async () => {
+  const pidPath = path.join(app.getPath("userData"), "runtime", "caffeinate.pid");
+  const pid = Number((await readFile(pidPath, "utf8").catch(() => "")).trim());
+  let wakeLockEnabled = false;
+  if (Number.isInteger(pid) && pid > 1) {
+    try { process.kill(pid, 0); wakeLockEnabled = true; } catch { /* stale pid */ }
+  }
+  return {
+    version: app.getVersion(),
+    codex: getCodexStatus(),
+    wakeLock: { enabled: wakeLockEnabled, mode: "ac_only" },
+  };
+});
 ipcMain.handle("caiguang:check-update", () => checkForUpdate({ currentVersion: app.getVersion() }));
 ipcMain.handle("caiguang:open-release", (_event, value) => {
   const url = String(value || "");

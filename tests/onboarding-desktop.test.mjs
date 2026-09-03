@@ -133,6 +133,9 @@ test("automatic capture switch persists and gates the local scheduler", async ()
   assert.match(css, /\.settings-automation-row[\s\S]*background: #ffe600/);
   assert.match(scheduler, /!schedulerEnabled\(preferences\)[\s\S]*await stopWakeLock\(\)[\s\S]*return/);
   assert.match(scheduler, /spawn\("\/usr\/bin\/caffeinate", \["-s"\]/);
+  assert.match(page, /<strong>防休眠<\/strong>/);
+  assert.match(page, /已开启 · 接通电源时锁屏不休眠/);
+  assert.match(page, /runtimeStatus\?\.wakeLock\.enabled/);
   assert.match(server, /automaticCaptureEnabled: payload\.automaticCaptureEnabled/);
   assert.match(server, /creatorH5CaptureEnabled: payload\.creatorH5CaptureEnabled/);
 });

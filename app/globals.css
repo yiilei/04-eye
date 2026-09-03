@@ -428,6 +428,8 @@ aside { position: relative; display: flex; min-width: 0; padding: 0 22px 28px; f
 .runtime-status-row > div, .runtime-update-copy { display: grid; min-width: 0; gap: 3px; }
 .runtime-status-row strong, .runtime-update-copy strong { overflow: hidden; font-size: 9px; font-weight: 620; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-status-row small, .runtime-update-copy small { overflow: hidden; color: rgba(255,255,255,.38); font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-state-pill { min-width: 42px; padding: 5px 8px; color: rgba(255,255,255,.46); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.09); border-radius: 999px; font-size: 8px; font-weight: 700; text-align: center; }
+.runtime-state-pill.is-on { color: #70efb1; background: rgba(60,205,135,.11); border-color: rgba(60,205,135,.26); }
 .runtime-check, .runtime-release { height: 25px; padding: 0 9px; color: rgba(255,255,255,.82); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.11); border-radius: 999px; font-size: 8px; font-weight: 650; transition: background .15s ease, border-color .15s ease, color .15s ease; }
 .runtime-check:hover:not(:disabled), .runtime-release:hover { color: #fff; background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.2); }
 .runtime-check:disabled { color: rgba(255,255,255,.35); cursor: default; }
@@ -668,6 +670,8 @@ html[data-theme="light"] .runtime-status-row strong,
 html[data-theme="light"] .runtime-update-copy strong { color: rgba(20,22,27,.88); }
 html[data-theme="light"] .runtime-status-row small,
 html[data-theme="light"] .runtime-update-copy small { color: rgba(30,34,42,.5); }
+html[data-theme="light"] .runtime-state-pill { color: rgba(30,34,42,.56); background: rgba(28,33,42,.05); border-color: rgba(28,33,42,.11); }
+html[data-theme="light"] .runtime-state-pill.is-on { color: #087f4b; background: rgba(17,155,88,.1); border-color: rgba(17,155,88,.22); }
 html[data-theme="light"] .runtime-check { color: rgba(20,22,27,.82); background: rgba(28,33,42,.06); border-color: rgba(28,33,42,.13); }
 html[data-theme="light"] .runtime-check:hover:not(:disabled) { color: #111319; background: rgba(28,33,42,.11); border-color: rgba(28,33,42,.2); }
 html[data-theme="light"] .runtime-check:disabled { color: rgba(30,34,42,.34); }

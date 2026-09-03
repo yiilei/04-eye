@@ -37,7 +37,7 @@ type ReviewItem = {
 };
 type DesktopBridge = {
   fitWindow?: (request: { mediaAspect: number; sidebarWidth: number }) => Promise<unknown>;
-  getRuntimeStatus?: () => Promise<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>;
+  getRuntimeStatus?: () => Promise<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean }; wakeLock: { enabled: boolean; mode: "ac_only" } }>;
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
@@ -496,7 +496,7 @@ export default function Home() {
   const [appVisible, setAppVisible] = useState(true);
   const [desktopAppMode, setDesktopAppMode] = useState(false);
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
-  const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean } }>();
+  const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean }; wakeLock: { enabled: boolean; mode: "ac_only" } }>();
   const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string }>({ state: "idle" });
   const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
@@ -1955,6 +1955,10 @@ export default function Home() {
                 <div className="runtime-status-row">
                   <div><strong>Codex</strong><small>{runtimeStatus?.codex.available ? (runtimeStatus.codex.authConfigured ? "已找到本地 Codex" : "已找到，等待登录") : "未安装（采光仍可运行）"}</small></div>
                   <button type="button" className="runtime-check" onClick={() => void refreshRuntimeStatus()}>刷新</button>
+                </div>
+                <div className="runtime-status-row runtime-wake-lock">
+                  <div><strong>防休眠</strong><small>{runtimeStatus?.wakeLock.enabled ? "已开启 · 接通电源时锁屏不休眠" : "未开启 · 打开自动抓取后生效"}</small></div>
+                  <span className={`runtime-state-pill ${runtimeStatus?.wakeLock.enabled ? "is-on" : "is-off"}`}>{runtimeStatus?.wakeLock.enabled ? "已开启" : "未开启"}</span>
                 </div>
                 <div className="runtime-update-row">
                   <div className="runtime-update-copy">
