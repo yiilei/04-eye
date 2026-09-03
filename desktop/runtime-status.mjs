@@ -1,8 +1,4 @@
-import { existsSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-export const releaseApi = "https://api.github.com/repos/yiilei/04-eye/releases/latest";
+export const latestReleaseUrl = "https://github.com/yiilei/04-eye/releases/latest";
 
 function versionParts(value) {
   const normalized = String(value || "").trim().replace(/^v/i, "").split("-")[0];
@@ -21,48 +17,27 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-export function findCodexCli({ home = os.homedir(), exists = existsSync } = {}) {
-  const candidates = [
-    "/Applications/Codex.app/Contents/Resources/codex",
-    "/Applications/ChatGPT.app/Contents/Resources/codex",
-    path.join(home, ".local", "bin", "codex"),
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
-  ];
-  return candidates.find((candidate) => exists(candidate));
-}
-
-export function getCodexStatus(options = {}) {
-  const executable = findCodexCli(options);
-  return {
-    available: Boolean(executable),
-    executable: executable || null,
-    // Presence only: this deliberately never reads or exposes Codex auth data.
-    authConfigured: options.exists ? options.exists(path.join(options.home || os.homedir(), ".codex", "auth.json")) : existsSync(path.join(options.home || os.homedir(), ".codex", "auth.json")),
-  };
-}
-
 export async function checkForUpdate({ currentVersion, fetchImpl = fetch } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 7_000);
   try {
-    const response = await fetchImpl(releaseApi, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "Caiguang" },
+    const response = await fetchImpl(latestReleaseUrl, {
+      headers: { Accept: "text/html", "User-Agent": "Caiguang" },
       signal: controller.signal,
+      redirect: "follow",
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const release = await response.json();
-    const latestVersion = String(release?.tag_name || "").replace(/^v/i, "");
+    const releaseUrl = response.url || response.headers?.get?.("x-caiguang-final-url") || "";
+    const match = releaseUrl.match(/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/tag\/v([\d.]+)$/u);
+    const latestVersion = match?.[1] || "";
     if (!versionParts(latestVersion)) throw new Error("发行版本号无效");
     return {
       state: compareVersions(latestVersion, currentVersion) > 0 ? "available" : "latest",
       currentVersion,
       latestVersion,
-      releaseUrl: typeof release?.html_url === "string" ? release.html_url : null,
-      downloadUrl: (release?.assets || []).find((asset) =>
-        asset.name === `Caiguang-Full-Installer-macOS-arm64-v${latestVersion}.zip`
-        || asset.name === `Caiguang-macOS-arm64-v${latestVersion}.zip`)?.browser_download_url || null,
-      publishedAt: typeof release?.published_at === "string" ? release.published_at : null,
+      releaseUrl,
+      downloadUrl: `https://github.com/yiilei/04-eye/releases/download/v${latestVersion}/Caiguang-Full-Installer-macOS-arm64-v${latestVersion}.zip`,
+      publishedAt: null,
     };
   } catch (error) {
     return {

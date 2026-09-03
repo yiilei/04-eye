@@ -37,8 +37,9 @@ type ReviewItem = {
 };
 type DesktopBridge = {
   fitWindow?: (request: { mediaAspect: number; sidebarWidth: number }) => Promise<unknown>;
-  getRuntimeStatus?: () => Promise<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean }; wakeLock: { enabled: boolean; mode: "ac_only" } }>;
+  getRuntimeStatus?: () => Promise<{ version: string; wakeLock: { enabled: boolean; mode: "ac_only" } }>;
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
+  installUpdate?: () => Promise<{ state: string; latestVersion?: string; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   syncXhsLogin?: () => Promise<{ loggedIn?: boolean; error?: string }>;
@@ -47,6 +48,7 @@ type DesktopBridge = {
   cleanupCapture?: (path: string) => Promise<boolean>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
   onLibraryChanged?: (callback: (status: { updatedAt?: string }) => void) => () => void;
+  onUpdateProgress?: (callback: (status: { state: "downloading" | "installing"; percent: number; message: string }) => void) => () => void;
 };
 
 function getDesktopBridge() {
@@ -496,8 +498,8 @@ export default function Home() {
   const [appVisible, setAppVisible] = useState(true);
   const [desktopAppMode, setDesktopAppMode] = useState(false);
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
-  const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; codex: { available: boolean; executable: string | null; authConfigured: boolean }; wakeLock: { enabled: boolean; mode: "ac_only" } }>();
-  const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string }>({ state: "idle" });
+  const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; wakeLock: { enabled: boolean; mode: "ac_only" } }>();
+  const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable" | "downloading" | "installing"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string; percent?: number }>({ state: "idle" });
   const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
@@ -568,6 +570,24 @@ export default function Home() {
       setUpdateStatus({ state: "unavailable", message: "暂时无法检查更新" });
     }
   }, []);
+  const installAppUpdate = useCallback(async () => {
+    const bridge = getDesktopBridge();
+    if (!bridge?.installUpdate) {
+      setUpdateStatus({ state: "unavailable", message: "当前版本暂不支持一键更新" });
+      return;
+    }
+    setUpdateStatus((current) => ({ ...current, state: "downloading", percent: 1, message: "正在下载新版本" }));
+    try {
+      const result = await bridge.installUpdate();
+      if (result.state !== "restarting") setUpdateStatus({ state: result.state === "latest" ? "latest" : "unavailable", latestVersion: result.latestVersion, message: result.message });
+    } catch {
+      setUpdateStatus({ state: "unavailable", message: "更新失败，请稍后再试" });
+    }
+  }, []);
+
+  useEffect(() => getDesktopBridge()?.onUpdateProgress?.((progress) => {
+    setUpdateStatus((current) => ({ ...current, ...progress }));
+  }), []);
   const refreshManualCapture = useCallback(async () => {
     if (!desktopAppMode) return;
     try {
@@ -928,7 +948,7 @@ export default function Home() {
         if (!active) return;
         const nextItems = Array.isArray(payload.items) ? payload.items : [];
         setRuntimeItems(nextItems);
-        setLibraryStatus(nextItems.length ? `已发现 ${nextItems.length} 组素材，正在进入批阅页` : "已连接，等待 Codex 完成首次抓取…");
+        setLibraryStatus(nextItems.length ? `已发现 ${nextItems.length} 组素材，正在进入批阅页` : "已连接，等待首次抓取…");
         if (payload.decisions) {
           const persisted = Object.fromEntries(Object.entries(payload.decisions)
             .filter(([, value]) => value?.decision === "kept" || value?.decision === "rejected")
@@ -1957,23 +1977,19 @@ export default function Home() {
               </section>
               <section className="runtime-panel" aria-label="本地运行状态">
                 <div className="runtime-heading"><strong>本地状态</strong><span>{runtimeStatus ? `v${runtimeStatus.version}` : "桌面应用"}</span></div>
-                <div className="runtime-status-row">
-                  <div><strong>Codex</strong><small>{runtimeStatus?.codex.available ? (runtimeStatus.codex.authConfigured ? "已找到本地 Codex" : "已找到，等待登录") : "未安装（采光仍可运行）"}</small></div>
-                  <button type="button" className="runtime-check" onClick={() => void refreshRuntimeStatus()}>刷新</button>
-                </div>
                 <div className="runtime-status-row runtime-wake-lock">
                   <div><strong>防休眠</strong><small>{runtimeStatus?.wakeLock.enabled ? "已开启 · 接通电源时锁屏不休眠" : "未开启 · 打开自动抓取后生效"}</small></div>
                   <span className={`runtime-state-pill ${runtimeStatus?.wakeLock.enabled ? "is-on" : "is-off"}`}>{runtimeStatus?.wakeLock.enabled ? "已开启" : "未开启"}</span>
                 </div>
                 <div className="runtime-update-row">
                   <div className="runtime-update-copy">
-                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "unavailable" ? updateStatus.message : "检查新版本"}</strong>
-                    <small>{updateStatus.state === "available" ? "把版本页链接发给 Codex，即可按 GitHub 最新版本更新" : "只检查 GitHub 公开版本，不会下载或修改应用"}</small>
+                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? updateStatus.message : updateStatus.state === "unavailable" ? updateStatus.message : "检查新版本"}</strong>
+                    <small>{updateStatus.state === "available" ? "下载、校验并自动重启完成更新" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? `${Math.round(updateStatus.percent || 0)}%` : "连接 GitHub 检查公开版本"}</small>
                   </div>
-                  {updateStatus.state === "available" && updateStatus.releaseUrl ? (
-                    <button type="button" className="runtime-release" onClick={() => void getDesktopBridge()?.openRelease?.(updateStatus.releaseUrl!)}>查看版本</button>
+                  {updateStatus.state === "available" ? (
+                    <button type="button" className="runtime-release" onClick={() => void installAppUpdate()}>一键更新</button>
                   ) : (
-                    <button type="button" className="runtime-check" disabled={updateStatus.state === "checking"} onClick={() => void checkForAppUpdate()}>{updateStatus.state === "checking" ? "检查中" : "检查"}</button>
+                    <button type="button" className="runtime-check" disabled={updateStatus.state === "checking" || updateStatus.state === "downloading" || updateStatus.state === "installing"} onClick={() => void checkForAppUpdate()}>{updateStatus.state === "checking" ? "检查中" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? `${Math.round(updateStatus.percent || 0)}%` : "检查"}</button>
                   )}
                 </div>
               </section>
@@ -2067,7 +2083,7 @@ export default function Home() {
               {desktopAppMode && (
                 <button type="button" className={`capture-now ${manualCapture.state}`} onClick={() => void startManualCapture()}
                   disabled={manualCapture.state === "running"} aria-label="立即执行一次本地抓取"
-                  title="立即抓取（完全在本地执行，不使用 Codex）">
+                  title="立即抓取（完全在本地执行）">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 11V6.7a1.45 1.45 0 0 1 2.9 0V10m0 0V4.8a1.45 1.45 0 0 1 2.9 0V10m0 0V6a1.45 1.45 0 0 1 2.9 0v5m0 0V8.3a1.45 1.45 0 0 1 2.9 0v5.2c0 4.1-2.7 7-6.8 7h-.8c-2.1 0-3.8-.8-5.1-2.4l-2.4-3a1.55 1.55 0 0 1 2.3-2.1l1.2 1.1V11Z" /></svg>
                   {manualCapture.state === "running" && <span className="capture-now-ring" style={{ background: `conic-gradient(var(--accent) ${manualCapture.percent}%, rgba(255,255,255,.13) 0)` }} />}
                 </button>

@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
 import { migrateLegacyData } from "./data-migration.mjs";
-import { checkForUpdate, getCodexStatus } from "./runtime-status.mjs";
+import { checkForUpdate } from "./runtime-status.mjs";
+import { currentAppBundle, launchPreparedUpdate, prepareUpdate } from "./app-updater.mjs";
 
 // Embedded Python lives inside the signed app bundle. Never let any child
 // process create or update bytecode beside signed resources.
@@ -228,11 +229,26 @@ ipcMain.handle("caiguang:runtime-status", async () => {
   }
   return {
     version: app.getVersion(),
-    codex: getCodexStatus(),
     wakeLock: { enabled: wakeLockEnabled, mode: "ac_only" },
   };
 });
 ipcMain.handle("caiguang:check-update", () => checkForUpdate({ currentVersion: app.getVersion() }));
+ipcMain.handle("caiguang:install-update", async (event) => {
+  try {
+    const prepared = await prepareUpdate({
+      currentVersion: app.getVersion(),
+      targetApp: currentAppBundle(),
+      notify: (progress) => event.sender.send("caiguang:update-progress", progress),
+    });
+    if (prepared.state !== "ready") return prepared;
+    event.sender.send("caiguang:update-progress", { state: "installing", percent: 100, message: "即将重启完成更新" });
+    launchPreparedUpdate(prepared);
+    setTimeout(() => app.quit(), 250);
+    return { state: "restarting", latestVersion: prepared.latestVersion };
+  } catch (error) {
+    return { state: "unavailable", message: error instanceof Error ? error.message : "更新失败，请稍后再试" };
+  }
+});
 ipcMain.handle("caiguang:open-release", (_event, value) => {
   const url = String(value || "");
   if (!/^https:\/\/github\.com\/yiilei\/04-eye\/releases\/tag\/v[\d.]+$/u.test(url)) return false;

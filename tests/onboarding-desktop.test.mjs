@@ -54,8 +54,10 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(page, /document\.visibilityState !== "visible"/);
   assert.match(page, /正在同步/);
   assert.doesNotMatch(page, /系统权限：允许应用更新/);
-  assert.doesNotMatch(page, /下载并安装/);
-  assert.match(page, /把版本页链接发给 Codex/);
+  assert.match(page, /一键更新/);
+  assert.match(page, /下载、校验并自动重启完成更新/);
+  assert.doesNotMatch(page, /已找到本地 Codex/);
+  assert.match(main, /caiguang:install-update/);
   assert.match(sessionScript, /\["login", "--qrcode"\]/);
   assert.match(sessionScript, /XHS_CLI_DISABLE_BROWSER_COOKIE: command === "login-chrome" \? "0" : "1"/);
   assert.match(sessionScript, /"login-chrome" \? \["login", "--browser"\]/);
