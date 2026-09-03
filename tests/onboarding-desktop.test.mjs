@@ -153,6 +153,8 @@ test("pin footer exposes export action and account-count risk guidance", async (
   assert.match(page, /当前被小红书反爬虫机制查杀的概率为/);
   assert.match(page, /pin-risk-dot risk-/);
   assert.match(css, /\.pin-panel-footer/);
+  assert.match(css, /\.export-pins \{[^}]*background: transparent;[^}]*border: 0;/);
+  assert.match(css, /\.export-pins:hover \{[^}]*color: #ffe600;[^}]*background: transparent;/);
   assert.match(css, /\.pin-risk-dot\.risk-medium/);
   assert.match(css, /\.pin-risk-dot\.risk-high/);
 });
