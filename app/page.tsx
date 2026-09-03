@@ -514,6 +514,7 @@ export default function Home() {
   const panRef = useRef({ x: 0, y: 0 });
   const migrationStarted = useRef(false);
   const pinPreviewLoading = useRef(new Set<string>());
+  const pinImportInput = useRef<HTMLInputElement>(null);
   const appShellRef = useRef<HTMLElement>(null);
   const viewer = useRef<HTMLDivElement>(null);
   const setViewerNode = useCallback((element: HTMLDivElement | null) => {
@@ -715,7 +716,8 @@ export default function Home() {
   const pinExport = useMemo(() => {
     const exportedAccounts = allPinAccounts
       .filter((account) => pinnedAccountIds.includes(account.profileId));
-    const exportedManualAccounts = exportedAccounts.filter((account) => account.status === "pending_verification");
+    const exportedManualAccounts = exportedAccounts.filter((account) =>
+      !seededPinAccounts.some((seeded) => seeded.profileId === account.profileId));
     return {
       count: exportedAccounts.length,
       href: `/api/export-pins?ids=${encodeURIComponent(exportedAccounts.map((account) => account.profileId).join(","))}&manual=${encodeURIComponent(JSON.stringify(exportedManualAccounts))}`,
@@ -1681,6 +1683,46 @@ export default function Home() {
     setPinLinkMessage("已取消埋点，账号已移到列表底部");
   }, []);
 
+  const importPinData = useCallback(async (file?: File) => {
+    if (!file) return;
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error("文件过大");
+      const payload = JSON.parse(await file.text()) as { schemaVersion?: number; project?: string; platform?: string; accounts?: unknown[] };
+      if (payload.schemaVersion !== 1 || payload.project !== "采光" || payload.platform !== "小红书" || !Array.isArray(payload.accounts)) throw new Error("格式不符");
+      const imported = payload.accounts.map((value) => {
+        const account = value as Partial<PinAccount>;
+        const profileId = String(account.profileId || "");
+        const profileUrl = String(account.profileUrl || "");
+        if (!/^[a-zA-Z0-9_-]+$/.test(profileId)
+          || profileUrl !== `https://www.xiaohongshu.com/user/profile/${profileId}`
+          || !String(account.displayName || "").trim()
+          || !["verified", "pending_verification"].includes(String(account.status))) throw new Error("账号资料无效");
+        return {
+          ...account,
+          searchKey: String(account.searchKey || profileId).slice(0, 100),
+          xiaohongshuId: String(account.xiaohongshuId || "待验证").slice(0, 100),
+          displayName: String(account.displayName).trim().slice(0, 100),
+          group: String(account.group || "imported").slice(0, 60),
+          profileId,
+          profileUrl,
+          status: String(account.status),
+        } as PinAccount;
+      });
+      const unique = [...new Map(imported.map((account) => [account.profileId, account])).values()];
+      const mergedIds = [...new Set([...pinnedAccountIds, ...unique.map((account) => account.profileId)])].slice(0, 100);
+      if (mergedIds.length < new Set([...pinnedAccountIds, ...unique.map((account) => account.profileId)]).size) throw new Error("最多支持 100 个埋点账号");
+      const existingIds = new Set(allPinAccounts.map((account) => account.profileId));
+      const newManual = unique.filter((account) => !existingIds.has(account.profileId));
+      setManualPinAccounts((accounts) => [...accounts, ...newManual]);
+      setPinnedAccountIds(mergedIds);
+      setPinLinkMessage(`已导入 ${unique.length} 个账号，新增 ${newManual.length} 个`);
+    } catch (error) {
+      setPinLinkMessage(error instanceof Error ? `导入失败：${error.message}` : "导入失败：文件无法读取");
+    } finally {
+      if (pinImportInput.current) pinImportInput.current.value = "";
+    }
+  }, [allPinAccounts, pinnedAccountIds]);
+
   const captureCanvasToEagle = useCallback(async () => {
     if (reviewTourStep !== null || onboardingPreview || settingsOpen) return;
     const element = viewer.current;
@@ -2033,10 +2075,18 @@ export default function Home() {
                   {!visiblePinAccounts.length && <div className="pin-empty">没有找到对应账号</div>}
                 </div>
                 <div className="pin-panel-footer">
-                  <a className={`export-pins ${pinExport.count ? "" : "is-disabled"}`} href={pinExport.count ? pinExport.href : undefined}
-                    download={pinExport.filename} aria-disabled={!pinExport.count} aria-label="一键导出埋点数据" data-tooltip="一键导出埋点数据">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 15v4h14v-4" /></svg>
-                  </a>
+                  <div className="pin-data-actions">
+                    <button type="button" className="import-pins" aria-label="一键导入埋点数据" data-tooltip="一键导入埋点数据"
+                      onClick={() => pinImportInput.current?.click()}>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0 4 4m-4-4-4 4M5 15v4h14v-4" /></svg>
+                    </button>
+                    <input ref={pinImportInput} className="pin-import-input" type="file" accept="application/json,.json"
+                      onChange={(event) => void importPinData(event.target.files?.[0])} />
+                    <a className={`export-pins ${pinExport.count ? "" : "is-disabled"}`} href={pinExport.count ? pinExport.href : undefined}
+                      download={pinExport.filename} aria-disabled={!pinExport.count} aria-label="一键导出埋点数据" data-tooltip="一键导出埋点数据">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 15v4h14v-4" /></svg>
+                    </a>
+                  </div>
                   <div className="pin-risk-summary">
                     <span>{pinExport.count} 个账号</span>
                     <i className={`pin-risk-dot risk-${pinRisk.level}`} tabIndex={0} aria-label={`当前被小红书反爬虫机制查杀的概率为${pinRisk.label}`}

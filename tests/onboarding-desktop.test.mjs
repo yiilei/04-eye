@@ -150,11 +150,14 @@ test("pin footer exposes export action and account-count risk guidance", async (
   assert.match(page, /pinExport\.count <= 30/);
   assert.match(page, /pinExport\.count <= 60/);
   assert.match(page, /data-tooltip="一键导出埋点数据"/);
+  assert.match(page, /data-tooltip="一键导入埋点数据"/);
+  assert.match(page, /accept="application\/json,\.json"/);
+  assert.match(page, /已导入 \$\{unique\.length\} 个账号，新增 \$\{newManual\.length\} 个/);
   assert.match(page, /当前被小红书反爬虫机制查杀的概率为/);
   assert.match(page, /pin-risk-dot risk-/);
   assert.match(css, /\.pin-panel-footer/);
-  assert.match(css, /\.export-pins \{[^}]*background: transparent;[^}]*border: 0;/);
-  assert.match(css, /\.export-pins:hover \{[^}]*color: #ffe600;[^}]*background: transparent;/);
+  assert.match(css, /\.export-pins, \.import-pins \{[^}]*background: transparent;[^}]*border: 0;/);
+  assert.match(css, /\.export-pins:hover, \.import-pins:hover \{[^}]*color: #ffe600;[^}]*background: transparent;/);
   assert.match(css, /\.pin-risk-dot\.risk-medium/);
   assert.match(css, /\.pin-risk-dot\.risk-high/);
 });
