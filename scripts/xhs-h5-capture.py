@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -265,6 +266,36 @@ def main() -> int:
               const canvasCount = document.querySelectorAll('canvas').length;
               for (const element of document.querySelectorAll('.template-h5-mask')) element.style.display = 'none';
               if (notes) notes.style.display = 'none';
+              // Swiper renders carousel cards on separate 3D compositor layers.
+              // Those layers may disappear when Chrome captures beyond the
+              // viewport, leaving a large white block in an otherwise valid
+              // activity archive. Flatten only the currently visible slide
+              // for the static long image; the original animation file is
+              // still preserved separately.
+              for (const swiper of document.querySelectorAll('.swiper')) {
+                const active = swiper.querySelector('.swiper-slide-active')
+                  || swiper.querySelector('.swiper-slide:not(.swiper-slide-duplicate)')
+                  || swiper.querySelector('.swiper-slide');
+                if (!active) continue;
+                const wrapper = swiper.querySelector('.swiper-wrapper');
+                if (wrapper) wrapper.style.setProperty('transform', 'none', 'important');
+                for (const slide of swiper.querySelectorAll('.swiper-slide')) {
+                  const visible = slide === active;
+                  slide.style.setProperty('visibility', visible ? 'visible' : 'hidden', 'important');
+                  slide.style.setProperty('opacity', visible ? '1' : '0', 'important');
+                  slide.style.setProperty('transform', 'none', 'important');
+                  if (visible) {
+                    slide.style.setProperty('position', 'absolute', 'important');
+                    slide.style.setProperty('inset', '0', 'important');
+                    for (const image of slide.querySelectorAll('img')) {
+                      const lazySource = image.dataset.src || image.dataset.lazySrc;
+                      if (lazySource && !image.currentSrc) image.src = lazySource;
+                      image.style.setProperty('visibility', 'visible', 'important');
+                      image.style.setProperty('opacity', '1', 'important');
+                    }
+                  }
+                }
+              }
               document.documentElement.style.width = `${appRect.width}px`;
               document.body.style.width = `${appRect.width}px`;
               document.body.style.margin = '0';
@@ -298,24 +329,31 @@ def main() -> int:
             }"""
         )
 
-        # Chromium can silently crop a clip taller than the viewport to the
-        # current compositor surface. Grow only the viewport height (the
-        # responsive width stays unchanged) so the complete activity is
-        # paintable before taking the archive screenshot.
-        required_viewport_height = max(900, math.ceil(capture["contentY"] + capture["contentHeight"]) + 2)
-        page.set_viewport_size({"width": args.viewport_width, "height": required_viewport_height})
-        page.wait_for_timeout(350)
-        image_bytes = page.screenshot(
-            type="jpeg",
-            quality=96,
-            clip={
-                "x": capture["contentX"],
-                "y": capture["contentY"],
-                "width": capture["contentWidth"],
-                "height": capture["contentHeight"],
-            },
-            animations="disabled",
-        )
+        # Keep the mobile viewport stable while capturing beyond it. Some H5
+        # campaigns derive spacer and carousel geometry from `innerHeight`;
+        # growing the viewport to the full document height creates large blank
+        # regions and can make sections render twice.
+        clip = {
+            "x": capture["contentX"],
+            "y": capture["contentY"],
+            "width": capture["contentWidth"],
+            "height": capture["contentHeight"],
+        }
+        if browser_engine == "system_chrome":
+            cdp = context.new_cdp_session(page)
+            encoded = cdp.send("Page.captureScreenshot", {
+                "format": "jpeg",
+                "quality": 96,
+                "fromSurface": True,
+                "captureBeyondViewport": True,
+                "clip": {**clip, "scale": capture["deviceScaleFactor"]},
+            })["data"]
+            image_bytes = base64.b64decode(encoded)
+        else:
+            required_viewport_height = max(900, math.ceil(capture["contentY"] + capture["contentHeight"]) + 2)
+            page.set_viewport_size({"width": args.viewport_width, "height": required_viewport_height})
+            page.wait_for_timeout(350)
+            image_bytes = page.screenshot(type="jpeg", quality=96, clip=clip, animations="disabled")
         image_width, image_height = jpeg_dimensions(image_bytes)
         if not capture_covers_content(image_height, capture["contentHeight"], capture["deviceScaleFactor"]):
             expected_height = round(capture["contentHeight"] * capture["deviceScaleFactor"])

@@ -1,5 +1,5 @@
 export function schedulerEnabled(preferences) {
-  return preferences?.automaticCaptureEnabled === true;
+  return preferences?.automaticCaptureEnabled === true && preferences?.onboardingComplete !== false;
 }
 
 export function captureIsDue(preferences, state, now) {

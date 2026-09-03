@@ -1,5 +1,7 @@
-import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+const retiredStarterIds = new Set(["kuaishou-small-budget-atmosphere-6a55aaf8"]);
 
 export async function seedStarterData(appRoot, dataRoot, registryPath, reviewRoot) {
   const markerPath = path.join(dataRoot, "data", ".starter-data-v1.json");
@@ -12,6 +14,12 @@ export async function seedStarterData(appRoot, dataRoot, registryPath, reviewRoo
     let existingItems = [];
     try { existingItems = JSON.parse(await readFile(registryPath, "utf8")); }
     catch { /* preserve the original already-seeded behavior for missing registries */ }
+
+    if (Array.isArray(existingItems) && existingItems.some((item) => retiredStarterIds.has(item.id))) {
+      existingItems = existingItems.filter((item) => !retiredStarterIds.has(item.id));
+      await writeFile(registryPath, `${JSON.stringify(existingItems, null, 2)}\n`);
+      await rm(path.join(reviewRoot, "2026-08-24", "kuaishou-small-budget-atmosphere-6a55aaf8"), { recursive: true, force: true });
+    }
 
     // Starter media may outlive the app version that first installed it. Enrich
     // matching records with newly recovered metadata without re-adding starter

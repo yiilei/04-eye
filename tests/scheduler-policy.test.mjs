@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { captureIsDue, pushIsDue, schedulerEnabled } from "../scripts/scheduler-policy.mjs";
+import { initializeCapturePreferences, randomCaptureTime } from "../scripts/capture-time-policy.mjs";
+
+test("fresh installs receive one stable random capture time between midnight and 09:00", () => {
+  assert.equal(randomCaptureTime(() => 0), "00:00");
+  assert.equal(randomCaptureTime(() => 0.5), "04:30");
+  assert.equal(randomCaptureTime(() => 0.999999), "08:59");
+  assert.deepEqual(initializeCapturePreferences({}, () => 0.25).preferences, {
+    onboardingComplete: false,
+    automaticCaptureEnabled: true,
+    creatorH5CaptureEnabled: true,
+    captureTime: "02:15",
+    pushTime: "11:00",
+  });
+  assert.equal(initializeCapturePreferences({ captureTime: "06:42", pushTime: "10:00" }, () => 0).preferences.captureTime, "06:42");
+  assert.equal(initializeCapturePreferences({ captureTime: "14:20", pushTime: "10:00" }, () => 0).preferences.captureTime, "14:20");
+  assert.equal(schedulerEnabled(initializeCapturePreferences({}, () => 0).preferences), false);
+});
 
 const now = { date: "2026-08-24", time: "02:00" };
 

@@ -217,3 +217,9 @@ test("desktop packager replaces rather than merges the previous app payload", as
   assert.match(packager, /pnpm", \["prune", "--prod", "--ignore-scripts"\]/);
   assert.match(packager, /runtimeNodeModulesKilobytes > 100 \* 1024/);
 });
+
+test("desktop app bundle includes every shared module imported by the server", async () => {
+  const packager = await readFile(new URL("../scripts/package-macos-app.mjs", import.meta.url), "utf8");
+  assert.match(packager, /review-cache-cleanup\.mjs/);
+  assert.match(packager, /capture-time-policy\.mjs/);
+});

@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { seedStarterData } from "../desktop/starter-data.mjs";
 
-test("seeds the portable Tanghulu and Kuaishou review items on first launch", async () => {
+test("seeds only the portable Tanghulu review item on first launch", async () => {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "caiguang-starter-"));
   const reviewRoot = path.join(dataRoot, "review");
   const registryPath = path.join(dataRoot, "data", "generated-review-items.json");
@@ -13,16 +13,12 @@ test("seeds the portable Tanghulu and Kuaishou review items on first launch", as
   await mkdir(reviewRoot, { recursive: true });
 
   const result = await seedStarterData(process.cwd(), dataRoot, registryPath, reviewRoot);
-  assert.deepEqual(result, { seeded: true, items: 2 });
+  assert.deepEqual(result, { seeded: true, items: 1 });
   const items = JSON.parse(await readFile(registryPath, "utf8"));
-  assert.equal(items.length, 2);
-  assert.deepEqual(items.map((item) => item.id), [
-    "kuaishou-small-budget-atmosphere-6a55aaf8",
-    "starter-tanghulu-69af7a72",
-  ]);
+  assert.equal(items.length, 1);
+  assert.deepEqual(items.map((item) => item.id), ["starter-tanghulu-69af7a72"]);
   assert.ok(items.every((item) => item.galleryLocalPaths.every((file) => file.startsWith(dataRoot))));
   assert.match(items.find((item) => item.id === "starter-tanghulu-69af7a72").caption, /糖葫芦红红/);
-  await stat(path.join(reviewRoot, "2026-08-24", "kuaishou-small-budget-atmosphere-6a55aaf8", "live-07.mp4"));
   await stat(path.join(reviewRoot, "2026-08-24", "starter-tanghulu-69af7a72", "live-05.mp4"));
 
   const second = await seedStarterData(process.cwd(), dataRoot, registryPath, reviewRoot);
@@ -49,6 +45,28 @@ test("enriches missing starter captions without re-adding deleted starter items"
   assert.match(enriched[0].caption, /糖葫芦红红/);
 });
 
+test("removes the retired Kuaishou starter from an existing first-run library", async () => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), "caiguang-starter-retired-"));
+  const reviewRoot = path.join(dataRoot, "review");
+  const registryPath = path.join(dataRoot, "data", "generated-review-items.json");
+  const markerPath = path.join(dataRoot, "data", ".starter-data-v1.json");
+  const retiredPath = path.join(reviewRoot, "2026-08-24", "kuaishou-small-budget-atmosphere-6a55aaf8");
+  await mkdir(retiredPath, { recursive: true });
+  await writeFile(path.join(retiredPath, "01.webp"), "retired");
+  await mkdir(path.dirname(registryPath), { recursive: true });
+  await writeFile(markerPath, "{}\n");
+  await writeFile(registryPath, `${JSON.stringify([
+    { id: "kuaishou-small-budget-atmosphere-6a55aaf8" },
+    { id: "user-owned-item", caption: "keep me" },
+  ])}\n`);
+
+  const result = await seedStarterData(process.cwd(), dataRoot, registryPath, reviewRoot);
+  assert.deepEqual(result, { seeded: false, reason: "already_seeded" });
+  const items = JSON.parse(await readFile(registryPath, "utf8"));
+  assert.deepEqual(items, [{ id: "user-owned-item", caption: "keep me" }]);
+  await assert.rejects(stat(retiredPath));
+});
+
 test("repairs a pre-existing empty registry once, then preserves a deliberately empty library", async () => {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "caiguang-starter-empty-"));
   const reviewRoot = path.join(dataRoot, "review");
@@ -58,7 +76,7 @@ test("repairs a pre-existing empty registry once, then preserves a deliberately 
   await writeFile(registryPath, "[]\n");
 
   const repaired = await seedStarterData(process.cwd(), dataRoot, registryPath, reviewRoot);
-  assert.deepEqual(repaired, { seeded: true, items: 2 });
+  assert.deepEqual(repaired, { seeded: true, items: 1 });
   await writeFile(registryPath, "[]\n");
   const afterUserClear = await seedStarterData(process.cwd(), dataRoot, registryPath, reviewRoot);
   assert.deepEqual(afterUserClear, { seeded: false, reason: "already_seeded" });

@@ -7,6 +7,7 @@ import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
 import { cleanupReviewedMedia } from "../scripts/review-cache-cleanup.mjs";
+import { initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -122,11 +123,9 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
       if (pathname === "/api/desktop/preferences" && request.method === "GET") {
-        const stored = await readJson(preferencesPath, {});
-        // New installs default to automatic capture ON so users don't forget to enable it
-        if (stored.automaticCaptureEnabled === undefined) stored.automaticCaptureEnabled = true;
-if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled = true;
-        const response = json(stored);
+        const initialized = initializeCapturePreferences(await readJson(preferencesPath, {}));
+        if (initialized.changed) await atomicJson(preferencesPath, { ...initialized.preferences, schemaVersion: 1, updatedAt: new Date().toISOString() });
+        const response = json(initialized.preferences);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
@@ -135,8 +134,8 @@ if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled
        const preferences = await readJson(preferencesPath, {});
        const response = json({
          onboardingComplete: preferences.onboardingComplete === true,
+         legalNoticeAccepted: preferences.legalNoticeAccepted === true,
          reviewTourComplete: preferences.reviewTourComplete === true,
-         statsNoticeAcknowledged: preferences.statsNoticeAcknowledged === true,
        });
        outgoing.statusCode = response.status;
        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
@@ -369,8 +368,8 @@ if (stored.creatorH5CaptureEnabled === undefined) stored.creatorH5CaptureEnabled
         await atomicJson(preferencesPath, {
           ...existing,
           ...(typeof payload?.onboardingComplete === "boolean" ? { onboardingComplete: payload.onboardingComplete } : {}),
+          ...(typeof payload?.legalNoticeAccepted === "boolean" ? { legalNoticeAccepted: payload.legalNoticeAccepted } : {}),
           ...(typeof payload?.reviewTourComplete === "boolean" ? { reviewTourComplete: payload.reviewTourComplete } : {}),
-          ...(typeof payload?.statsNoticeAcknowledged === "boolean" ? { statsNoticeAcknowledged: payload.statsNoticeAcknowledged } : {}),
           updatedAt: new Date().toISOString(),
         });
         const response = json({ ok: true });

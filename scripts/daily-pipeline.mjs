@@ -33,15 +33,18 @@ const run = (command, args) => execFileSync(command, args, { cwd: root, encoding
 const captureErrorMessage = (error) => {
   const chunks = [error?.stdout, error?.stderr, error instanceof Error ? error.message : String(error)]
     .map((value) => String(value || "").trim()).filter(Boolean);
-  for (const line of chunks.flatMap((chunk) => chunk.split("\n")).map((line) => line.trim())) {
+  const lines = chunks.flatMap((chunk) => chunk.split("\n")).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
     if (!line.startsWith("{") || !line.endsWith("}")) continue;
     try {
       const parsed = JSON.parse(line);
       if (parsed.error || parsed.status) return parsed.error || parsed.status;
     } catch { /* keep looking for a structured child-process error */ }
   }
+  const explicitError = lines.find((line) => /^(?:Error|[A-Za-z]+Error):\s+/.test(line));
+  if (explicitError) return explicitError.replace(/^(?:Error|[A-Za-z]+Error):\s+/, "");
   const raw = chunks[0] || "未知抓取错误";
-  return raw.split("\n").map((line) => line.trim()).filter(Boolean).at(-1) || raw;
+  return raw.split("\n").map((line) => line.trim()).filter((line) => !/^Node\.js v\d+/.test(line)).at(-1) || raw;
 };
 const requireFields = (value, fields, label) => {
   for (const field of fields) if (!value[field]) throw new Error(`${label} 缺少 ${field}`);

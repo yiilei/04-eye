@@ -153,10 +153,12 @@ const portableXhs = path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".ven
 await writeFile(portableXhs, "#!/bin/zsh\nset -e\nBIN_DIR=\"${0:A:h}\"\nXHS_ROOT=\"${BIN_DIR:h:h}\"\nexport PYTHONPATH=\"$XHS_ROOT${PYTHONPATH:+:$PYTHONPATH}\"\nexport PYTHONDONTWRITEBYTECODE=1\nexec \"$BIN_DIR/python\" -c 'from xhs_cli.cli import cli; cli()' \"$@\"\n");
 await chmod(portableXhs, 0o755);
 for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, entry), path.join(packagedApp, entry), { recursive: true });
-// desktop/server.mjs imports the shared cleanup module at runtime. Keep this
-// small script in the app-only bundle as well as in the complete source bundle.
+// desktop/server.mjs imports shared runtime modules. Keep every imported
+// script in the app-only bundle as well as in the complete source bundle.
 await mkdir(path.join(packagedApp, "scripts"), { recursive: true });
-await cp(path.join(root, "scripts", "review-cache-cleanup.mjs"), path.join(packagedApp, "scripts", "review-cache-cleanup.mjs"));
+for (const script of ["review-cache-cleanup.mjs", "capture-time-policy.mjs"]) {
+  await cp(path.join(root, "scripts", script), path.join(packagedApp, "scripts", script));
+}
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });
 await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "caiguang", version, type: "module", main: "desktop/main.mjs" }, null, 2));
 await cp(iconFile, path.join(resources, "caiguang.icns"));

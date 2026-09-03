@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
 import { captureIsDue, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
+import { initializeCapturePreferences } from "./capture-time-policy.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
@@ -102,7 +103,9 @@ async function tick() {
   console.error("[scheduler] tick:start");
   await migrateLegacyData(appData);
   console.error("[scheduler] tick:migrated");
-const preferences = await readJson(preferencesPath, { automaticCaptureEnabled: true, creatorH5CaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" });
+  const initialized = initializeCapturePreferences(await readJson(preferencesPath, {}));
+  const preferences = initialized.preferences;
+  if (initialized.changed) await atomicJson(preferencesPath, { ...preferences, schemaVersion: 1, updatedAt: new Date().toISOString() });
   if (!schedulerEnabled(preferences)) {
     await stopWakeLock();
     console.error("[scheduler] tick:disabled");
@@ -189,7 +192,7 @@ async function status() {
   console.log(JSON.stringify({
     ok: result.status === 0,
     installed: result.status === 0,
-preferences: await readJson(preferencesPath, { automaticCaptureEnabled: true, creatorH5CaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" }),
+    preferences: initializeCapturePreferences(await readJson(preferencesPath, {})).preferences,
     state: await readJson(statePath, {}),
   }));
   if (result.status !== 0) process.exitCode = 1;

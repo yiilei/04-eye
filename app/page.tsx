@@ -473,8 +473,8 @@ export default function Home() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [xhsSetupStatus, setXhsSetupStatus] = useState<"未登录" | "等待登录" | "已登录">("未登录");
   const [eagleSetupStatus, setEagleSetupStatus] = useState("尚未检测");
-  const [statsNoticeAcknowledged, setStatsNoticeAcknowledged] = useState(false);
   const [onboardingPreview, setOnboardingPreview] = useState(false);
+  const [legalNoticeAccepted, setLegalNoticeAccepted] = useState(false);
   const [camoufoxStatus, setCamoufoxStatus] = useState<"checking" | "ready" | "downloading" | "failed">("checking");
   const [camoufoxProgress, setCamoufoxProgress] = useState({ stage: "准备下载", percent: 0 });
   const [reviewTourStep, setReviewTourStep] = useState<number | null>(null);
@@ -633,14 +633,14 @@ export default function Home() {
     localStorage.setItem(onboardingCompleteStorageKey, "1");
     if (desktopAppMode) void fetch("/api/desktop/first-run", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ onboardingComplete: true, statsNoticeAcknowledged }),
+      body: JSON.stringify({ onboardingComplete: true, legalNoticeAccepted }),
     });
     setOnboardingPreview(false);
     if (localStorage.getItem(reviewTourCompleteStorageKey) !== "1") setReviewTourStep(0);
     const url = new URL(window.location.href);
     url.searchParams.delete("onboarding");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [desktopAppMode, statsNoticeAcknowledged]);
+  }, [desktopAppMode, legalNoticeAccepted]);
 
   const moveReviewTour = useCallback((direction: -1 | 1) => {
     if (reviewTourStep === null || reviewTourTransitioning) return;
@@ -746,6 +746,7 @@ export default function Home() {
     ?? current.sourceUrl.match(/https:\/\/www\.xiaohongshu\.com\/user\/profile\/[^/?]+/)?.[0]
     ?? current.sourceUrl;
   const displayDate = postDateLabel(current);
+  const isStarterMaterial = current.id.startsWith("starter-");
   const livePhotoCount = current.livePhotos ? Object.keys(current.livePhotos).length : current.livePhotoVideo ? 1 : 0;
   const materialLabel = current.previewOnly
     ? "活动未上线 · 当前仅保留封面"
@@ -1826,19 +1827,33 @@ export default function Home() {
               <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && (desktopAppMode ? <span className="completion-check">✓</span> : <span className="preview-status">网页预览</span>)}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
              <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "使用 Chrome 登录"}</button></div></div>
              <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
-             <div className={`first-run-step first-run-stats ${statsNoticeAcknowledged ? "is-complete" : ""}`}>
-               <span><strong>会统计抓取数量</strong><small>仅统计抓取及保留的图片、视频数量；除此之外不收集素材、账号、文案、链接、Cookie 或 Eagle 内容。</small></span>
-               <div className="first-run-action stats-notice-action">
-                 {statsNoticeAcknowledged && <span className="completion-check stats-confirmed-check">✓</span>}
-                 <button type="button" onClick={() => setStatsNoticeAcknowledged(true)}>{statsNoticeAcknowledged ? "已确认" : "点击确认"}</button>
+             <div className={`first-run-step first-run-legal ${legalNoticeAccepted ? "is-complete" : ""}`}>
+               <span>
+                 <strong>使用说明</strong>
+                 <small>请仅处理有权浏览和使用的公开内容。素材权利归原作者或相关权利人所有。</small>
+                 <details>
+                   <summary><span>查看完整说明</span><em>6 项</em></summary>
+                   <div className="first-run-legal-copy">
+                     <section><i>01</i><p><strong>工具关系</strong><span>采光是本地素材发现与批阅工具，与小红书、Eagle 及其关联公司不存在隶属、合作、授权或认可关系。</span></p></section>
+                     <section><i>02</i><p><strong>内容权利</strong><span>图片、视频、文字、商标等权利归原作者或相关权利人所有。保存到 Eagle 不代表获得转载或商业授权；公开传播、出售或用于商业项目前，请自行取得必要授权。</span></p></section>
+                     <section><i>03</i><p><strong>平台规则</strong><span>请仅处理你有权浏览的公开内容，不得绕过登录、验证码、访问控制或反自动化措施。自动访问可能受到平台限制，采光不承诺账号绝对不会被验证、限流或限制使用。</span></p></section>
+                     <section><i>04</i><p><strong>结果边界</strong><span>受网络、页面变化、资源失效及第三方服务影响，抓取结果可能延迟、不完整或失败。出现验证码、登录失效或访问受限时，采光会停止或降低抓取频率。</span></p></section>
+                     <section><i>05</i><p><strong>本地处理</strong><span>素材和批阅决定保存在你的电脑。点击 YES 只会保存到你连接的 Eagle；点击 NO 会删除对应的本地临时素材。请自行备份重要内容。</span></p></section>
+                     <section><i>06</i><p><strong>使用责任</strong><span>请遵守适用法律、平台规则及第三方权利，并对自己选择的账号、抓取范围及素材用途负责。上述说明不能排除法律规定不得排除的责任。</span></p></section>
+                   </div>
+                 </details>
+               </span>
+               <div className="first-run-action legal-notice-action">
+                 {legalNoticeAccepted && <span className="completion-check">✓</span>}
+                 <button type="button" onClick={() => setLegalNoticeAccepted(true)}>{legalNoticeAccepted ? "已阅读并同意" : "阅读并同意"}</button>
                </div>
              </div>
-           </div>
+             </div>
            <div className="first-run-footer">
              <button
                type="button"
                className="first-run-enter"
-               disabled={xhsSetupStatus !== "已登录" || eagleSetupStatus !== "已连接" || !statsNoticeAcknowledged}
+               disabled={xhsSetupStatus !== "已登录" || eagleSetupStatus !== "已连接" || !legalNoticeAccepted}
                onClick={finishOnboarding}
              >进入批阅页</button>
            </div>
@@ -2008,7 +2023,7 @@ export default function Home() {
                 </div>
                 <div className="settings-time-panel">
                   <div className="settings-row">
-                    <div><strong>抓取时间</strong></div>
+                    <div><strong>抓取时间</strong><span>首次安装随机分配，可自行修改</span></div>
                     <input type="time" value={captureTime} onChange={(event) => setCaptureTime(event.target.value)} aria-label="每天抓取时间" />
                   </div>
                   <div className="settings-row">
@@ -2105,7 +2120,12 @@ export default function Home() {
           </div> : <>
             <div className="review-heading">
               <h1>{current.title}</h1>
-              <div className="review-byline"><a href={accountProfileUrl} target="_blank" rel="noreferrer">@{accountName}</a><time aria-label={displayDate}>{displayDate}</time></div>
+              <div className="review-byline">
+                <a href={accountProfileUrl} target="_blank" rel="noreferrer">
+                  @{accountName}{isStarterMaterial && <b className="starter-material-badge">初始演示素材</b>}
+                </a>
+                <time aria-label={displayDate}>{displayDate}</time>
+              </div>
             </div>
             <div className="review-info">
               <span>{materialLabel}</span>

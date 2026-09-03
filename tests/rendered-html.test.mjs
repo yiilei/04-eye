@@ -28,9 +28,6 @@ test("keeps the repository registry empty and starter material portable", async 
   const registry = JSON.parse(await readFile(new URL("../data/generated-review-items.json", import.meta.url), "utf8"));
   assert.deepEqual(registry, []);
   const starter = JSON.parse(await readFile(new URL("../starter/generated-review-items.json", import.meta.url), "utf8"));
-  assert.deepEqual(starter.map((item) => item.id), [
-    "kuaishou-small-budget-atmosphere-6a55aaf8",
-    "starter-tanghulu-69af7a72",
-  ]);
+  assert.deepEqual(starter.map((item) => item.id), ["starter-tanghulu-69af7a72"]);
   assert.ok(starter.every((item) => item.localPath.startsWith("__USER_DATA__")));
 });
