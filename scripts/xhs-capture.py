@@ -132,9 +132,26 @@ def collect_media(root: Path) -> tuple[list[Path], list[Path]]:
     return images, videos
 
 
+def metadata_date(metadata: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = metadata.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def object_id_published_at(post_id: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{24}", post_id or ""):
+        return ""
+    try:
+        return datetime.fromtimestamp(int(post_id[:8], 16)).astimezone().isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
 def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str,
               url: str, metadata: dict, account_name: str, account_id: str,
-              title: str, caption: str = "") -> Path:
+              title: str, caption: str = "", published_at: str = "", edited_at: str = "") -> Path:
     images, videos = collect_media(source_root)
     target = output_root / capture_date / slug
     target.mkdir(parents=True, exist_ok=True)
@@ -190,6 +207,8 @@ def normalize(source_root: Path, output_root: Path, capture_date: str, slug: str
                     "xiaohongshuId": account_id or metadata.get("作者ID") or "待确认"},
         "title": title or metadata.get("作品标题") or slug,
         "caption": caption or metadata.get("作品描述") or "",
+        "publishedAt": published_at or metadata_date(metadata, ("发布时间", "作品发布时间", "publishTime", "publish_time")) or object_id_published_at(metadata.get("作品ID") or post_id_from_url(url)),
+        "editedAt": edited_at or metadata_date(metadata, ("编辑时间", "更新时间", "editTime", "updateTime")),
         "capturedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "sourceUrl": url, "sourceQuality": "web_highest_available",
         "qualityEvidence": "使用页面可获得的最高分辨率媒体地址下载，未二次压缩。",
@@ -287,7 +306,9 @@ def register_for_app(manifest: Path) -> None:
     item = {
         "id": data["id"], "postId": data["postId"], "title": data["title"],
         "caption": data.get("caption", ""),
-        "summary": f"{account} · {' · '.join(counts)}", "date": data["capturedAt"][:10],
+        "summary": f"{account} · {' · '.join(counts)}",
+        "date": (f"编辑于 {data['editedAt']}" if data.get("editedAt") else data.get("publishedAt") or "日期未知"),
+        "publishedAt": data.get("publishedAt", ""), "editedAt": data.get("editedAt", ""),
         "capturedAt": data["capturedAt"][:10], "width": first["width"], "height": first["height"],
         "fallback": False,
         "cover": gallery[0] if gallery else (f"{public_prefix}/{poster['path']}" if poster else ""),
@@ -331,7 +352,8 @@ def capture(args: argparse.Namespace) -> dict:
         source_root, metadata, engine_log = run_engine(args.url, stage)
 
     manifest = normalize(source_root, args.output_root.resolve(), args.date, slug, args.url,
-                         metadata, args.account_name, args.account_id, args.title, args.caption)
+                         metadata, args.account_name, args.account_id, args.title, args.caption,
+                         args.published_at, args.edited_at)
     validate(manifest)
     if args.output_root.resolve() == DEFAULT_OUTPUT.resolve():
         register_for_app(manifest)
@@ -355,6 +377,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--account-id", default="")
     parser.add_argument("--title", default="")
     parser.add_argument("--caption", default="")
+    parser.add_argument("--published-at", default="")
+    parser.add_argument("--edited-at", default="")
     parser.add_argument("--source-dir", type=Path, help="离线测试：使用已有完整媒体")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     clean_argv = [value for value in (sys.argv[1:] if argv is None else argv) if value != "--"]

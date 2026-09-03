@@ -37,9 +37,14 @@ const captureEvidence = await readFile(captureEvidencePath, "utf8")
   .catch(() => null);
 if (!captureEvidence) throw new Error("缺少 H5 视频检测证据 capture-result.json，禁止登记为无视频");
 if (!captureEvidence.excludedRecommendations) throw new Error("未证明已排除底部推荐流，禁止登记 H5");
-if (Number(captureEvidence.videoCandidates || 0) > 0 && !hasVideo) {
-  throw new Error("页面检测到视频资源但本地 MP4 缺失，禁止登记为无视频");
+const animationEvidence = captureEvidence.animation || (captureEvidence.video ? { ...captureEvidence.video, kind: "mp4", filename: videoName } : null);
+const animationName = animationEvidence?.filename;
+const sourceAnimationPath = animationName ? path.join(sourceDir, animationName) : null;
+const hasAnimation = sourceAnimationPath ? await access(sourceAnimationPath).then(() => true).catch(() => false) : false;
+if (Number(captureEvidence.dynamicCandidates || captureEvidence.videoCandidates || 0) > 0 && !hasAnimation) {
+  throw new Error("页面检测到动态资源但本地原始动画缺失，禁止登记为静态素材");
 }
+if (animationEvidence?.kind === "mp4" && !hasVideo) throw new Error("页面检测到 MP4 但本地文件缺失");
 
 const dimensions = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", sourceImagePath], { encoding: "utf8" });
 const width = Number(dimensions.match(/pixelWidth: (\d+)/)?.[1]);
@@ -62,14 +67,15 @@ const manifest = {
   capturedAt: new Date().toISOString(),
   sourceUrl,
   sourceQuality: "web_highest_available",
-  qualityEvidence: hasVideo
-    ? "完整静态长图与头部 MP4 均来自已核验的网页最高可用清晰度素材。"
+  qualityEvidence: hasAnimation
+    ? `完整静态长图与原始 ${String(animationEvidence.kind).toUpperCase()} 动效均来自已核验的网页最高可用清晰度素材。`
     : "完整静态长图来自已核验的网页最高可用清晰度渲染；自动检测未发现视频资源。",
   carouselOrderVerified: false,
   carouselOrderEvidence: "",
   images: [{ index: 1, path: imageName, width, height, sha256: createHash("sha256").update(imageBytes).digest("hex") }],
   videos: hasVideo ? [videoName] : [],
-  expected: { imageCount: 1, livePhotoCount: 0, videoCount: hasVideo ? 1 : 0 },
+  animations: hasAnimation ? [{ path: animationName, format: animationEvidence.kind, sourceUrl: animationEvidence.url }] : [],
+  expected: { imageCount: 1, livePhotoCount: 0, videoCount: hasVideo ? 1 : 0, animationCount: hasAnimation ? 1 : 0 },
   reviewState: "pending",
 };
 
@@ -82,7 +88,7 @@ const item = {
   id: slug,
   postId: slug,
   title,
-  summary: `小红书创作服务中心 · H5完整长图${hasVideo ? " · 1个头部视频" : ""}`,
+  summary: `小红书创作服务中心 · H5完整长图${hasAnimation ? ` · 1个${String(animationEvidence.kind).toUpperCase()}动效` : ""}`,
   date: displayDate,
   capturedAt: captureDate,
   width,
@@ -92,6 +98,11 @@ const item = {
   image: `${prefix}/${imageName}`,
   localPath: imagePath,
   ...(hasVideo ? { video: `${prefix}/${videoName}`, videoLocalPath: path.join(targetDir, videoName) } : {}),
+  ...(hasAnimation && animationEvidence.kind !== "mp4" ? {
+    animation: `${prefix}/${animationName}`,
+    animationLocalPath: path.join(targetDir, animationName),
+    animationFormat: animationEvidence.kind,
+  } : {}),
   sourceUrl,
   sourceQuality: "web_highest_available",
 };
@@ -114,6 +125,7 @@ try {
   await copyFile(sourceImagePath, path.join(stagingDir, imageName));
   await copyFile(sourceCoverPath, path.join(stagingDir, coverName));
   if (hasVideo) await copyFile(sourceVideoPath, path.join(stagingDir, videoName));
+  if (hasAnimation && animationEvidence.kind !== "mp4") await copyFile(sourceAnimationPath, path.join(stagingDir, animationName));
   await writeFile(path.join(stagingDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
   if (await access(targetDir).then(() => true).catch(() => false)) {
@@ -137,4 +149,4 @@ try {
   if (previousMoved) await rename(backupDir, targetDir).catch(() => {});
   throw error;
 }
-console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: hasVideo ? 1 : 0, width, height, manifest: path.join(targetDir, "manifest.json") }));
+console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: hasVideo ? 1 : 0, animations: hasAnimation ? 1 : 0, width, height, manifest: path.join(targetDir, "manifest.json") }));

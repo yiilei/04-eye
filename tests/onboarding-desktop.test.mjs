@@ -90,6 +90,34 @@ test("native onboarding and review chrome expose drag regions without swallowing
   assert.match(page, /Revalidate only when the selected material actually changes;[\s\S]*\}, \[current\.id\]\);/);
 });
 
+test("X captures only the visible canvas and sends the PNG to Eagle", async () => {
+  const [main, preload, page, css] = await Promise.all([
+    readFile(new URL("desktop/main.mjs", root), "utf8"),
+    readFile(new URL("desktop/preload.cjs", root), "utf8"),
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+  ]);
+  assert.match(main, /caiguang:capture-canvas/);
+  assert.match(main, /webContents\.capturePage/);
+  assert.match(preload, /captureCanvas/);
+  assert.match(preload, /cleanupCapture/);
+  assert.match(main, /10 \* 60 \* 1_000/);
+  assert.match(page, /event\.key\.toLowerCase\(\) === "x"/);
+  assert.match(page, /getBoundingClientRect\(\)/);
+  assert.match(page, /当前画板可见区域/);
+  assert.match(page, /\["采光", "画板截取", "小红书", "PNG"\]/);
+  assert.match(css, /\.viewer\.is-capturing \.gallery-hotspot/);
+});
+
+test("post bylines prefer published or edited time and never substitute capture time", async () => {
+  const page = await readFile(new URL("app/page.tsx", root), "utf8");
+  assert.match(page, /if \(item\.editedAt\)/);
+  assert.match(page, /if \(item\.publishedAt\)/);
+  assert.match(page, /Number\.parseInt\(noteId\.slice\(0, 8\), 16\)/);
+  assert.match(page, /return "日期未知"/);
+  assert.match(page, /<time aria-label=\{displayDate\}>\{displayDate\}<\/time>/);
+});
+
 test("automatic capture switch persists and gates the local scheduler", async () => {
   const [page, css, scheduler, server] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),

@@ -12,8 +12,8 @@ const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"], [".json", "application/json; charset=utf-8"],
   [".svg", "image/svg+xml"], [".png", "image/png"], [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"], [".webp", "image/webp"], [".ico", "image/x-icon"],
-  [".mp4", "video/mp4"], [".woff2", "font/woff2"],
+  [".jpeg", "image/jpeg"], [".webp", "image/webp"], [".gif", "image/gif"], [".ico", "image/x-icon"],
+  [".mp4", "video/mp4"], [".webm", "video/webm"], [".woff2", "font/woff2"],
 ]);
 
 export async function startDesktopServer(appRoot, userDataRoot) {

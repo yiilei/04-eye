@@ -21,6 +21,11 @@ class CaptureParsingTests(unittest.TestCase):
         parsed = MODULE.parse_args(["--", "--url", "https://www.xiaohongshu.com/explore/abc"])
         self.assertEqual(parsed.url, "https://www.xiaohongshu.com/explore/abc")
 
+    def test_derives_real_publish_time_from_xiaohongshu_object_id(self):
+        published = MODULE.object_id_published_at("6a969ea3000000002b011ce9")
+        self.assertTrue(published.startswith("2026-09-01T17:45:07"))
+        self.assertEqual(MODULE.object_id_published_at("not-a-note"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

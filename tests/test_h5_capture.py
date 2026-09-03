@@ -19,6 +19,18 @@ class H5CaptureTests(unittest.TestCase):
         self.assertFalse(MODULE.valid_mp4(b"<html>not a video</html>" * 100))
         self.assertFalse(MODULE.valid_mp4(b"ftyp"))
 
+    def test_classifies_gif_and_animated_webp_without_accepting_static_webp(self):
+        gif = b"GIF89a" + (b"x" * 2048)
+        animated_webp = b"RIFF" + (b"x" * 4) + b"WEBPVP8X" + b"ANIM" + (b"x" * 2048)
+        static_webp = b"RIFF" + (b"x" * 4) + b"WEBPVP8 " + (b"x" * 2048)
+        self.assertEqual(MODULE.dynamic_payload_kind(gif, "image/gif"), "gif")
+        self.assertEqual(MODULE.dynamic_payload_kind(animated_webp, "image/webp"), "webp")
+        self.assertIsNone(MODULE.dynamic_payload_kind(static_webp, "image/webp"))
+
+    def test_classifies_webm(self):
+        webm = b"\x1aE\xdf\xa3" + (b"x" * 2048)
+        self.assertEqual(MODULE.dynamic_payload_kind(webm, "video/webm"), "webm")
+
     def test_detects_unpublished_activity_error_page(self):
         message = MODULE.permanent_page_error('{"success":false,"msg":"该应用不存在，请前往发布系统进行录入&发布"}')
         self.assertIn("尚未发布", message)

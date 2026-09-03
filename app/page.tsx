@@ -21,9 +21,11 @@ type PinAccount = {
   addedAt?: string; lastVerificationAttemptAt?: string; verificationError?: string;
 };
 type ReviewItem = {
-  id: string; title: string; caption?: string; summary: string; date: string; capturedAt: string;
+  id: string; postId?: string; title: string; caption?: string; summary: string; date: string; capturedAt: string;
+  publishedAt?: string; editedAt?: string;
   width: number; height: number; fallback: boolean; cover: string; image: string;
   localPath: string; sourceUrl: string; video?: string; videoLocalPath?: string;
+  animation?: string; animationLocalPath?: string; animationFormat?: "gif" | "webp" | "webm";
   gallery?: string[]; galleryLocalPaths?: string[];
   imageDimensions?: Array<{ width: number; height: number }>;
   livePhotoIndex?: number; livePhotoVideo?: string; livePhotoLocalPath?: string;
@@ -41,6 +43,8 @@ type DesktopBridge = {
   openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   syncXhsLogin?: () => Promise<{ loggedIn?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
+  captureCanvas?: (request: { rect: { x: number; y: number; width: number; height: number }; title: string }) => Promise<{ ok: boolean; path?: string; width?: number; height?: number; error?: string }>;
+  cleanupCapture?: (path: string) => Promise<boolean>;
   onXhsLoginChanged?: (callback: (status: { loggedIn?: boolean }) => void) => () => void;
   onLibraryChanged?: (callback: (status: { updatedAt?: string }) => void) => () => void;
 };
@@ -57,6 +61,26 @@ function formatPostCaption(caption?: string) {
   const body = normalized.slice(0, topicIndex).trim();
   const topics = normalized.slice(topicIndex).trim();
   return body && topics ? `${body}\n\n\n${topics}` : normalized;
+}
+
+function postDateLabel(item: ReviewItem) {
+  const readable = (value: string) => {
+    const clean = value.trim();
+    if (/^\d{10,13}$/.test(clean)) {
+      const milliseconds = Number(clean) * (clean.length === 10 ? 1_000 : 1);
+      return new Date(milliseconds).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+    }
+    return clean.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? clean;
+  };
+  if (item.editedAt) return `编辑于 ${readable(item.editedAt.replace(/^编辑于\s*/, ""))}`;
+  if (item.publishedAt) return readable(item.publishedAt);
+  if (item.summary.includes("小红书创作服务中心") || item.sourceUrl.includes("creator_activity_center")) return item.date || "日期未知";
+  const noteId = item.postId || item.id.match(/[0-9a-f]{24}/i)?.[0] || "";
+  if (/^[0-9a-f]{24}$/i.test(noteId)) {
+    const published = new Date(Number.parseInt(noteId.slice(0, 8), 16) * 1_000);
+    if (!Number.isNaN(published.getTime())) return published.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+  }
+  return "日期未知";
 }
 
 const projectRoot = "/Users/yilei/Documents/ChatGPT/小红书创作活动获取/public";
@@ -318,7 +342,7 @@ async function ensureEagleFolder() {
   return created.data.id;
 }
 
-async function importItemToEagle(item: (typeof items)[number], removedPositions: number[] = []) {
+async function importItemToEagle(item: ReviewItem, removedPositions: number[] = []) {
   await validateReviewItem(item);
   for (const [sourceIndex, source] of (item.gallery ?? [item.image]).entries()) {
     const displayedSize = await readImageSize(source);
@@ -341,7 +365,8 @@ async function importItemToEagle(item: (typeof items)[number], removedPositions:
         website: item.sourceUrl,
         tags,
         folderId,
-        annotation: `${item.summary}\n活动时间：${item.date}\n抓取日期：${item.capturedAt}`,
+        annotation: `${item.summary}\n发布日期：${postDateLabel(item)}\n抓取日期：${item.capturedAt}`,
+      },
       }),
     });
     const result = await response.json() as EagleResponse<string>;
@@ -362,6 +387,9 @@ async function importItemToEagle(item: (typeof items)[number], removedPositions:
   let videoId: string | undefined;
   if ("videoLocalPath" in item && item.videoLocalPath) {
     videoId = await addFromPath(item.videoLocalPath, `${item.title} - 动态头图`, ["小红书", "创作活动", "H5动态头图", "MP4"]);
+  } else if (item.animationLocalPath) {
+    const format = (item.animationFormat || "动效").toUpperCase();
+    videoId = await addFromPath(item.animationLocalPath, `${item.title} - 原始动效`, ["小红书", "创作活动", "H5动态头图", format]);
   } else if (item.livePhotoLocalPath) {
     videoId = await addFromPath(item.livePhotoLocalPath, `${item.title} - Live Photo`, ["小红书", "账号帖子", "Live Photo", "MP4"]);
   }
@@ -466,7 +494,6 @@ export default function Home() {
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [shortcutHelpPinned, setShortcutHelpPinned] = useState(false);
   const [shortcutHelpSuppressed, setShortcutHelpSuppressed] = useState(false);
-  const [focusCanvasMode, setFocusCanvasMode] = useState(false);
   const [appVisible, setAppVisible] = useState(true);
   const [desktopAppMode, setDesktopAppMode] = useState(false);
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
@@ -692,7 +719,7 @@ export default function Home() {
   const accountProfileUrl = accountPinsData.accounts.find((account) => account.displayName === accountName)?.profileUrl
     ?? current.sourceUrl.match(/https:\/\/www\.xiaohongshu\.com\/user\/profile\/[^/?]+/)?.[0]
     ?? current.sourceUrl;
-  const displayDate = current.date;
+  const displayDate = postDateLabel(current);
   const livePhotoCount = current.livePhotos ? Object.keys(current.livePhotos).length : current.livePhotoVideo ? 1 : 0;
   const materialLabel = current.previewOnly
     ? "活动未上线 · 当前仅保留封面"
@@ -702,6 +729,8 @@ export default function Home() {
         ? "1 个视频 · 1 张封面"
         : current.video
           ? "1 张长图 · 1 个视频"
+          : current.animation
+            ? `1 张长图 · 1 个 ${(current.animationFormat || "动态").toUpperCase()} 动效`
           : "1 张 H5 长图";
   const sourceMediaAspect = displayedDimensions.width / displayedDimensions.height;
   // Videos and horizontal images stay inside the same stable 3:4 review
@@ -718,7 +747,7 @@ export default function Home() {
         : Math.max(9 / 16, sourceMediaAspect);
   const usesTallScroll = sourceMediaAspect < 9 / 16;
   const mediaMode = usesTallScroll ? "tall-scrolling-media" : "fit-media";
-  const visibleSidebarWidth = focusCanvasMode ? 0 : (leftSidebarOpen ? 166 : 0) + 252;
+  const visibleSidebarWidth = (leftSidebarOpen ? 166 : 0) + 252;
   const adaptiveWindowWidth = `min(calc(100vw - 92px), calc(${(boundedMediaAspect * 90).toFixed(4)}vh + ${visibleSidebarWidth}px))`;
   const adaptiveWindowHeight = `min(90vh, calc(${(100 / boundedMediaAspect).toFixed(4)}vw - ${((92 + visibleSidebarWidth) / boundedMediaAspect).toFixed(2)}px))`;
 
@@ -729,12 +758,10 @@ export default function Home() {
 
     let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
-      const navWidth = focusCanvasMode || !leftSidebarOpen
+      const navWidth = !leftSidebarOpen
         ? 0
         : document.querySelector("nav")?.getBoundingClientRect().width ?? 0;
-      const asideWidth = focusCanvasMode
-        ? 0
-        : document.querySelector("aside")?.getBoundingClientRect().width ?? 0;
+      const asideWidth = document.querySelector("aside")?.getBoundingClientRect().width ?? 0;
       if (!cancelled) void bridge.fitWindow?.({
         mediaAspect: onboardingPreview ? 4 / 3 : boundedMediaAspect,
         sidebarWidth: onboardingPreview ? 0 : navWidth + asideWidth,
@@ -744,7 +771,7 @@ export default function Home() {
       cancelled = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [boundedMediaAspect, current.id, desktopAppMode, focusCanvasMode, leftSidebarOpen, onboardingPreview]);
+  }, [boundedMediaAspect, current.id, desktopAppMode, leftSidebarOpen, onboardingPreview]);
 
   useEffect(() => {
     setWindowSize((size) => {
@@ -1251,7 +1278,6 @@ export default function Home() {
     setWindowSize(undefined);
     setWindowOffset({ x: 0, y: 0 });
     setLeftSidebarOpen(true);
-    setFocusCanvasMode(false);
     setAppVisible(true);
   }, [openItem]);
 
@@ -1631,6 +1657,49 @@ export default function Home() {
     setPinLinkMessage("已取消埋点，账号已移到列表底部");
   }, []);
 
+  const captureCanvasToEagle = useCallback(async () => {
+    if (reviewTourStep !== null || onboardingPreview || settingsOpen) return;
+    const element = viewer.current;
+    const bridge = getDesktopBridge();
+    if (!element || !bridge?.captureCanvas) {
+      setEagleError(true);
+      setEagleMessage("画板截取仅在采光桌面版中可用");
+      return;
+    }
+    setEagleError(false);
+    setEagleMessage("正在截取当前画板…");
+    element.classList.add("is-capturing");
+    let temporaryPath = "";
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const rect = element.getBoundingClientRect();
+      const captured = await bridge.captureCanvas({
+        rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+        title: current.title,
+      });
+      if (!captured.ok || !captured.path) throw new Error(captured.error || "画板截取失败");
+      temporaryPath = captured.path;
+      const folderId = await ensureEagleFolder();
+      const result = await eagleJson<string>("/item/addFromPath", {
+        method: "POST",
+        body: {
+          path: captured.path, folderId, website: current.sourceUrl,
+          name: `${current.title} - 当前画板截取`,
+          tags: ["采光", "画板截取", "小红书", "PNG"],
+          annotation: `${current.summary}\n发布日期：${postDateLabel(current)}\n截取范围：当前画板可见区域`,
+        },
+      });
+      if (result.status !== "success") throw new Error(result.message || "Eagle 导入失败");
+      setEagleMessage(`已截取当前画板并存入 Eagle（${captured.width}×${captured.height}px）`);
+    } catch (error) {
+      setEagleError(true);
+      setEagleMessage(error instanceof Error ? error.message : "画板截取失败");
+    } finally {
+      element.classList.remove("is-capturing");
+      if (temporaryPath) await bridge.cleanupCapture?.(temporaryPath);
+    }
+  }, [current, onboardingPreview, reviewTourStep, settingsOpen]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -1644,11 +1713,6 @@ export default function Home() {
       if ((event.metaKey || event.ctrlKey) && event.key === "0") {
         event.preventDefault();
         resetZoom();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && (event.code === "Period" || event.key === ".")) {
-        event.preventDefault();
-        setFocusCanvasMode((value) => !value);
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key === "Backspace") {
@@ -1668,12 +1732,13 @@ export default function Home() {
       else if (event.key.toLowerCase() === "d") moveGallery(1);
       else if (event.code === "Space") viewer.current?.scrollBy({ top: innerHeight * .72, behavior: "smooth" });
       else if (event.key.toLowerCase() === "f") resetZoom();
+      else if (event.key.toLowerCase() === "x") void captureCanvasToEagle();
       else return;
       event.preventDefault();
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [current.id, decide, decisions, index, moveGallery, openItem, removeCurrentItem, removeCurrentSingle, resetZoom, reviewItems.length, saveCurrentSingle, undo, undoCurrent]);
+  }, [captureCanvasToEagle, current.id, decide, decisions, index, moveGallery, openItem, removeCurrentItem, removeCurrentSingle, resetZoom, reviewItems.length, saveCurrentSingle, undo, undoCurrent]);
 
   if (onboardingPreview) {
     return (
@@ -1734,7 +1799,7 @@ export default function Home() {
         <div className="desktop-menu-left"><strong>●</strong><b>{appVisible ? "采光" : "访达"}</b><span>文件</span><span>编辑</span><span>显示</span><span>窗口</span><span>帮助</span></div>
         <div className="desktop-menu-right"><span>⌁</span><span>◉</span><time>{desktopTime}</time></div>
       </div>}
-      {appVisible && <main ref={appShellRef} className={`app-shell ${leftSidebarOpen ? "" : "left-sidebar-collapsed"} ${focusCanvasMode ? "focus-canvas-mode" : ""} ${reviewTourStep !== null ? `has-review-tour tour-context-${reviewTourStep + 1}` : ""}`} style={desktopAppMode ? { width: "100vw", height: "100vh", transform: "none" } : { width: windowSize?.width ?? adaptiveWindowWidth, height: windowSize?.height ?? adaptiveWindowHeight, transform: `translate3d(${windowOffset.x}px, ${windowOffset.y}px, 0)` }}>
+      {appVisible && <main ref={appShellRef} className={`app-shell ${leftSidebarOpen ? "" : "left-sidebar-collapsed"} ${reviewTourStep !== null ? `has-review-tour tour-context-${reviewTourStep + 1}` : ""}`} style={desktopAppMode ? { width: "100vw", height: "100vh", transform: "none" } : { width: windowSize?.width ?? adaptiveWindowWidth, height: windowSize?.height ?? adaptiveWindowHeight, transform: `translate3d(${windowOffset.x}px, ${windowOffset.y}px, 0)` }}>
       {!desktopAppMode && (["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const).map((edge) => (
         <div key={edge} className={`window-resize-handle resize-${edge}`} onMouseDown={(event) => startWindowResize(event, edge)} aria-hidden="true" />
       ))}
@@ -1756,7 +1821,7 @@ export default function Home() {
                 )}
                 <button className={itemIndex === index ? "active" : ""} onClick={() => openItem(itemIndex)}>
                   <img src={item.cover} alt="" style={{ aspectRatio: `${item.width} / ${Math.min(item.height, item.width * 4 / 3)}` }} />
-                  <span><strong>{item.title}</strong><span className="thumbnail-meta"><small>{item.date}</small><span className="platform-pill" aria-label="小红书">小红书</span></span></span>
+                  <span><strong>{item.title}</strong><span className="thumbnail-meta"><small>{postDateLabel(item)}</small><span className="platform-pill" aria-label="小红书">小红书</span></span></span>
                   {decisions[item.id] && <i className={decisions[item.id]} aria-label={decisions[item.id] === "kept" ? "已保留" : "已删除"}>{decisions[item.id] === "kept" ? "✓" : "×"}</i>}
                 </button>
               </Fragment>
@@ -1784,6 +1849,11 @@ export default function Home() {
               {"video" in current && current.video && (
                 <video className={current.videoPost ? "post-video" : "h5-hero-video"} src={current.video} autoPlay muted loop={!current.videoPost} playsInline controls={current.videoPost} preload="metadata" aria-label={`${current.title}视频`} />
               )}
+              {current.animation && (current.animationFormat === "webm" ? (
+                <video className="h5-hero-video" src={current.animation} autoPlay muted loop playsInline preload="metadata" aria-label={`${current.title}动态头图`} />
+              ) : (
+                <img className="h5-hero-animation" src={current.animation} alt={`${current.title}动态头图`} />
+              ))}
               {current.gallery && remainingGalleryPositions.length > 1 && <>
                 <button className="gallery-hotspot gallery-hotspot-left" onClick={() => moveGallery(-1)} disabled={remainingGalleryPositions.indexOf(galleryIndex) === 0} aria-label="上一张" />
                 <button className="gallery-hotspot gallery-hotspot-right" onClick={() => moveGallery(1)} disabled={remainingGalleryPositions.indexOf(galleryIndex) === remainingGalleryPositions.length - 1} aria-label="下一张" />
@@ -1820,7 +1890,7 @@ export default function Home() {
                 <div><span>保留 / 删除整篇</span><kbd>Enter</kbd><kbd>&apos;</kbd></div>
                 <div><span>保存 / 删除单张</span><kbd>↑</kbd><kbd>↓</kbd></div>
                 <div><span>复位画布</span><kbd>F</kbd></div>
-                <div><span>隐藏两侧栏</span><kbd>⌘</kbd><kbd>.</kbd></div>
+                <div><span>截取当前画板到 Eagle</span><kbd>X</kbd></div>
                 <div><span>撤回上一步</span><kbd>⌘</kbd><kbd>Z</kbd></div>
               </div>
             </div>}
@@ -1954,7 +2024,7 @@ export default function Home() {
           ) : <>
             <div className="review-heading">
               <h1>{current.title}</h1>
-              <div className="review-byline"><a href={accountProfileUrl} target="_blank" rel="noreferrer">@{accountName}</a><time aria-label={current.date}>{displayDate}</time></div>
+              <div className="review-byline"><a href={accountProfileUrl} target="_blank" rel="noreferrer">@{accountName}</a><time aria-label={displayDate}>{displayDate}</time></div>
             </div>
             <div className="review-info">
               <span>{materialLabel}</span>

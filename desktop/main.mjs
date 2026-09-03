@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
@@ -183,6 +183,42 @@ async function syncXhsChromeLogin() {
 ipcMain.handle("caiguang:open-xhs-login", () => openXhsChromeLogin());
 ipcMain.handle("caiguang:sync-xhs-login", () => syncXhsChromeLogin());
 ipcMain.handle("caiguang:xhs-login-status", () => publishXhsLoginStatus());
+ipcMain.handle("caiguang:capture-canvas", async (event, requested = {}) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return { ok: false, error: "未找到采光窗口" };
+  const bounds = window.getContentBounds();
+  const source = requested.rect || {};
+  const x = Math.max(0, Math.floor(Number(source.x) || 0));
+  const y = Math.max(0, Math.floor(Number(source.y) || 0));
+  const width = Math.min(bounds.width - x, Math.floor(Number(source.width) || 0));
+  const height = Math.min(bounds.height - y, Math.floor(Number(source.height) || 0));
+  if (width < 2 || height < 2) return { ok: false, error: "当前画板没有可截取区域" };
+  try {
+    const image = await window.webContents.capturePage({ x, y, width, height });
+    const directory = path.join(app.getPath("userData"), "captures");
+    await mkdir(directory, { recursive: true });
+    const safeTitle = String(requested.title || "画板截取").replace(/[\\/:*?"<>|]/g, "-").slice(0, 60);
+    const filename = `${safeTitle}-${new Date().toISOString().replace(/[.:]/g, "-")}.png`;
+    const target = path.join(directory, filename);
+    await writeFile(target, image.toPNG());
+    const size = image.getSize();
+    return { ok: true, path: target, width: size.width, height: size.height };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "画板截取失败" };
+  }
+});
+ipcMain.handle("caiguang:cleanup-capture", async (_event, value) => {
+  const captureRoot = path.resolve(app.getPath("userData"), "captures");
+  const target = path.resolve(String(value || ""));
+  const relative = path.relative(captureRoot, target);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  // Eagle queues addFromPath asynchronously and may not stat/copy the source
+  // until several seconds after returning success. Keep the PNG available for
+  // ten minutes; cleanup is delayed instead of racing Eagle's import worker.
+  const timer = setTimeout(() => void rm(target, { force: true }), 10 * 60 * 1_000);
+  timer.unref();
+  return true;
+});
 ipcMain.handle("caiguang:runtime-status", () => ({
   version: app.getVersion(),
   codex: getCodexStatus(),

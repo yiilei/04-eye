@@ -68,6 +68,8 @@ def validate_manifest(data: dict) -> dict:
     source_url = validate_public_url(str(data.get("sourceUrl", "")))
     images = data.get("images")
     live_photos = data.get("livePhotos", [])
+    published_at = str(data.get("publishedAt", "")).strip()
+    edited_at = str(data.get("editedAt", "")).strip()
     if not re.fullmatch(r"[0-9a-fA-F]{24}", post_id):
         raise ValueError("postId 必须是 24 位十六进制小红书帖子 ID")
     if not title or not isinstance(author, dict):
@@ -100,6 +102,8 @@ def validate_manifest(data: dict) -> dict:
         "sourceUrl": source_url,
         "images": images,
         "livePhotos": live_photos,
+        "publishedAt": published_at,
+        "editedAt": edited_at,
     }
 
 
@@ -197,6 +201,10 @@ def main() -> int:
             "--title", data["title"],
             "--caption", data["caption"],
         ]
+        if data["publishedAt"]:
+            command.extend(["--published-at", data["publishedAt"]])
+        if data["editedAt"]:
+            command.extend(["--edited-at", data["editedAt"]])
         if args.date:
             command.extend(["--date", args.date])
         result = subprocess.run(command, cwd=PROJECT, text=True, capture_output=True)

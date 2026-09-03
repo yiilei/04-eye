@@ -77,6 +77,21 @@ async function validate(relativeManifest) {
       errors.push(error.message);
     }
   }
+  const animations = data.animations ?? [];
+  if (animations.length !== (data.expected.animationCount ?? 0)) errors.push("动效数量与 expected.animationCount 不一致");
+  for (const animation of animations) {
+    try {
+      const bytes = await readFile(path.resolve(base, animation.path));
+      const valid = animation.format === "gif"
+        ? ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+        : animation.format === "webp"
+          ? bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP" && bytes.subarray(0, 4096).includes(Buffer.from("ANIM"))
+          : animation.format === "webm"
+            ? bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+            : animation.format === "mp4" && bytes.subarray(0, 64).includes(Buffer.from("ftyp"));
+      if (bytes.length < 1024 || !valid) errors.push(`${animation.path} 不是有效的 ${animation.format} 动效`);
+    } catch (error) { errors.push(error.message); }
+  }
   if (data.sourceType === "note_video" && !data.images.length) {
     if (!data.poster?.path) errors.push("视频帖缺少封面");
     else {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture the activity body at mobile width and archive every observed MP4."""
+"""Capture an H5 activity and preserve its observable animated asset."""
 
 from __future__ import annotations
 
@@ -26,6 +26,21 @@ NOTES_SELECTORS = (
 
 def valid_mp4(payload: bytes) -> bool:
     return len(payload) >= 1024 and b"ftyp" in payload[:64]
+
+
+def dynamic_payload_kind(payload: bytes, content_type: str = "", url: str = "") -> str | None:
+    """Return a browser-renderable animation kind, never classify static WebP."""
+    content_type = content_type.lower().split(";", 1)[0].strip()
+    suffix = url.lower().split("?", 1)[0]
+    if valid_mp4(payload):
+        return "mp4"
+    if len(payload) >= 1024 and payload[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if len(payload) >= 1024 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP" and b"ANIM" in payload[:4096]:
+        return "webp"
+    if len(payload) >= 1024 and payload[:4] == b"\x1aE\xdf\xa3" and (content_type == "video/webm" or suffix.endswith(".webm")):
+        return "webm"
+    return None
 
 
 def permanent_page_error(body_text: str) -> str | None:
@@ -84,6 +99,7 @@ def main() -> int:
     image_path = output_dir / "full-page-hd.jpg"
     thumbnail_path = output_dir / "thumbnail.png"
     video_path = output_dir / "preview.mp4"
+    observed_dynamic: dict[str, str] = {}
 
     scale = args.output_width / args.viewport_width
     chrome_path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
@@ -108,6 +124,13 @@ def main() -> int:
             for key, value in cookie_str_to_dict(cookie).items()
         ])
         page = context.new_page()
+        def observe_response(response) -> None:
+            content_type = response.headers.get("content-type", "").lower()
+            url = response.url
+            if any(token in content_type for token in ("video/", "image/gif", "image/webp", "mpegurl")) \
+                    or any(token in url.lower().split("?", 1)[0] for token in (".mp4", ".webm", ".gif", ".webp", ".m3u8")):
+                observed_dynamic[url] = content_type
+        page.on("response", observe_response)
         page.goto(args.source_url, wait_until="domcontentloaded", timeout=45_000)
         page.wait_for_timeout(2_000)
         if "/login" in page.url:
@@ -234,8 +257,12 @@ def main() -> int:
               const videos = [...document.querySelectorAll('video')]
                 .map(v => v.currentSrc || v.src).filter(Boolean);
               const resources = performance.getEntriesByType('resource')
-                .filter(entry => entry.initiatorType === 'video' || /\.mp4(?:\?|$)/i.test(entry.name))
+                .filter(entry => entry.initiatorType === 'video' || /\.(?:mp4|webm|gif|webp|m3u8)(?:\?|$)/i.test(entry.name))
                 .map(entry => entry.name);
+              const imageResources = [...document.images]
+                .map(image => image.currentSrc || image.src)
+                .filter(source => /\.(?:gif|webp)(?:\?|$)/i.test(source));
+              const canvasCount = document.querySelectorAll('canvas').length;
               for (const element of document.querySelectorAll('.template-h5-mask')) element.style.display = 'none';
               if (notes) notes.style.display = 'none';
               document.documentElement.style.width = `${appRect.width}px`;
@@ -246,7 +273,8 @@ def main() -> int:
                 contentHeight: Math.max(1, end),
                 contentX: Math.max(0, appRect.left),
                 contentY: Math.max(0, appRect.top),
-                videos: [...new Set([...videos, ...resources])],
+                dynamicUrls: [...new Set([...videos, ...resources, ...imageResources])],
+                canvasCount,
                 // A missing recommendation container means the activity page
                 // already ends at its own content. When one exists, the
                 // screenshot is cut before it and the container is hidden.
@@ -256,6 +284,18 @@ def main() -> int:
               };
             }""",
             NOTES_SELECTORS,
+        )
+        capture["canvasAnimated"] = page.evaluate(
+            """async () => {
+              const canvases = [...document.querySelectorAll('canvas')];
+              const snapshot = () => canvases.map(canvas => {
+                try { return canvas.toDataURL('image/png').slice(-4096); }
+                catch { return `tainted:${canvas.width}x${canvas.height}`; }
+              }).join('|');
+              const before = snapshot();
+              await new Promise(resolve => setTimeout(resolve, 350));
+              return Boolean(canvases.length && before !== snapshot());
+            }"""
         )
 
         # Chromium can silently crop a clip taller than the viewport to the
@@ -289,15 +329,30 @@ def main() -> int:
         }
         page.screenshot(path=str(thumbnail_path), type="png", clip=thumb_clip, animations="disabled")
 
-        downloaded_video = None
-        for video_url in capture["videos"]:
+        downloaded_animation = None
+        candidates = dict(observed_dynamic)
+        for candidate_url in capture["dynamicUrls"]:
+            candidates.setdefault(candidate_url, "")
+        hls_candidates = [url for url, content_type in candidates.items()
+                          if "mpegurl" in content_type or url.lower().split("?", 1)[0].endswith(".m3u8")]
+        strong_candidates = [url for url, content_type in candidates.items()
+                             if any(token in content_type for token in ("video/", "image/gif", "mpegurl"))
+                             or any(url.lower().split("?", 1)[0].endswith(suffix)
+                                    for suffix in (".mp4", ".webm", ".gif", ".m3u8"))]
+        for media_url, content_type in candidates.items():
             try:
-                response = page.context.request.get(video_url, headers={"Referer": page.url}, timeout=30_000)
+                if media_url in hls_candidates:
+                    continue
+                response = page.context.request.get(media_url, headers={"Referer": page.url}, timeout=30_000)
                 body = response.body()
-                if response.ok and valid_mp4(body):
-                    video_path.write_bytes(body)
-                    downloaded_video = {
-                        "url": video_url,
+                kind = dynamic_payload_kind(body, response.headers.get("content-type", content_type), media_url)
+                if response.ok and kind:
+                    animation_path = video_path if kind == "mp4" else output_dir / f"animation.{kind}"
+                    animation_path.write_bytes(body)
+                    downloaded_animation = {
+                        "url": media_url,
+                        "kind": kind,
+                        "filename": animation_path.name,
                         "bytes": len(body),
                         "sha256": hashlib.sha256(body).hexdigest(),
                     }
@@ -305,13 +360,21 @@ def main() -> int:
             except Exception:
                 continue
 
+        if not downloaded_animation and (strong_candidates or capture["canvasAnimated"]):
+            unresolved = "HLS 流" if hls_candidates else "Canvas 动效" if capture["canvasAnimated"] else "动态资源"
+            raise RuntimeError(f"检测到{unresolved}，但当前页面没有可验证的原始动画文件；已阻止误登记为静态素材")
+
     result = {
         "ok": True,
         "sourceDir": str(output_dir),
         "image": str(image_path),
         "thumbnail": str(thumbnail_path),
-        "video": downloaded_video,
-        "videoCandidates": len(capture["videos"]),
+        "video": downloaded_animation if downloaded_animation and downloaded_animation["kind"] == "mp4" else None,
+        "animation": downloaded_animation,
+        "videoCandidates": len(strong_candidates),
+        "dynamicCandidates": 1 if downloaded_animation else len(strong_candidates) + int(capture["canvasAnimated"]),
+        "canvasCount": capture["canvasCount"],
+        "canvasAnimated": capture["canvasAnimated"],
         "excludedRecommendations": capture["excludedRecommendations"],
         "recommendationBoundaryFound": capture["recommendationBoundaryFound"],
         "deviceScaleFactor": capture["deviceScaleFactor"],
