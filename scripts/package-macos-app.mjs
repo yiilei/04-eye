@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, cp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = process.cwd();
-const version = "0.3.29";
+const version = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version;
 const bundledElectronApp = path.join(root, "node_modules", "electron", "dist", "Electron.app");
 // Developer machines often prune Electron's binary after installation. Reuse a
 // locally installed 采光 shell in that case; only this project's Resources/app
