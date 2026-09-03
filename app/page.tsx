@@ -1781,17 +1781,6 @@ export default function Home() {
     );
   }
 
-  if (!reviewItems.length) {
-    return (
-      <main className="app-shell empty-review">
-        <div>
-          <strong>暂无待批阅素材</strong>
-          <span>{libraryStatus}</span>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <>
       {!desktopAppMode && <div className="desktop-menu-bar" aria-label="桌面状态栏">
@@ -1828,8 +1817,12 @@ export default function Home() {
           </div>
         </nav>
 
-        <section className={`viewer ${mediaMode}`} ref={setViewerNode} aria-label={`${current.title}完整长图`}>
-          <div className="media-stage" style={{
+        <section className={`viewer ${mediaMode} ${current.id === "empty" ? "empty-canvas" : ""}`} ref={setViewerNode} aria-label={current.id === "empty" ? "暂无待批阅素材" : `${current.title}完整长图`}>
+          {current.id === "empty" ? (
+            <div className="empty-canvas-mark" role="status" aria-label="批阅已完成">
+              <img src="/favicon.svg" alt="采光" />
+            </div>
+          ) : <div className="media-stage" style={{
             transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             ...(usesTallScroll ? {} : { aspectRatio: `${displayedDimensions.width} / ${displayedDimensions.height}` }),
           }}>
@@ -1859,7 +1852,7 @@ export default function Home() {
               </>}
             </div>
             {currentLivePhoto && <span className="live-badge">LIVE</span>}
-          </div>
+          </div>}
         </section>
 
         <aside className={settingsOpen ? "settings-mode" : ""}>
@@ -1870,7 +1863,7 @@ export default function Home() {
               </button>
             ) : <div className={`review-progress-help ${shortcutHelpPinned ? "is-pinned" : ""} ${shortcutHelpSuppressed ? "is-suppressed" : ""}`}
               onMouseLeave={() => setShortcutHelpSuppressed(false)}>
-              <button className="review-progress" aria-label={`当前第 ${index + 1} 组，共 ${reviewItems.length} 组；悬停查看快捷键`}
+              <button className="review-progress" aria-label={`当前第 ${reviewItems.length ? index + 1 : 0} 组，共 ${reviewItems.length} 组；悬停查看快捷键`}
                 aria-expanded={shortcutHelpPinned}
                 onClick={() => {
                   if (shortcutHelpPinned) {
@@ -1881,7 +1874,7 @@ export default function Home() {
                     setShortcutHelpSuppressed(false);
                   }
                 }}>
-                {String(index + 1).padStart(2, "0")}/{String(reviewItems.length).padStart(2, "0")}
+                {String(reviewItems.length ? index + 1 : 0).padStart(2, "0")}/{String(reviewItems.length).padStart(2, "0")}
               </button>
               <div className="shortcut-help" role="tooltip" aria-label="快捷键提示">
                 <div><span>切换素材</span><kbd>Tab</kbd></div>
@@ -1894,7 +1887,7 @@ export default function Home() {
               </div>
             </div>}
             <div className="post-link-actions">
-              {!settingsOpen && (
+              {!settingsOpen && current.id !== "empty" && (
                 <button className={`post-link-icon ${linkCopied ? "copied" : ""}`} onClick={() => void copyPostLink()} aria-label={linkCopied ? "链接已复制" : "复制原帖链接"} title={linkCopied ? "已复制" : "复制原帖链接"}>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H6.8A2.8 2.8 0 0 0 4 7.8v9.4A2.8 2.8 0 0 0 6.8 20h9.4a2.8 2.8 0 0 0 2.8-2.8V15M13 4h7v7M20 4l-9 9" /></svg>
                 </button>
@@ -2020,7 +2013,14 @@ export default function Home() {
                 </a>
               </section>
             </div>
-          ) : <>
+          ) : current.id === "empty" ? <div className="empty-review-info">
+            <div className="review-heading">
+              <h1>皇上你已经批完奏折 可以退朝了</h1>
+              <div className="review-byline"><span>xxxxx</span><time>xxxxx</time></div>
+            </div>
+            <div className="review-info"><span>xxxxx</span></div>
+            <div className="empty-review-lines" aria-hidden="true"><span>xxxxx</span><span>xxxxx</span><span>xxxxx</span></div>
+          </div> : <>
             <div className="review-heading">
               <h1>{current.title}</h1>
               <div className="review-byline"><a href={accountProfileUrl} target="_blank" rel="noreferrer">@{accountName}</a><time aria-label={displayDate}>{displayDate}</time></div>
