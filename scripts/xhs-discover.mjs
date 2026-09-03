@@ -129,6 +129,10 @@ export function accountCapturePolicy(accountCount) {
   return { tier: "conservative", batchSize: 8, accountDelayMs: [10_000, 18_000], batchDelayMs: [180_000, 300_000] };
 }
 
+export function isSafetyStopError(message) {
+  return /(429|验证码|访问频繁|操作频繁|风控|登录失效|login.required|unauthorized|forbidden|账号异常)/iu.test(String(message || ""));
+}
+
 const randomDelay = ([minimum, maximum]) => minimum + Math.floor(Math.random() * (maximum - minimum + 1));
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -198,6 +202,8 @@ export async function discover(options = {}) {
   const pendingTasks = [];
   const ratePolicy = accountCapturePolicy(selected.length);
   const pacingEnabled = !options.fixture && process.env.CAIGUANG_DISABLE_ACCOUNT_PACING !== "1";
+  let consecutiveSafetyErrors = 0;
+  let safetyStopped = false;
   for (const [accountIndex, account] of selected.entries()) {
     try {
       const fixturePayload = fixture?.[account.searchKey];
@@ -220,11 +226,21 @@ export async function discover(options = {}) {
           title: post.title, slug: slugFor(account, post), sourceUrl: post.sourceUrl,
           captureDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) });
       }
+      consecutiveSafetyErrors = 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const detail = message.split("\n").map((line) => line.trim()).filter(Boolean).at(-1) || "未知发现错误";
       checks.push({ accountKey: account.searchKey, checkedAt, status: "discovery_failed", latestPostId: account.lastSeenPostId,
         error: detail });
+      consecutiveSafetyErrors = isSafetyStopError(detail) ? consecutiveSafetyErrors + 1 : 0;
+      if (consecutiveSafetyErrors >= 2) {
+        safetyStopped = true;
+        for (const deferred of selected.slice(accountIndex + 1)) {
+          checks.push({ accountKey: deferred.searchKey, checkedAt, status: "deferred_safety_stop", latestPostId: deferred.lastSeenPostId,
+            error: "连续出现登录或访问限制，已停止本轮检查以保护账号" });
+        }
+        break;
+      }
     }
     if (pacingEnabled && accountIndex < selected.length - 1) {
       const completed = accountIndex + 1;
@@ -243,7 +259,8 @@ export async function discover(options = {}) {
     await atomicJson(queuePath, queue);
   }
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",
-    checked: checks.length, added: pendingTasks.length, ratePolicy, checks, tasks: pendingTasks };
+    checked: checks.filter((check) => check.status !== "deferred_safety_stop").length, added: pendingTasks.length,
+    ratePolicy, safetyStopped, checks, tasks: pendingTasks };
 }
 
 async function main() {

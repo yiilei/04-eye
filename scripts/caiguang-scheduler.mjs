@@ -18,6 +18,7 @@ const wrapper = path.join(projectRoot, "plugins", "caiguang", "scripts", "caigua
 const localRuntimeRoot = path.join(appData, "runtime");
 const localRuntimeNode = path.join(localRuntimeRoot, "node");
 const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
+const wakeLockPath = path.join(localRuntimeRoot, "caffeinate.pid");
 
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
@@ -39,6 +40,28 @@ const clock = () => {
 
 function notify(title, message) {
   spawnSync("/usr/bin/osascript", ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", title, message]);
+}
+
+async function stopWakeLock() {
+  const pid = Number((await readFile(wakeLockPath, "utf8").catch(() => "")).trim());
+  if (Number.isInteger(pid) && pid > 1) {
+    const command = spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).stdout?.trim() || "";
+    if (command.startsWith("/usr/bin/caffeinate -s")) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already stopped */ }
+    }
+  }
+  await rm(wakeLockPath, { force: true });
+}
+
+async function ensureWakeLock() {
+  const pid = Number((await readFile(wakeLockPath, "utf8").catch(() => "")).trim());
+  if (Number.isInteger(pid) && pid > 1) {
+    try { process.kill(pid, 0); return; } catch { /* replace stale pid */ }
+  }
+  await mkdir(localRuntimeRoot, { recursive: true });
+  const child = spawn("/usr/bin/caffeinate", ["-s"], { detached: true, stdio: "ignore" });
+  child.unref();
+  await writeFile(wakeLockPath, `${child.pid}\n`);
 }
 
 async function runCapture(reason = "scheduled") {
@@ -80,7 +103,12 @@ async function tick() {
   await migrateLegacyData(appData);
   console.error("[scheduler] tick:migrated");
 const preferences = await readJson(preferencesPath, { automaticCaptureEnabled: true, creatorH5CaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" });
-  if (!schedulerEnabled(preferences)) return;
+  if (!schedulerEnabled(preferences)) {
+    await stopWakeLock();
+    console.error("[scheduler] tick:disabled");
+    return;
+  }
+  await ensureWakeLock();
   const state = await readJson(statePath, {});
   const now = clock();
   console.error(`[scheduler] tick:clock ${now.date} ${now.time}`);
@@ -168,6 +196,7 @@ preferences: await readJson(preferencesPath, { automaticCaptureEnabled: true, cr
 }
 
 async function uninstall() {
+  await stopWakeLock();
   spawnSync("/bin/launchctl", ["bootout", `gui/${process.getuid()}`, launchAgent]);
   await rm(launchAgent, { force: true });
   console.log(JSON.stringify({ ok: true, removed: launchAgent }));

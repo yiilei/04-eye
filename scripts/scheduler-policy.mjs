@@ -4,12 +4,12 @@ export function schedulerEnabled(preferences) {
 
 export function captureIsDue(preferences, state, now) {
   return schedulerEnabled(preferences)
-    && now.time === preferences.captureTime
+    && now.time >= preferences.captureTime
     && state.lastCaptureDate !== now.date;
 }
 
 export function pushIsDue(preferences, state, now) {
   return schedulerEnabled(preferences)
-    && now.time === preferences.pushTime
+    && now.time >= preferences.pushTime
     && state.lastPushDate !== now.date;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountCapturePolicy, diffPosts, latestPostOnly, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, diffPosts, isSafetyStopError, latestPostOnly, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -108,4 +108,10 @@ test("adapts account pacing as the enabled pin count grows", () => {
   assert.equal(accountCapturePolicy(60).batchSize, 10);
   assert.equal(accountCapturePolicy(61).tier, "conservative");
   assert.equal(accountCapturePolicy(100).batchSize, 8);
+});
+
+test("recognizes login and anti-abuse responses as safety-stop signals", () => {
+  assert.equal(isSafetyStopError("HTTP 429 Too Many Requests"), true);
+  assert.equal(isSafetyStopError("需要验证码，登录失效"), true);
+  assert.equal(isSafetyStopError("普通图片解析失败"), false);
 });
