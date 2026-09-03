@@ -366,7 +366,6 @@ async function importItemToEagle(item: ReviewItem, removedPositions: number[] = 
         tags,
         folderId,
         annotation: `${item.summary}\n发布日期：${postDateLabel(item)}\n抓取日期：${item.capturedAt}`,
-      },
       }),
     });
     const result = await response.json() as EagleResponse<string>;
