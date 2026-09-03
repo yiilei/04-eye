@@ -20,6 +20,9 @@ let mainWindow;
 let xhsLoginTimer;
 let xhsLoginStarting = false;
 let xhsLoginResetTimer;
+let xhsChromeSyncTimer;
+let xhsChromeSyncDeadline = 0;
+let xhsChromeSyncPromise;
 let libraryWatcher;
 let libraryChangeTimer;
 
@@ -55,6 +58,12 @@ function stopXhsLoginTimer() {
   xhsLoginTimer = undefined;
 }
 
+function stopXhsChromeSync() {
+  if (xhsChromeSyncTimer) clearTimeout(xhsChromeSyncTimer);
+  xhsChromeSyncTimer = undefined;
+  xhsChromeSyncDeadline = 0;
+}
+
 async function publishXhsLoginStatus() {
   const loggedIn = await hasXhsCaptureLogin();
   mainWindow?.webContents.send("caiguang:xhs-login-changed", { loggedIn });
@@ -63,6 +72,7 @@ async function publishXhsLoginStatus() {
     if (xhsLoginResetTimer) clearTimeout(xhsLoginResetTimer);
     xhsLoginResetTimer = undefined;
     stopXhsLoginTimer();
+    stopXhsChromeSync();
   }
   return { loggedIn };
 }
@@ -152,14 +162,26 @@ async function openXhsChromeLogin() {
         else resolve();
       });
     });
+    startXhsChromeAutoSync();
     return { loggedIn: false, chromeOpened: true };
   } catch {
     await shell.openExternal("https://www.xiaohongshu.com/explore");
+    startXhsChromeAutoSync();
     return { loggedIn: false, chromeOpened: true };
   }
 }
 
 async function syncXhsChromeLogin() {
+  if (xhsChromeSyncPromise) return xhsChromeSyncPromise;
+  xhsChromeSyncPromise = syncXhsChromeLoginOnce();
+  try {
+    return await xhsChromeSyncPromise;
+  } finally {
+    xhsChromeSyncPromise = undefined;
+  }
+}
+
+async function syncXhsChromeLoginOnce() {
   if ((await publishXhsLoginStatus()).loggedIn) return { loggedIn: true };
   const executable = findCaptureEngine();
   if (!executable) return { loggedIn: false, error: "未找到采光的小红书登录组件，请先运行完整安装。" };
@@ -179,6 +201,21 @@ async function syncXhsChromeLogin() {
     return { loggedIn: true, sessionSource: "chrome_snapshot" };
   }
   return { loggedIn: false };
+}
+
+function startXhsChromeAutoSync() {
+  stopXhsChromeSync();
+  xhsChromeSyncDeadline = Date.now() + 90_000;
+  const retry = async () => {
+    xhsChromeSyncTimer = undefined;
+    const result = await syncXhsChromeLogin().catch(() => ({ loggedIn: false }));
+    if (result.loggedIn || Date.now() >= xhsChromeSyncDeadline) {
+      stopXhsChromeSync();
+      return;
+    }
+    xhsChromeSyncTimer = setTimeout(retry, 2_000);
+  };
+  xhsChromeSyncTimer = setTimeout(retry, 1_500);
 }
 
 ipcMain.handle("caiguang:open-xhs-login", () => openXhsChromeLogin());
@@ -326,6 +363,7 @@ app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
   stopXhsLoginTimer();
+  stopXhsChromeSync();
   if (xhsLoginResetTimer) clearTimeout(xhsLoginResetTimer);
   serverHandle?.close();
   libraryWatcher?.close();

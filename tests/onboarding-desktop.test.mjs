@@ -24,6 +24,10 @@ test("desktop onboarding detects the capture-engine session and exposes the brid
   assert.match(main, /openXhsChromeLogin/);
   assert.match(main, /caiguang:open-xhs-login/);
   assert.match(main, /caiguang:sync-xhs-login/);
+  assert.match(main, /startXhsChromeAutoSync/);
+  assert.match(main, /Date\.now\(\) \+ 90_000/);
+  assert.match(main, /setTimeout\(retry, 2_000\)/);
+  assert.match(main, /if \(xhsChromeSyncPromise\) return xhsChromeSyncPromise/);
   assert.match(main, /caiguang:xhs-login-status/);
   assert.doesNotMatch(main, /caiguang:open-app-management-settings/);
   assert.doesNotMatch(main, /caiguang:download-update/);
