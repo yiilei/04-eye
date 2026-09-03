@@ -471,10 +471,18 @@ aside { position: relative; display: flex; min-width: 0; padding: 0 22px 28px; f
 .pin-toggle.is-pending:hover .pending-label { display: none; }
 .pin-toggle.is-pending:hover .pending-cancel { display: inline; }
 .pin-empty { padding: 28px 12px; color: rgba(255,255,255,.34); font-size: 9px; text-align: center; }
-.export-pins { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 40px; padding: 0 11px; color: rgba(255,255,255,.88); background: rgba(255,255,255,.065); border: 0; border-top: 1px solid rgba(255,255,255,.08); font-size: 9px; font-weight: 600; text-align: left; text-decoration: none; }
-.export-pins:hover { background: rgba(255,255,255,.1); }
-.export-pins small { color: rgba(255,255,255,.38); font-size: 8px; font-weight: 500; }
+.pin-panel-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 40px; padding: 6px 9px; border-top: 1px solid rgba(255,255,255,.08); }
+.export-pins { position: relative; display: grid; place-items: center; width: 28px; height: 28px; color: rgba(255,255,255,.82); background: rgba(255,255,255,.065); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; text-decoration: none; }
+.export-pins:hover { color: #ffe600; background: rgba(255,255,255,.1); }
+.export-pins svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .export-pins.is-disabled { opacity: .38; cursor: default; pointer-events: none; }
+.pin-risk-summary { display: flex; align-items: center; gap: 7px; color: rgba(255,255,255,.58); font-size: 8px; font-weight: 600; }
+.pin-risk-dot { position: relative; display: block; width: 8px; height: 8px; background: #32c875; border-radius: 50%; box-shadow: 0 0 0 3px rgba(50,200,117,.11); cursor: help; }
+.pin-risk-dot.risk-medium { background: #f2c94c; box-shadow: 0 0 0 3px rgba(242,201,76,.12); }
+.pin-risk-dot.risk-high { background: #ff5266; box-shadow: 0 0 0 3px rgba(255,82,102,.12); }
+.export-pins::after, .pin-risk-dot::after { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 20; width: max-content; max-width: 205px; padding: 6px 8px; color: #111; background: #ffe600; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.24); content: attr(data-tooltip); font-size: 8px; font-style: normal; font-weight: 700; line-height: 1.4; opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity .14s ease,transform .14s ease; }
+.export-pins::after { right: auto; left: 0; }
+.export-pins:hover::after, .export-pins:focus-visible::after, .pin-risk-dot:hover::after, .pin-risk-dot:focus-visible::after { opacity: 1; transform: translateY(0); }
 .counter { margin-bottom: 27px; color: rgba(255,255,255,.92); }
 .counter span { color: rgba(255,255,255,.36); }
 aside h1 { font-size: 20px; }
@@ -597,7 +605,7 @@ body.sharp-eye-desktop .left-sidebar-collapsed { margin-right: 0; }
   .pin-search input { height: 31px; }
   .pin-link-row input { height: 29px; }
   .pin-account { min-height: 45px; padding-top: 4px; padding-bottom: 4px; }
-  .export-pins { min-height: 34px; }
+  .pin-panel-footer { min-height: 34px; }
 }
 .left-sidebar-collapsed .window-button-group { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .left-sidebar-collapsed .window-controls > .sidebar-toggle { width: 36px; border-radius: 50%; background: linear-gradient(145deg, rgba(72,86,116,.22), rgba(31,36,49,.14)); border-color: rgba(128,151,202,.3); box-shadow: inset 0 1px rgba(255,255,255,.08), 0 6px 18px rgba(0,0,0,.12); backdrop-filter: blur(18px) saturate(145%); -webkit-backdrop-filter: blur(18px) saturate(145%); }
@@ -679,15 +687,15 @@ html[data-theme="light"] .settings-panel { background: #ffe600; border-color: rg
 html[data-theme="light"] .settings-time-panel { background: rgba(250,250,252,.96); border-color: rgba(28,33,42,.1); }
 html[data-theme="light"] .settings-row + .settings-row,
 html[data-theme="light"] .pin-account,
-html[data-theme="light"] .export-pins { border-color: rgba(28,33,42,.09); }
+html[data-theme="light"] .pin-panel-footer { border-color: rgba(28,33,42,.09); }
 html[data-theme="light"] .settings-row strong,
 html[data-theme="light"] .pin-identity strong,
-html[data-theme="light"] .export-pins { color: rgba(20,22,27,.88); }
+html[data-theme="light"] .export-pins { color: rgba(20,22,27,.88); border-color: rgba(28,33,42,.12); }
 html[data-theme="light"] .settings-row span,
 html[data-theme="light"] .pin-identity small,
 html[data-theme="light"] .pin-link-message,
 html[data-theme="light"] .pin-empty,
-html[data-theme="light"] .export-pins small { color: rgba(30,34,42,.43); }
+html[data-theme="light"] .pin-risk-summary { color: rgba(30,34,42,.54); }
 html[data-theme="light"] .settings-row input[type="time"] { color: rgba(20,22,27,.9); color-scheme: light; background: rgba(255,255,255,.72); border-color: rgba(28,33,42,.12); }
 html[data-theme="light"] .settings-row input[type="time"]::-webkit-calendar-picker-indicator { filter: none; }
 html[data-theme="light"] .pin-link-row input { color: rgba(20,22,27,.88); background: rgba(255,255,255,.68); border-color: rgba(28,33,42,.11); }

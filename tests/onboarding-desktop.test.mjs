@@ -140,6 +140,21 @@ test("automatic capture switch persists and gates the local scheduler", async ()
   assert.match(server, /creatorH5CaptureEnabled: payload\.creatorH5CaptureEnabled/);
 });
 
+test("pin footer exposes export action and account-count risk guidance", async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+  ]);
+  assert.match(page, /pinExport\.count <= 30/);
+  assert.match(page, /pinExport\.count <= 60/);
+  assert.match(page, /data-tooltip="一键导出埋点数据"/);
+  assert.match(page, /当前被小红书反爬虫机制查杀的概率为/);
+  assert.match(page, /pin-risk-dot risk-/);
+  assert.match(css, /\.pin-panel-footer/);
+  assert.match(css, /\.pin-risk-dot\.risk-medium/);
+  assert.match(css, /\.pin-risk-dot\.risk-high/);
+});
+
 test("failed H5 previews can never be imported into Eagle as complete material", async () => {
   const [page, fallback] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),

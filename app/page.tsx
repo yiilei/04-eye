@@ -702,6 +702,11 @@ export default function Home() {
       filename: `采光-小红书埋点-${new Date().toISOString().slice(0, 10)}.json`,
     };
   }, [allPinAccounts, pinnedAccountIds]);
+  const pinRisk = useMemo(() => {
+    if (pinExport.count <= 30) return { level: "low", label: "小", color: "绿" } as const;
+    if (pinExport.count <= 60) return { level: "medium", label: "中", color: "黄" } as const;
+    return { level: "high", label: "大", color: "红" } as const;
+  }, [pinExport.count]);
   const removedCurrent = useMemo(() => removedSingles[current.id] ?? [], [current.id, removedSingles]);
   const remainingGalleryPositions = useMemo(
     () => current.gallery?.map((_source, position) => position).filter((position) => !removedCurrent.includes(position)) ?? [],
@@ -2011,10 +2016,17 @@ export default function Home() {
                   })}
                   {!visiblePinAccounts.length && <div className="pin-empty">没有找到对应账号</div>}
                 </div>
-                <a className={`export-pins ${pinExport.count ? "" : "is-disabled"}`} href={pinExport.count ? pinExport.href : undefined}
-                  download={pinExport.filename} aria-disabled={!pinExport.count}>
-                  <span>一键导出埋点数据</span><small>{pinExport.count} 个账号</small>
-                </a>
+                <div className="pin-panel-footer">
+                  <a className={`export-pins ${pinExport.count ? "" : "is-disabled"}`} href={pinExport.count ? pinExport.href : undefined}
+                    download={pinExport.filename} aria-disabled={!pinExport.count} aria-label="一键导出埋点数据" data-tooltip="一键导出埋点数据">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 15v4h14v-4" /></svg>
+                  </a>
+                  <div className="pin-risk-summary">
+                    <span>{pinExport.count} 个账号</span>
+                    <i className={`pin-risk-dot risk-${pinRisk.level}`} tabIndex={0} aria-label={`当前被小红书反爬虫机制查杀的概率为${pinRisk.label}`}
+                      data-tooltip={`当前被小红书反爬虫机制查杀的概率为 ${pinRisk.label}`} title={`${pinRisk.color}色风险等级：${pinRisk.label}`} />
+                  </div>
+                </div>
               </section>
             </div>
           ) : current.id === "empty" ? <div className="empty-review-info">
