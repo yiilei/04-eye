@@ -18,8 +18,9 @@ test("renders the local review shell without embedding private captures", async 
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /<title>采光<\/title>/);
-  assert.match(html, /empty-review/);
-  assert.match(html, /正在连接本地资料库/);
+  assert.match(html, /empty-canvas/);
+  assert.match(html, /皇上你已经批完奏折 可以退朝了/);
+  assert.match(html, /00<!-- -->\/<!-- -->00/);
   assert.doesNotMatch(html, /招聘｜小红书REDesign招人啦|夏日电子梦/);
 });
 
