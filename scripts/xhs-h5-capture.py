@@ -17,6 +17,11 @@ from xhs_cli.auth import cookie_str_to_dict, get_cookie_string
 from camoufox.sync_api import Camoufox
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
+PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "h5-scroll-capture"
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+from capture import capture_stitched_page
+
 
 NOTES_SELECTORS = (
     ".notes-container",
@@ -215,6 +220,54 @@ def main() -> int:
             page.evaluate("y => window.scrollTo(0, y)", max(0, metrics["end"] - metrics["viewport"]))
             page.wait_for_timeout(600)
 
+        # Some campaigns keep the real card art behind data-* lazy attributes
+        # even after the placeholder element reports complete=true. Promote
+        # those sources before deciding that the page has settled.
+        preflight = page.evaluate(
+            """() => ({
+              unloadedImages: [...document.images].filter(image => {
+                const rect = image.getBoundingClientRect();
+                const style = getComputedStyle(image);
+                return rect.width >= 24 && rect.height >= 24
+                  && style.display !== 'none' && style.visibility !== 'hidden'
+                  && (image.naturalWidth <= 1 || image.naturalHeight <= 1);
+              }).length,
+              viewportCarousels: document.querySelectorAll('.swiper, [class*="swiper"]').length,
+            })"""
+        )
+        page.evaluate(
+            r"""async () => {
+              const lazyKeys = ['src', 'lazySrc', 'original', 'url'];
+              for (const container of document.querySelectorAll('.onix-image[data-src], [data-webp-src]')) {
+                const source = container.dataset.webpSrc || container.dataset.src;
+                const fallback = container.dataset.src || source;
+                const image = container.matches('img') ? container : container.querySelector('img');
+                if (image && source) {
+                  image.src = fallback;
+                  image.loading = 'eager';
+                  for (const candidate of container.querySelectorAll('source')) candidate.srcset = source;
+                }
+              }
+              for (const image of document.images) {
+                const lazySource = lazyKeys.map(key => image.dataset[key]).find(Boolean);
+                if (lazySource && (!image.currentSrc || image.naturalWidth <= 1 || image.currentSrc.startsWith('data:'))) {
+                  image.src = lazySource;
+                }
+                image.loading = 'eager';
+              }
+              await Promise.all([...document.images].map(async image => {
+                try {
+                  if (!image.complete) await new Promise(resolve => {
+                    image.addEventListener('load', resolve, { once: true });
+                    image.addEventListener('error', resolve, { once: true });
+                    setTimeout(resolve, 8000);
+                  });
+                  if (image.decode && image.naturalWidth > 1) await image.decode().catch(() => {});
+                } catch {}
+              }));
+            }"""
+        )
+
         # Scrolling can trigger another wave of font/image requests. Require
         # two stable render fingerprints before producing the archive.
         previous_fingerprint = None
@@ -273,7 +326,17 @@ def main() -> int:
               // for the static long image; the original animation file is
               // still preserved separately.
               for (const swiper of document.querySelectorAll('.swiper')) {
-                const active = swiper.querySelector('.swiper-slide-active')
+                const slides = [...swiper.querySelectorAll('.swiper-slide')];
+                const score = slide => {
+                  const images = [...slide.querySelectorAll('img')];
+                  const loadedPixels = images.reduce((total, image) => total + image.naturalWidth * image.naturalHeight, 0);
+                  const backgroundCount = [...slide.querySelectorAll('*')]
+                    .filter(element => getComputedStyle(element).backgroundImage !== 'none').length;
+                  return loadedPixels + backgroundCount * 1000000;
+                };
+                const richest = slides.sort((a, b) => score(b) - score(a))[0];
+                const active = (richest && score(richest) > 0 ? richest : null)
+                  || swiper.querySelector('.swiper-slide-active')
                   || swiper.querySelector('.swiper-slide:not(.swiper-slide-duplicate)')
                   || swiper.querySelector('.swiper-slide');
                 if (!active) continue;
@@ -296,11 +359,32 @@ def main() -> int:
                   }
                 }
               }
-              document.documentElement.style.width = `${appRect.width}px`;
-              document.body.style.width = `${appRect.width}px`;
+              const contentWidth = appRect.width;
+              document.documentElement.style.width = `${contentWidth}px`;
+              document.body.style.width = `${contentWidth}px`;
               document.body.style.margin = '0';
+              const brokenImages = [...document.images]
+                .filter(image => {
+                  const rect = image.getBoundingClientRect();
+                  const style = getComputedStyle(image);
+                  return rect.width >= 24 && rect.height >= 24
+                    && rect.bottom > appRect.top && rect.top < appRect.top + end
+                    && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0
+                    && (image.naturalWidth <= 1 || image.naturalHeight <= 1);
+                })
+                .map(image => {
+                  const rect = image.getBoundingClientRect();
+                  return {
+                    source: image.currentSrc || image.src || '',
+                    lazySource: image.dataset.src || image.dataset.lazySrc || image.dataset.original || image.dataset.url || '',
+                    className: String(image.className || ''),
+                    width: Math.round(rect.width),
+                    height: Math.round(rect.height),
+                    top: Math.round(rect.top),
+                  };
+                });
               return {
-                contentWidth: appRect.width,
+                contentWidth,
                 contentHeight: Math.max(1, end),
                 contentX: Math.max(0, appRect.left),
                 contentY: Math.max(0, appRect.top),
@@ -311,6 +395,7 @@ def main() -> int:
                 // screenshot is cut before it and the container is hidden.
                 excludedRecommendations: true,
                 recommendationBoundaryFound: Boolean(notes),
+                brokenImages,
                 deviceScaleFactor: devicePixelRatio,
               };
             }""",
@@ -328,6 +413,9 @@ def main() -> int:
               return Boolean(canvases.length && before !== snapshot());
             }"""
         )
+        fallback_reasons = []
+        if capture["brokenImages"]:
+            fallback_reasons.append(f"{len(capture['brokenImages'])} 张可见空图")
 
         # Keep the mobile viewport stable while capturing beyond it. Some H5
         # campaigns derive spacer and carousel geometry from `innerHeight`;
@@ -339,7 +427,11 @@ def main() -> int:
             "width": capture["contentWidth"],
             "height": capture["contentHeight"],
         }
-        if browser_engine == "system_chrome":
+        fallback_capture = None
+        if fallback_reasons:
+            fallback_capture = capture_stitched_page(page, capture, image_path, viewport_height=900)
+            image_bytes = image_path.read_bytes()
+        elif browser_engine == "system_chrome":
             cdp = context.new_cdp_session(page)
             encoded = cdp.send("Page.captureScreenshot", {
                 "format": "jpeg",
@@ -357,7 +449,13 @@ def main() -> int:
         image_width, image_height = jpeg_dimensions(image_bytes)
         if not capture_covers_content(image_height, capture["contentHeight"], capture["deviceScaleFactor"]):
             expected_height = round(capture["contentHeight"] * capture["deviceScaleFactor"])
-            raise RuntimeError(f"H5 截图不完整：页面应约 {expected_height}px 高，实际仅 {image_height}px")
+            if not fallback_capture:
+                fallback_reasons.append(f"截图高度不足：预期约 {expected_height}px，实际 {image_height}px")
+                fallback_capture = capture_stitched_page(page, capture, image_path, viewport_height=900)
+                image_bytes = image_path.read_bytes()
+                image_width, image_height = jpeg_dimensions(image_bytes)
+            if not capture_covers_content(image_height, capture["contentHeight"], capture["deviceScaleFactor"]):
+                raise RuntimeError(f"H5 截图不完整：页面应约 {expected_height}px 高，实际仅 {image_height}px")
         image_path.write_bytes(image_bytes)
         thumb_clip = {
             "x": 0,
@@ -415,12 +513,18 @@ def main() -> int:
         "canvasAnimated": capture["canvasAnimated"],
         "excludedRecommendations": capture["excludedRecommendations"],
         "recommendationBoundaryFound": capture["recommendationBoundaryFound"],
+        "brokenImages": capture["brokenImages"],
         "deviceScaleFactor": capture["deviceScaleFactor"],
         "contentWidth": capture["contentWidth"],
         "contentHeight": capture["contentHeight"],
         "imageWidth": image_width,
         "imageHeight": image_height,
         "browserEngine": browser_engine,
+        "captureMethod": fallback_capture["method"] if fallback_capture else "single_full_page",
+        "fallbackReasons": fallback_reasons,
+        "fallbackSegments": fallback_capture["segments"] if fallback_capture else 0,
+        "preflightUnloadedImages": preflight["unloadedImages"],
+        "preflightViewportCarousels": preflight["viewportCarousels"],
     }
     (output_dir / "capture-result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n",

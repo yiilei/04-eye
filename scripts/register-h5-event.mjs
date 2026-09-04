@@ -70,6 +70,9 @@ const manifest = {
   qualityEvidence: hasAnimation
     ? `完整静态长图与原始 ${String(animationEvidence.kind).toUpperCase()} 动效均来自已核验的网页最高可用清晰度素材。`
     : "完整静态长图来自已核验的网页最高可用清晰度渲染；自动检测未发现视频资源。",
+  captureMethod: captureEvidence.captureMethod || "single_full_page",
+  captureFallbackReasons: captureEvidence.fallbackReasons || [],
+  captureSegments: captureEvidence.fallbackSegments || 0,
   carouselOrderVerified: false,
   carouselOrderEvidence: "",
   images: [{ index: 1, path: imageName, width, height, sha256: createHash("sha256").update(imageBytes).digest("hex") }],
@@ -105,6 +108,7 @@ const item = {
   } : {}),
   sourceUrl,
   sourceQuality: "web_highest_available",
+  captureMethod: captureEvidence.captureMethod || "single_full_page",
 };
 const nextRegistry = [item, ...registry.filter((existing) => existing.id !== slug && existing.postId !== slug)];
 

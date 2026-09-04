@@ -38,6 +38,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   let captureProcess;
   let captureStartedAt = null;
   let captureExitCode = null;
+  let captureIsFirst = false;
+  let captureEstimateMinutes = null;
   let camoufoxFetchProcess;
   let camoufoxFetchExitCode = null;
   await mkdir(path.dirname(registryPath), { recursive: true });
@@ -231,6 +233,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           running: Boolean(captureProcess),
           startedAt: captureStartedAt,
           exitCode: captureExitCode,
+          firstCapture: captureIsFirst,
+          estimateMinutes: captureEstimateMinutes,
           state,
           progress,
         });
@@ -261,6 +265,15 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         }
         captureStartedAt = new Date().toISOString();
         captureExitCode = null;
+        captureIsFirst = firstCapture;
+        if (firstCapture) {
+          const preferences = await readJson(preferencesPath, {});
+          const accountCount = Array.isArray(preferences.pinnedAccountIds) ? preferences.pinnedAccountIds.length : 0;
+          const minimum = Math.max(2, Math.ceil(accountCount * 0.18));
+          captureEstimateMinutes = { minimum, maximum: Math.max(minimum + 2, Math.ceil(accountCount * 0.35) + 1) };
+        } else {
+          captureEstimateMinutes = null;
+        }
         const child = spawn(process.execPath, [installedScheduler, "run"], {
           cwd: runtimeRoot,
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0" },
@@ -275,7 +288,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           captureExitCode = code ?? -1;
           captureProcess = undefined;
         });
-        const response = json({ ok: true, running: true, startedAt: captureStartedAt }, 202);
+        const response = json({ ok: true, running: true, startedAt: captureStartedAt, firstCapture: captureIsFirst, estimateMinutes: captureEstimateMinutes }, 202);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);

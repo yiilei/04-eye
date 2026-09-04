@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import generatedItemsData from "../data/generated-review-items.json";
 import accountPinsData from "../data/xhs-account-pins.json";
 
@@ -8,6 +9,7 @@ type Decision = "kept" | "rejected";
 type QualityState = "checking" | "passed" | "failed";
 type ColorTheme = "dark" | "light";
 type CaptureProgress = { state?: string; phase?: string; label?: string; percent?: number; phaseIndex?: number; phaseCount?: number };
+type CaptureEstimate = { minimum?: number; maximum?: number };
 type HistoryEntry =
   | { kind: "decision"; id: string; previous?: Decision; decision: Decision; index: number }
   | { kind: "remove-single"; id: string; previousRemoved: number[]; removedPosition: number; previousDecision?: Decision; index: number }
@@ -53,6 +55,17 @@ type DesktopBridge = {
 
 function getDesktopBridge() {
   return (window as Window & { sharpEyeDesktop?: DesktopBridge }).sharpEyeDesktop;
+}
+
+function captureEstimateLabel(startedAt: string | null | undefined, percent: number, estimate?: CaptureEstimate | null) {
+  const fallbackMinimum = Math.max(1, Math.round(estimate?.minimum || 2));
+  const fallbackMaximum = Math.max(fallbackMinimum + 1, Math.round(estimate?.maximum || 5));
+  const elapsedMinutes = startedAt ? Math.max(0, (Date.now() - new Date(startedAt).getTime()) / 60_000) : 0;
+  if (!Number.isFinite(elapsedMinutes) || elapsedMinutes < 0.5 || percent < 10) return `预计还需 ${fallbackMinimum}–${fallbackMaximum} 分钟`;
+  const remaining = elapsedMinutes * (100 - Math.min(percent, 96)) / Math.max(percent, 1);
+  const minimum = Math.max(1, Math.floor(remaining * 0.8));
+  const maximum = Math.max(minimum + 1, Math.ceil(remaining * 1.3));
+  return `预计还需 ${minimum}–${maximum} 分钟`;
 }
 
 function formatPostCaption(caption?: string) {
@@ -481,6 +494,7 @@ export default function Home() {
   const [reviewTourTransitioning, setReviewTourTransitioning] = useState(false);
   const [reviewTourSpotlight, setReviewTourSpotlight] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scheduleTooltip, setScheduleTooltip] = useState({ visible: false, left: 0, top: 0 });
   const [colorTheme, setColorTheme] = useState<ColorTheme>("dark");
   const [automaticCaptureEnabled, setAutomaticCaptureEnabled] = useState(true);
   const [creatorH5CaptureEnabled, setCreatorH5CaptureEnabled] = useState(true);
@@ -502,7 +516,7 @@ export default function Home() {
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; wakeLock: { enabled: boolean; mode: "ac_only" } }>();
   const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable" | "downloading" | "installing"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string; percent?: number }>({ state: "idle" });
-  const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string }>({ state: "idle", message: "", percent: 0, phase: "" });
+  const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string; firstCapture?: boolean; startedAt?: string | null; estimateMinutes?: CaptureEstimate | null }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [windowSize, setWindowSize] = useState<{ width: number; height: number }>();
@@ -598,12 +612,15 @@ export default function Home() {
       if (!response.ok) throw new Error("无法读取本地抓取状态");
       const payload = await response.json() as {
         running?: boolean;
+        firstCapture?: boolean;
+        startedAt?: string | null;
+        estimateMinutes?: CaptureEstimate | null;
         exitCode?: number | null;
         state?: { lastCaptureStatus?: string };
         progress?: CaptureProgress;
       };
       if (payload.running) {
-        setManualCapture({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting" });
+        setManualCapture({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting", firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes });
       } else if (manualCapture.state === "running") {
         const completed = payload.exitCode === 0 || payload.state?.lastCaptureStatus === "completed";
         setManualCapture(completed
@@ -619,8 +636,9 @@ export default function Home() {
     setManualCapture({ state: "running", message: "准备本地抓取", percent: 3, phase: "starting" });
     try {
       const response = await fetch(`/api/desktop/capture-now${firstCapture ? "?initial=1" : ""}`, { method: "POST" });
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as { error?: string; firstCapture?: boolean; startedAt?: string | null; estimateMinutes?: CaptureEstimate | null };
       if (!response.ok) throw new Error(payload.error || "无法启动本地抓取");
+      setManualCapture((current) => ({ ...current, firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes }));
     } catch (error) {
       setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "无法启动本地抓取", percent: 0, phase: "failed" });
     }
@@ -2039,8 +2057,39 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="settings-time-panel">
-                  <div className="settings-row">
-                    <div><strong>今日随机抓取</strong><small>每天 00:00–08:59 自动生成</small></div>
+                  <div className="settings-row settings-schedule-row">
+                    <div className="settings-schedule-copy">
+                      <strong
+                        className="settings-schedule-label"
+                        tabIndex={0}
+                        aria-describedby="capture-schedule-tip"
+                        onMouseEnter={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const tooltipWidth = Math.min(280, window.innerWidth - 24);
+                          const tooltipHeight = 92;
+                          const left = Math.max(12, Math.min(rect.left, window.innerWidth - tooltipWidth - 12));
+                          const top = rect.bottom + 10 + tooltipHeight <= window.innerHeight
+                            ? rect.bottom + 10
+                            : Math.max(12, rect.top - tooltipHeight - 10);
+                          setScheduleTooltip({ visible: true, left, top });
+                        }}
+                        onMouseLeave={() => setScheduleTooltip((current) => ({ ...current, visible: false }))}
+                        onFocus={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const tooltipWidth = Math.min(280, window.innerWidth - 24);
+                          const tooltipHeight = 92;
+                          const left = Math.max(12, Math.min(rect.left, window.innerWidth - tooltipWidth - 12));
+                          const top = rect.bottom + 10 + tooltipHeight <= window.innerHeight
+                            ? rect.bottom + 10
+                            : Math.max(12, rect.top - tooltipHeight - 10);
+                          setScheduleTooltip({ visible: true, left, top });
+                        }}
+                        onBlur={() => setScheduleTooltip((current) => ({ ...current, visible: false }))}
+                      >
+                        今日随机抓取
+                        <span className="settings-schedule-help" aria-hidden="true">?</span>
+                      </strong>
+                    </div>
                     <span>{todayCaptureTime || "生成中"}</span>
                   </div>
                   <div className="settings-row">
@@ -2177,7 +2226,10 @@ export default function Home() {
                 </button>
               )}
               {manualCapture.message && <span className={`capture-now-message ${manualCapture.state}`} role="status" aria-live="polite">
-                <span>{manualCapture.message}</span>
+                <span className="capture-now-message-copy">
+                  <b>{manualCapture.message}</b>
+                  {manualCapture.state === "running" && manualCapture.firstCapture && <small>{captureEstimateLabel(manualCapture.startedAt, manualCapture.percent, manualCapture.estimateMinutes)} · 账号间有安全间隔</small>}
+                </span>
                 {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
                 {manualCapture.state === "completed" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
                 {manualCapture.state === "failed" && <button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>确定</button>}
@@ -2216,6 +2268,18 @@ export default function Home() {
             </div>
           </div>
         </section>
+      )}
+      {scheduleTooltip.visible && createPortal(
+        <div
+          className="schedule-tooltip-portal"
+          id="capture-schedule-tip"
+          role="tooltip"
+          style={{ left: scheduleTooltip.left, top: scheduleTooltip.top }}
+        >
+          <b>关于随机抓取</b>
+          <span>每天在 00:00–08:59 随机执行，避免长期按固定频率访问。</span>
+        </div>,
+        document.body,
       )}
       </main>}
       {!desktopAppMode && <div className="desktop-dock" aria-label="桌面应用栏">

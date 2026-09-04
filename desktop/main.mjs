@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -358,6 +358,25 @@ async function createWindow() {
   });
   mainWindow = window;
   window.on("closed", () => { if (mainWindow === window) mainWindow = undefined; });
+  window.webContents.on("context-menu", (_event, params) => {
+    const template = [];
+    if (params.isEditable) {
+      template.push(
+        { label: "剪切", role: "cut", enabled: params.editFlags.canCut },
+        { label: "复制", role: "copy", enabled: params.editFlags.canCopy },
+        { label: "粘贴", role: "paste", enabled: params.editFlags.canPaste },
+        { type: "separator" },
+        { label: "全选", role: "selectAll", enabled: params.editFlags.canSelectAll },
+      );
+    } else if (params.selectionText) {
+      template.push(
+        { label: "复制", role: "copy", enabled: params.editFlags.canCopy },
+        { type: "separator" },
+        { label: "全选", role: "selectAll", enabled: params.editFlags.canSelectAll },
+      );
+    }
+    if (template.length) Menu.buildFromTemplate(template).popup({ window });
+  });
   window.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: "deny" }; });
   const targetUrl = liveUrl || new URL(serverHandle.url);
   if (forceOnboarding) targetUrl.searchParams.set("onboarding", "1");

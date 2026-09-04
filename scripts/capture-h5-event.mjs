@@ -34,6 +34,7 @@ if (!sourceDir) {
   const result = JSON.parse(output.split("\n").at(-1));
   if (!result.ok) throw new Error(result.status || "H5 主体抓取失败");
   if (!result.excludedRecommendations) throw new Error("未识别到底部推荐流边界，禁止进入批阅页");
+  if (result.brokenImages?.length) throw new Error(`H5 素材未加载完整：仍有 ${result.brokenImages.length} 张可见图片为空`);
   if (result.dynamicCandidates > 0 && !result.animation) throw new Error("检测到动态资源但原始动画下载失败，禁止标记为无动效");
 }
 

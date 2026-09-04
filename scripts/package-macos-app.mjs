@@ -129,7 +129,10 @@ for (const entry of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
 // linters, and other development-only packages before signing the bundle.
 // Keeping production dependencies through pnpm's lockfile-aware prune is safer
 // than maintaining a fragile hand-written allowlist of transitive packages.
-await exec("pnpm", ["prune", "--prod", "--ignore-scripts"], { cwd: packagedRuntimeProject });
+await exec("pnpm", ["prune", "--prod", "--ignore-scripts"], {
+  cwd: packagedRuntimeProject,
+  env: { ...process.env, CI: "1" },
+});
 const { stdout: runtimeNodeModulesSize } = await exec("du", ["-sk", path.join(packagedRuntimeProject, "node_modules")]);
 const runtimeNodeModulesKilobytes = Number.parseInt(runtimeNodeModulesSize, 10);
 if (!Number.isFinite(runtimeNodeModulesKilobytes) || runtimeNodeModulesKilobytes > 100 * 1024) {

@@ -87,6 +87,34 @@ test("rejected H5 evidence leaves no partial review directory", async () => {
   await rm(temporary, { recursive: true, force: true });
 });
 
+test("H5 capture rejects visible lazy-image placeholders and prefers rendered swiper art", async () => {
+  const capture = await readFile(new URL("../scripts/xhs-h5-capture.py", import.meta.url), "utf8");
+  const runner = await readFile(new URL("../scripts/capture-h5-event.mjs", import.meta.url), "utf8");
+  assert.match(capture, /image\.naturalWidth <= 1/);
+  assert.match(capture, /\.onix-image\[data-src\]/);
+  assert.match(capture, /candidate\.srcset = source/);
+  assert.match(capture, /const richest = slides\.sort/);
+  assert.match(capture, /const contentWidth = appRect\.width/);
+  assert.match(capture, /capture_stitched_page/);
+  assert.match(capture, /fallback_reasons/);
+  assert.doesNotMatch(capture, /fallback_reasons\.append\(f"\{preflight\['unloadedImages'\]\}/);
+  assert.match(runner, /result\.brokenImages\?\.length/);
+});
+
+test("H5 stitched fallback is isolated as a plugin and only runs for risky pages", async () => {
+  const plugin = await readFile(new URL("../plugins/h5-scroll-capture/capture.py", import.meta.url), "utf8");
+  const setup = await readFile(new URL("../scripts/setup-downloader.sh", import.meta.url), "utf8");
+  assert.match(plugin, /def capture_stitched_page/);
+  assert.match(plugin, /page\.screenshot\(type="png"/);
+  assert.match(plugin, /def _best_overlap/);
+  assert.match(plugin, /分屏截图接缝无法可靠对齐/);
+  assert.match(plugin, /animation-play-state: paused/);
+  assert.match(plugin, /stitched\.save/);
+  assert.match(setup, /Pillow>=11,<13/);
+  const register = await readFile(new URL("../scripts/register-h5-event.mjs", import.meta.url), "utf8");
+  assert.match(register, /captureMethod: captureEvidence\.captureMethod/);
+});
+
 test("installer is complete, cached, and keeps development dependencies optional", async () => {
   const setup = await readFile(path.join(root, "scripts", "setup-downloader.sh"), "utf8");
   assert.match(setup, /curl-cffi>=0\.15\.0/);

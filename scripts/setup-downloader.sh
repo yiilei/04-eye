@@ -5,7 +5,7 @@ PROJECT_ROOT="${0:A:h:h}"
 ENGINE_ROOT="$PROJECT_ROOT/vendor/XHS-Downloader"
 DISCOVERY_ROOT="$PROJECT_ROOT/vendor/xhs-cli"
 SETUP_STATE_DIR="$PROJECT_ROOT/.caiguang-setup"
-SETUP_SCHEMA="3"
+SETUP_SCHEMA="4"
 
 mkdir -p "$SETUP_STATE_DIR"
 
@@ -133,8 +133,8 @@ else
   log_step "2/3" "安装账号发现依赖…"
   (
     "$PYTHON_BIN" -m venv "$DISCOVERY_ROOT/.venv"
-    "$DISCOVERY_ROOT/.venv/bin/python" -m pip install --disable-pip-version-check --no-input -e "$DISCOVERY_ROOT"
-    "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, xhs_cli'
+    "$DISCOVERY_ROOT/.venv/bin/python" -m pip install --disable-pip-version-check --no-input -e "$DISCOVERY_ROOT" "Pillow>=11,<13"
+    "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, PIL, xhs_cli'
     write_stamp "$DISCOVERY_STAMP" "$DISCOVERY_FINGERPRINT"
   ) > "$SETUP_STATE_DIR/xhs-cli.log" 2>&1 &
   discovery_pid=$!

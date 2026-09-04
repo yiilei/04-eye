@@ -414,6 +414,13 @@ aside { position: relative; display: flex; min-width: 0; padding: 0 22px 28px; f
 .settings-row > div { display: grid; min-width: 0; overflow: hidden; gap: 4px; }
 .settings-row strong { overflow: hidden; color: rgba(255,255,255,.92); font-size: 6.3cqw; font-weight: 650; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
 .settings-row span { display: block; min-width: 0; overflow: hidden; color: rgba(255,255,255,.36); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-row > .settings-schedule-copy { overflow: hidden; }
+.settings-schedule-label { display: flex; width: max-content; max-width: 100%; align-items: center; gap: 2cqw; cursor: help; }
+.settings-schedule-label:focus-visible { outline: 2px solid #ffe600; outline-offset: 3px; border-radius: 2px; }
+.settings-schedule-help { display: grid !important; width: 4.6cqw; height: 4.6cqw; flex: 0 0 auto; place-items: center; color: rgba(255,255,255,.48) !important; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; font-size: 2.7cqw !important; font-weight: 700; line-height: 1; }
+.schedule-tooltip-portal { position: fixed; z-index: 10000; display: grid; width: min(280px, calc(100vw - 24px)); padding: 14px 16px; gap: 6px; color: #11120f; background: #ffe600; border: 1px solid rgba(225,202,0,.95); border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,.32); pointer-events: none; }
+.schedule-tooltip-portal b { font-size: 15px; font-weight: 780; letter-spacing: -.015em; }
+.schedule-tooltip-portal span { color: rgba(15,15,12,.72); font-size: 13px; font-weight: 600; line-height: 1.5; white-space: normal; }
 .settings-row input[type="time"] { width: 45cqw; height: 16cqw; padding: 0 1.4cqw 0 2.4cqw; color: rgba(255,255,255,.94); color-scheme: dark; background: #343438; border: 1px solid rgba(255,255,255,.13); border-radius: 999px; outline: none; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; font-size: 5.5cqw; font-variant-numeric: tabular-nums; font-weight: 650; text-align: center; }
 .settings-row input[type="time"]::-webkit-datetime-edit { min-width: 0; padding: 0; }
 .settings-row input[type="time"]::-webkit-datetime-edit-fields-wrapper { padding: 0; }
@@ -518,6 +525,7 @@ dd { color: rgba(255,255,255,.74); }
 .actions .keep { color: #111; background: var(--accent); border-color: var(--accent); box-shadow: inset 0 1px rgba(255,255,255,.3), 0 7px 18px rgba(70,62,0,.18); }
 .actions .keep:hover { color: #111; background: #fff000; border-color: #fff000; }
 .post-caption { min-height: 0; flex: 1; margin: 18px -7px 34px 0; padding: 2px 7px 2px 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; color: rgba(255,255,255,.64); font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-color: rgba(255,255,255,.24) transparent; scrollbar-width: thin; }
+.post-caption:focus { outline: none; }
 .post-caption::-webkit-scrollbar { width: 2px; }
 .post-caption::-webkit-scrollbar-track { background: transparent; }
 .post-caption::-webkit-scrollbar-thumb { background: rgba(255,255,255,.24); border-radius: 999px; }
@@ -542,8 +550,10 @@ kbd { color: rgba(255,255,255,.7); background: rgba(255,255,255,.07); border-col
 .capture-now.running svg { animation: capture-hand-grab .82s cubic-bezier(.45,0,.2,1) infinite; transform-origin: 50% 62%; }
 .capture-now.completed { color: #7be2a8; border-color: rgba(123,226,168,.35); }
 .capture-now.failed { color: #ff8fa0; border-color: rgba(255,143,160,.35); }
-.capture-now-message { position: absolute; left: 0; bottom: 44px; display: flex; width: max-content; max-width: min(260px, calc(100cqw - 44px)); padding: 7px 7px 7px 9px; align-items: center; gap: 7px; color: rgba(255,255,255,.8); background: rgba(23,25,31,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.26); font-size: 9px; line-height: 1.35; pointer-events: auto; }
-.capture-now-message > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-now-message { position: absolute; left: 0; bottom: 44px; display: grid; grid-template-columns: minmax(0, 1fr) auto; width: min(292px, calc(100cqw - 22px)); padding: 9px 9px 9px 11px; align-items: center; gap: 12px; color: rgba(255,255,255,.8); background: rgba(23,25,31,.96); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.3); font-size: 9px; line-height: 1.35; pointer-events: auto; }
+.capture-now-message-copy { display: grid; min-width: 0; gap: 3px; }
+.capture-now-message-copy b { overflow: hidden; font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.capture-now-message-copy small { overflow: hidden; color: rgba(255,255,255,.42); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .capture-now-message > strong { flex: 0 0 auto; color: #ffdf00; font-family: "DIN Alternate", "DIN Condensed", sans-serif; font-size: 10px; font-variant-numeric: tabular-nums; }
 .capture-now-message.completed { color: #7be2a8; }
 .capture-now-message.failed { color: #ff8fa0; }
@@ -704,6 +714,7 @@ html[data-theme="light"] .pin-link-message,
 html[data-theme="light"] .pin-empty,
 html[data-theme="light"] .pin-risk-summary { color: rgba(30,34,42,.54); }
 html[data-theme="light"] .settings-row input[type="time"] { color: rgba(20,22,27,.9); color-scheme: light; background: rgba(255,255,255,.72); border-color: rgba(28,33,42,.12); }
+html[data-theme="light"] .settings-schedule-help { color: rgba(30,34,42,.5) !important; border-color: rgba(28,33,42,.18); }
 html[data-theme="light"] .settings-row input[type="time"]::-webkit-calendar-picker-indicator { filter: none; }
 html[data-theme="light"] .pin-link-row input { color: rgba(20,22,27,.88); background: rgba(255,255,255,.68); border-color: rgba(28,33,42,.11); }
 html[data-theme="light"] .pin-link-row input::placeholder { color: rgba(30,34,42,.36); }
@@ -720,6 +731,7 @@ html[data-theme="light"] .capture-now:hover,
 html[data-theme="light"] .capture-now.running { color: #111; background: var(--accent); border-color: var(--accent); }
 html[data-theme="light"] .capture-now-message { color: rgba(20,22,27,.82); background: rgba(255,255,255,.94); border-color: rgba(25,29,36,.12); }
 html[data-theme="light"] .capture-now-message > strong { color: #b08b00; }
+html[data-theme="light"] .capture-now-message-copy small { color: rgba(30,34,42,.5); }
 html[data-theme="light"] .capture-now-message.completed { color: #198754; }
 html[data-theme="light"] .capture-now-message.failed { color: #c33148; }
 html[data-theme="light"] .review-info { border-color: rgba(28,33,42,.1); }
