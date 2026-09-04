@@ -50,7 +50,9 @@ async function createCompletePackage() {
   const completeName = "采光-完整安装包";
   const completeRoot = path.join(releaseRoot, completeName);
   await mkdir(completeRoot, { recursive: true });
-  await cp(appPath, path.join(completeRoot, "采光.app"), { recursive: true, verbatimSymlinks: true });
+  // Preserve nested framework signatures and resource forks. fs.cp can lose
+  // signature metadata when the complete installer is later archived.
+  await exec("ditto", [appPath, path.join(completeRoot, "采光.app")]);
 
   const packageGuides = {
     "00-先看这里.md": "# 采光\n\n双击 `开始安装.command`。采光已内置 MCP、采集器、下载器和定时任务，不需要外置源码或 Codex 运行。\n",
