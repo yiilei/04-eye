@@ -15,6 +15,7 @@ const policyPath = path.join(dataDir, "xhs-media-policy.json");
 const appPendingPinsPath = path.join(dataHome, "data", "xhs-pending-pins.json");
 const registryPath = path.join(dataHome, "data", "generated-review-items.json");
 const reportsDir = path.join(dataDir, "reports");
+const diagnosticsDir = path.join(dataHome, "logs", "xhs");
 const lockPath = path.join(dataDir, "daily-pipeline.lock");
 const dryRun = process.argv.includes("--dry-run");
 const skipBuild = process.argv.includes("--skip-build");
@@ -45,6 +46,17 @@ const captureErrorMessage = (error) => {
   if (explicitError) return explicitError.replace(/^(?:Error|[A-Za-z]+Error):\s+/, "");
   const raw = chunks[0] || "未知抓取错误";
   return raw.split("\n").map((line) => line.trim()).filter((line) => !/^Node\.js v\d+/.test(line)).at(-1) || raw;
+};
+const captureDiagnostics = (error) => [error?.stdout, error?.stderr, error instanceof Error ? error.stack || error.message : String(error)]
+  .map((value) => String(value || "").trim()).filter(Boolean).join("\n\n");
+const safeTaskId = (value) => String(value || "task").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 100);
+const writeCaptureDiagnostics = async (task, error) => {
+  await mkdir(diagnosticsDir, { recursive: true });
+  const attempt = Number(task.attempts || 0) + 1;
+  const filename = `${today}-${safeTaskId(task.id)}-attempt-${attempt}.log`;
+  const target = path.join(diagnosticsDir, filename);
+  await writeFile(target, `${captureDiagnostics(error)}\n`);
+  return target;
 };
 const requireFields = (value, fields, label) => {
   for (const field of fields) if (!value[field]) throw new Error(`${label} 缺少 ${field}`);
@@ -139,6 +151,8 @@ async function main() {
         else clearNoteFailure(task);
       } catch (error) {
         const message = captureErrorMessage(error);
+        const diagnostics = captureDiagnostics(error);
+        const diagnosticsPath = task.type === "note" ? await writeCaptureDiagnostics(task, error) : undefined;
         if (task.type === "h5_event") {
           const permanentFailure = h5FailureIsPermanent(message);
           if (permanentFailure) {
@@ -171,8 +185,10 @@ async function main() {
           }
           else report.retrying.push({ ...entry, nextAttemptAt: retry.nextAttemptAt });
         } else {
-          const transition = transitionNoteFailure(task, message, now);
-          const entry = { id: task.id, type: task.type, title: task.title, error: message, failureType: transition.category };
+          const transition = transitionNoteFailure(task, diagnostics || message, now);
+          task.diagnosticsPath = diagnosticsPath;
+          const entry = { id: task.id, type: task.type, title: task.title, error: message,
+            failureType: transition.category, diagnosticsPath };
           if (transition.action === "browser_capture") {
             if (!report.browserCapture.some((item) => item.id === task.id)) report.browserCapture.push(entry);
           } else if (transition.action === "retry") report.retrying.push({ ...entry, attempts: transition.attempts, nextAttemptAt: transition.nextAttemptAt });
@@ -258,6 +274,7 @@ async function main() {
   const ok = report.failed.length === 0 && report.browserCapture.length === 0 && report.retrying.length === 0;
   console.log(JSON.stringify({ ok, mode: report.mode, checkedAccounts: report.checkedAccounts,
     pending: report.pending, completed: report.completed.length, fallbacks: report.fallbacks.length, browserCapture: report.browserCapture.length, failed: report.failed.length,
+    retrying: report.retrying.length, nextRetryAt: report.retrying.map((item) => item.nextAttemptAt).filter(Boolean).sort()[0] || null,
     validation: report.validation, build: report.build, report: path.relative(root, `${reportBase}.md`) }));
   if (!dryRun && !ok) process.exitCode = 1;
 }

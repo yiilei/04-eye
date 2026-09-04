@@ -37,6 +37,19 @@ test("enabled switch allows due actions and prevents duplicate daily runs", () =
   assert.equal(pushIsDue(preferences, { lastPushDate: now.date }, now), false);
 });
 
+test("daily randomized schedule overrides the legacy fixed preference", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" };
+  const state = { captureScheduleDate: now.date, captureScheduleTime: "06:37" };
+  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:36" }), false);
+  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:37" }), true);
+});
+
+test("a due retry runs even after the normal daily capture", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" };
+  const state = { lastCaptureDate: now.date, captureScheduleTime: "02:00" };
+  assert.equal(captureIsDue(preferences, state, now, true), true);
+});
+
 test("missed schedules run once after wake or a later boot", () => {
   const preferences = { automaticCaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" };
   assert.equal(captureIsDue(preferences, {}, { date: now.date, time: "01:59" }), false);

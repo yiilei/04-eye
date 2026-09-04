@@ -1,10 +1,10 @@
 const MINUTES_IN_CAPTURE_WINDOW = 9 * 60;
 
 export function randomCaptureTime(random = Math.random) {
-  const minuteOfDay = Math.min(MINUTES_IN_CAPTURE_WINDOW - 1, Math.max(0, Math.floor(random() * MINUTES_IN_CAPTURE_WINDOW)));
-  const hours = String(Math.floor(minuteOfDay / 60)).padStart(2, "0");
-  const minutes = String(minuteOfDay % 60).padStart(2, "0");
-  return `${hours}:${minutes}`;
+  const value = Number(random());
+  const minuteOfDay = Math.min(MINUTES_IN_CAPTURE_WINDOW - 1, Math.max(0,
+    Math.floor((Number.isFinite(value) ? value : 0) * MINUTES_IN_CAPTURE_WINDOW)));
+  return `${String(Math.floor(minuteOfDay / 60)).padStart(2, "0")}:${String(minuteOfDay % 60).padStart(2, "0")}`;
 }
 
 export function initializeCapturePreferences(stored = {}, random = Math.random) {
@@ -22,4 +22,12 @@ export function initializeCapturePreferences(stored = {}, random = Math.random) 
   }
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(preferences.pushTime || ""))) { preferences.pushTime = "11:00"; changed = true; }
   return { preferences, changed };
+}
+
+export function ensureDailyCaptureSchedule(state = {}, date, random = Math.random) {
+  if (state.captureScheduleDate === date && /^([01]\d|2[0-3]):[0-5]\d$/.test(String(state.captureScheduleTime || ""))) {
+    return { state, changed: false, time: state.captureScheduleTime };
+  }
+  const next = { ...state, captureScheduleDate: date, captureScheduleTime: randomCaptureTime(random) };
+  return { state: next, changed: true, time: next.captureScheduleTime };
 }

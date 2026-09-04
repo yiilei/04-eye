@@ -9,13 +9,13 @@ export function classifyNoteCaptureFailure(message) {
   if (/验证码|captcha|verification|required|权限|permission|forbidden|无权访问/.test(text)) {
     return { category: "verification_or_permission", action: "user_action_required" };
   }
-  if (/安全限制|notedetailmap|成功 0 个|获取数据失败|failed to extract note detail|解析/.test(text)) {
+  if (/notedetailmap|failed to extract note detail|解析字段|parser incompatible/.test(text)) {
     return { category: "parser_incompatible", action: "browser_capture" };
   }
-  if (/timeout|timed out|超时|network|connection|连接|temporar|reset|429|502|503|504/.test(text)) {
+  if (/成功 0 个|获取数据失败|empty result|timeout|timed out|超时|network|connection|连接|temporar|reset|429|502|503|504/.test(text)) {
     return { category: "transient_network", action: "retry" };
   }
-  return { category: "capture_unknown", action: "browser_capture" };
+  return { category: "capture_unknown", action: "retry" };
 }
 
 export function noteTaskIsDue(task, now = new Date()) {
@@ -55,6 +55,13 @@ export function transitionNoteFailure(task, message, now = new Date()) {
   return { ...classification, terminal: false, attempts, nextAttemptAt: task.nextAttemptAt };
 }
 
+export function resetRecoverableNoteTask(task) {
+  if (!["needs_browser_capture", "retry_pending"].includes(task.status)) return false;
+  task.status = "pending";
+  clearNoteFailure(task);
+  return true;
+}
+
 export function clearNoteFailure(task) {
-  for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "failedAt", "failureType", "error"]) delete task[key];
+  for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "failedAt", "failureType", "error", "diagnosticsPath"]) delete task[key];
 }

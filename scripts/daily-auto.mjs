@@ -46,11 +46,12 @@ for (const [index, [name, label, percent, args]] of steps.entries()) {
   const result = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8", timeout: 60 * 60 * 1000,
     env: { ...process.env, CAIGUANG_CAPTURE_CREATOR_H5: creatorH5CaptureEnabled ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  results.push({ name, ok: result.status === 0, status: result.status, output: output.split("\n").filter(Boolean).at(-1) || "" });
+  results.push({ name, ok: result.status === 0, status: result.status, output,
+    summary: output.split("\n").filter(Boolean).at(-1) || "" });
 }
 let pipelineSummary = null;
 try {
-  pipelineSummary = JSON.parse(results.find((item) => item.name === "capture_validate_report")?.output || "null");
+  pipelineSummary = JSON.parse(results.find((item) => item.name === "capture_validate_report")?.summary || "null");
 } catch { /* a genuinely malformed result remains a failure */ }
 const failedStep = results.find((item) => !item.ok && item.name !== "capture_validate_report");
 const pipelineHardFailure = !pipelineSummary
@@ -64,7 +65,7 @@ try {
   const queue = JSON.parse(readFileSync(queuePath, "utf8"));
   fallbackCount = queue.tasks.filter((task) => task.type === "h5_event" && task.status === "fallback_pending").length;
 } catch {
-  try { fallbackCount = Number(JSON.parse(results.find((item) => item.name === "capture_validate_report")?.output || "{}").fallbacks || 0); } catch { /* status stays generic */ }
+  try { fallbackCount = Number(JSON.parse(results.find((item) => item.name === "capture_validate_report")?.summary || "{}").fallbacks || 0); } catch { /* status stays generic */ }
 }
 writeProgress(ok
   ? { state: "completed", phase: "completed", label: Number(pipelineSummary?.browserCapture || 0)

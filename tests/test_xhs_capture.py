@@ -1,5 +1,6 @@
 import importlib.util
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -25,6 +26,18 @@ class CaptureParsingTests(unittest.TestCase):
         published = MODULE.object_id_published_at("6a969ea3000000002b011ce9")
         self.assertTrue(published.startswith("2026-09-01T17:45:07"))
         self.assertEqual(MODULE.object_id_published_at("not-a-note"), "")
+
+    @patch.object(MODULE.subprocess, "run")
+    def test_engine_failure_preserves_full_stdout_and_stderr(self, run):
+        run.return_value.returncode = 1
+        run.return_value.stdout = "line one\n成功 0 个，失败 1 个\n"
+        run.return_value.stderr = "request timeout\ntrace detail\n"
+        with self.assertRaises(RuntimeError) as caught:
+            MODULE.run_engine("https://www.xiaohongshu.com/explore/abc", Path("/tmp/stage"))
+        details = caught.exception.engine_diagnostics
+        self.assertIn("line one", details["stdout"])
+        self.assertIn("trace detail", details["stderr"])
+        self.assertEqual(details["exitCode"], 1)
 
 
 if __name__ == "__main__":

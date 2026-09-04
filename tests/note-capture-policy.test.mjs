@@ -8,13 +8,21 @@ import {
   transitionNoteFailure,
 } from "../scripts/note-capture-policy.mjs";
 
-test("parser incompatibility requests browser capture without blacklisting account", () => {
+test("an explicit parser incompatibility requests browser capture without blacklisting account", () => {
   const task = { type: "note", status: "pending", accountKey: "account" };
-  const result = transitionNoteFailure(task, "下载引擎未取得帖子：成功 0 个", new Date("2026-08-24T10:00:00Z"));
+  const result = transitionNoteFailure(task, "failed to extract note detail from NoteDetailMap", new Date("2026-08-24T10:00:00Z"));
   assert.equal(result.action, "browser_capture");
   assert.equal(task.status, "needs_browser_capture");
   assert.equal(task.failureType, "parser_incompatible");
   assert.equal("blacklisted" in task, false);
+});
+
+test("an empty downloader result is retried instead of mislabelled as parser incompatibility", () => {
+  const task = { type: "note", status: "pending" };
+  const result = transitionNoteFailure(task, "成功 0 个，失败 1 个", new Date("2026-09-04T02:00:00Z"));
+  assert.equal(result.action, "retry");
+  assert.equal(task.status, "retry_pending");
+  assert.equal(task.failureType, "transient_network");
 });
 
 test("network failures use bounded retries before browser capture", () => {

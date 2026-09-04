@@ -110,8 +110,13 @@ def run_engine(url: str, stage: Path) -> tuple[Path, dict, str]:
     result = subprocess.run(command, cwd=PROJECT, text=True, capture_output=True)
     log = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
     if result.returncode or "成功 0 个" in log or "获取数据失败" in log:
-        reason = log.splitlines()[-1] if log else f"退出码 {result.returncode}"
-        raise RuntimeError(f"下载引擎未取得帖子：{reason}")
+        error = RuntimeError("下载引擎未取得帖子")
+        error.engine_diagnostics = {
+            "exitCode": result.returncode,
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+        }
+        raise error
     post_id = post_id_from_url(url)
     download_root = stage / "Download"
     metadata = read_metadata(download_root / "ExploreData.db", post_id)
@@ -400,5 +405,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        payload = {"ok": False, "error": str(error)}
+        payload.update(getattr(error, "engine_diagnostics", {}))
+        print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(1)

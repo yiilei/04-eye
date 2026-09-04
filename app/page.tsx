@@ -485,6 +485,7 @@ export default function Home() {
   const [automaticCaptureEnabled, setAutomaticCaptureEnabled] = useState(true);
   const [creatorH5CaptureEnabled, setCreatorH5CaptureEnabled] = useState(true);
   const [captureTime, setCaptureTime] = useState("02:00");
+  const [todayCaptureTime, setTodayCaptureTime] = useState("");
   const [pushTime, setPushTime] = useState("11:00");
   const [pinSearch, setPinSearch] = useState("");
   const [pinProfileUrl, setPinProfileUrl] = useState("");
@@ -980,7 +981,7 @@ export default function Home() {
       .then(async (response) => {
         if (!response.ok) throw new Error("preferences unavailable");
         return response.json() as Promise<{
-          automaticCaptureEnabled?: boolean; creatorH5CaptureEnabled?: boolean; captureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
+          automaticCaptureEnabled?: boolean; creatorH5CaptureEnabled?: boolean; captureTime?: string; todayCaptureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
         }>;
       })
       .then((preferences) => {
@@ -989,6 +990,7 @@ export default function Home() {
         setAutomaticCaptureEnabled(preferences.automaticCaptureEnabled !== false);
         setCreatorH5CaptureEnabled(preferences.creatorH5CaptureEnabled === true);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.captureTime ?? "")) setCaptureTime(preferences.captureTime!);
+        if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.todayCaptureTime ?? "")) setTodayCaptureTime(preferences.todayCaptureTime!);
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.pushTime ?? "")) setPushTime(preferences.pushTime!);
         if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
         if (Array.isArray(preferences.manualPinAccounts)) setManualPinAccounts(preferences.manualPinAccounts);
@@ -2023,8 +2025,8 @@ export default function Home() {
                 </div>
                 <div className="settings-time-panel">
                   <div className="settings-row">
-                    <div><strong>抓取时间</strong><span>首次安装随机分配，可自行修改</span></div>
-                    <input type="time" value={captureTime} onChange={(event) => setCaptureTime(event.target.value)} aria-label="每天抓取时间" />
+                    <div><strong>今日随机抓取</strong><small>每天 00:00–08:59 自动生成</small></div>
+                    <span>{todayCaptureTime || "生成中"}</span>
                   </div>
                   <div className="settings-row">
                     <div><strong>推送时间</strong></div>

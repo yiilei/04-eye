@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountCapturePolicy, diffPosts, isSafetyStopError, latestPostOnly, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, diffPosts, isSafetyStopError, latestPostOnly, mergeDiscoveredTasks, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -114,4 +114,19 @@ test("recognizes login and anti-abuse responses as safety-stop signals", () => {
   assert.equal(isSafetyStopError("HTTP 429 Too Many Requests"), true);
   assert.equal(isSafetyStopError("需要验证码，登录失效"), true);
   assert.equal(isSafetyStopError("普通图片解析失败"), false);
+});
+
+test("rediscovery refreshes token and releases a stranded task", () => {
+  const existing = [{ id: "note-a", status: "needs_browser_capture", sourceUrl: "https://old", failureType: "parser_incompatible", error: "成功 0 个" }];
+  const fresh = [{ id: "note-a", status: "pending", sourceUrl: "https://new?xsec_token=fresh", title: "new" }];
+  const [task] = mergeDiscoveredTasks(existing, fresh);
+  assert.equal(task.status, "pending");
+  assert.equal(task.sourceUrl, fresh[0].sourceUrl);
+  assert.equal(task.failureType, undefined);
+  assert.equal(task.error, undefined);
+});
+
+test("rediscovery does not reopen completed work", () => {
+  const completed = { id: "note-a", status: "completed", sourceUrl: "https://old" };
+  assert.deepEqual(mergeDiscoveredTasks([completed], [{ id: "note-a", status: "pending", sourceUrl: "https://new" }]), [completed]);
 });

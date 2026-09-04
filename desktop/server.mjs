@@ -7,7 +7,7 @@ import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
 import { cleanupReviewedMedia } from "../scripts/review-cache-cleanup.mjs";
-import { initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
+import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -125,7 +125,10 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       if (pathname === "/api/desktop/preferences" && request.method === "GET") {
         const initialized = initializeCapturePreferences(await readJson(preferencesPath, {}));
         if (initialized.changed) await atomicJson(preferencesPath, { ...initialized.preferences, schemaVersion: 1, updatedAt: new Date().toISOString() });
-        const response = json(initialized.preferences);
+        const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+        const scheduled = ensureDailyCaptureSchedule(await readJson(schedulerStatePath, {}), date);
+        if (scheduled.changed) await atomicJson(schedulerStatePath, scheduled.state);
+        const response = json({ ...initialized.preferences, todayCaptureTime: scheduled.time });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);

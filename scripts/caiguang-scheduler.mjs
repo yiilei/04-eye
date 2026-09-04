@@ -6,13 +6,14 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
 import { captureIsDue, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
-import { initializeCapturePreferences } from "./capture-time-policy.mjs";
+import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
 const dataRoot = path.join(appData, "data");
 const preferencesPath = path.join(dataRoot, "user-preferences.json");
 const statePath = path.join(dataRoot, "scheduler-state.json");
+const queuePath = path.join(dataRoot, "xhs-capture-queue.json");
 const logRoot = path.join(appData, "logs");
 const launchAgent = path.join(os.homedir(), "Library", "LaunchAgents", "com.yilei.caiguang.scheduler.plist");
 const wrapper = path.join(projectRoot, "plugins", "caiguang", "scripts", "caiguang");
@@ -112,10 +113,15 @@ async function tick() {
     return;
   }
   await ensureWakeLock();
-  const state = await readJson(statePath, {});
   const now = clock();
-  console.error(`[scheduler] tick:clock ${now.date} ${now.time}`);
-  if (captureIsDue(preferences, state, now)) {
+  const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
+  const state = scheduled.state;
+  if (scheduled.changed) await atomicJson(statePath, state);
+  const queue = await readJson(queuePath, { tasks: [] });
+  const retryDue = (queue.tasks || []).some((task) => task.status === "retry_pending"
+    && (!task.nextAttemptAt || new Date(task.nextAttemptAt).getTime() <= Date.now()));
+  console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time} retryDue=${retryDue}`);
+  if (captureIsDue(preferences, state, now, retryDue)) {
     console.error("[scheduler] tick:capture-due");
     await runCapture("scheduled");
     console.error("[scheduler] tick:capture-finished");

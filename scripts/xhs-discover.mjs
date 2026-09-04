@@ -113,6 +113,26 @@ export function latestPostOnly(posts) {
   return latest ? { status: "verified", latestPostId: latest.id, newPosts: [latest] } : { status: "empty", latestPostId: "", newPosts: [] };
 }
 
+export function mergeDiscoveredTasks(existingTasks, discoveredTasks) {
+  const discoveredById = new Map(discoveredTasks.map((task) => [task.id, task]));
+  const merged = existingTasks.map((task) => {
+    const fresh = discoveredById.get(task.id);
+    if (!fresh) return task;
+    discoveredById.delete(task.id);
+    // A newly discovered URL carries a fresh xsec_token. Recover tasks that
+    // were previously stranded by an empty downloader result, while keeping
+    // completed work immutable.
+    if (task.status === "completed") return task;
+    const recoverable = ["needs_browser_capture", "retry_pending"].includes(task.status);
+    const next = { ...task, ...fresh, status: recoverable ? "pending" : task.status };
+    if (recoverable) {
+      for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "failedAt", "failureType", "error", "diagnosticsPath"]) delete next[key];
+    }
+    return next;
+  });
+  return [...merged, ...discoveredById.values()];
+}
+
 export function selectAccounts(accounts, accountKeys = [], pinnedAccountIds) {
   const explicit = new Set(accountKeys || []);
   const pinned = Array.isArray(pinnedAccountIds) ? new Set(pinnedAccountIds.map(String)) : null;
@@ -254,8 +274,7 @@ export async function discover(options = {}) {
   if (options.write) {
     const selectedKeys = new Set(selected.map((account) => account.searchKey));
     queue.checkedAccounts = [...queue.checkedAccounts.filter((check) => !selectedKeys.has(check.accountKey)), ...checks];
-    const existing = new Set(queue.tasks.map((task) => task.id));
-    queue.tasks.push(...pendingTasks.filter((task) => !existing.has(task.id)));
+    queue.tasks = mergeDiscoveredTasks(queue.tasks, pendingTasks);
     await atomicJson(queuePath, queue);
   }
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",
