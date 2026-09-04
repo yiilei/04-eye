@@ -280,6 +280,21 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
       }
+      if (pathname === "/api/desktop/wake-lock" && request.method === "POST") {
+        const existing = initializeCapturePreferences(await readJson(preferencesPath, {})).preferences;
+        await atomicJson(preferencesPath, { ...existing, automaticCaptureEnabled: true, schemaVersion: 1, updatedAt: new Date().toISOString() });
+        const child = spawn(process.execPath, [installedScheduler, "wake"], {
+          cwd: runtimeRoot,
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot },
+          stdio: "ignore",
+        });
+        child.unref();
+        const response = json({ ok: true, automaticCaptureEnabled: true,
+          warning: "请接通电源并保持 MacBook 屏幕打开，不要合上盖子。" });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
       if (pathname === "/api/pending-pins" && request.method === "GET") {
         const response = json(await readJson(pendingPinsPath, { schemaVersion: 1, updatedAt: null, accounts: [] }));
         outgoing.statusCode = response.status;

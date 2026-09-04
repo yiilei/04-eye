@@ -21,6 +21,7 @@ const localRuntimeRoot = path.join(appData, "runtime");
 const localRuntimeNode = path.join(localRuntimeRoot, "node");
 const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
 const wakeLockPath = path.join(localRuntimeRoot, "caffeinate.pid");
+const notificationRequestPath = path.join(dataRoot, "notification-request.json");
 
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
@@ -40,8 +41,17 @@ const clock = () => {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
 };
 
-function notify(title, message) {
-  spawnSync("/usr/bin/osascript", ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", title, message]);
+async function notify(title, message) {
+  await atomicJson(notificationRequestPath, {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title,
+    body: message,
+    createdAt: new Date().toISOString(),
+  });
+  const appBundle = path.resolve(projectRoot, "../../../..");
+  if (appBundle.endsWith(".app")) {
+    spawnSync("/usr/bin/open", ["-gj", appBundle, "--args", "--scheduled-notification"]);
+  }
 }
 
 async function stopWakeLock() {
@@ -129,7 +139,7 @@ async function tick() {
   const latest = await readJson(statePath, state);
   if (pushIsDue(preferences, latest, now)) {
     const success = latest.lastCaptureDate === now.date && latest.lastCaptureStatus === "completed";
-    notify("采光", success ? "今天的素材已经准备好，可以开始批阅。" : "今天的采集需要处理登录或页面异常。请打开采光查看。" );
+    await notify("采光", success ? "今天的素材已经准备好，可以开始批阅。" : "今天的采集需要处理登录或页面异常。请打开采光查看。" );
     latest.lastPushDate = now.date;
     latest.lastPushAt = new Date().toISOString();
     await atomicJson(statePath, latest);
@@ -218,6 +228,10 @@ else if (command === "run") {
   const result = await runCapture("manual");
   console.log(JSON.stringify(result));
   if (!result.ok) process.exitCode = 1;
+}
+else if (command === "wake") {
+  await ensureWakeLock();
+  console.log(JSON.stringify({ ok: true, wakeLock: "enabled", warning: "请接通电源并保持 MacBook 屏幕打开，不要合上盖子" }));
 }
 else if (command === "status") await status();
 else if (command === "uninstall") await uninstall();

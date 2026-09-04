@@ -486,6 +486,7 @@ export default function Home() {
   const [creatorH5CaptureEnabled, setCreatorH5CaptureEnabled] = useState(true);
   const [captureTime, setCaptureTime] = useState("02:00");
   const [todayCaptureTime, setTodayCaptureTime] = useState("");
+  const [wakeLockMessage, setWakeLockMessage] = useState("");
   const [pushTime, setPushTime] = useState("11:00");
   const [pinSearch, setPinSearch] = useState("");
   const [pinProfileUrl, setPinProfileUrl] = useState("");
@@ -642,6 +643,20 @@ export default function Home() {
     url.searchParams.delete("onboarding");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, [desktopAppMode, legalNoticeAccepted]);
+
+  const enableWakeLock = useCallback(async () => {
+    if (!desktopAppMode) return;
+    setAutomaticCaptureEnabled(true);
+    setWakeLockMessage("正在开启…");
+    try {
+      const response = await fetch("/api/desktop/wake-lock", { method: "POST" });
+      if (!response.ok) throw new Error("开启失败");
+      setWakeLockMessage("已开启；请接通电源并保持屏幕打开，不要合上盖子");
+      window.setTimeout(() => void refreshRuntimeStatus(), 500);
+    } catch {
+      setWakeLockMessage("开启失败，请重新点击");
+    }
+  }, [desktopAppMode, refreshRuntimeStatus]);
 
   const moveReviewTour = useCallback((direction: -1 | 1) => {
     if (reviewTourStep === null || reviewTourTransitioning) return;
@@ -2036,10 +2051,11 @@ export default function Home() {
               </section>
               <section className="runtime-panel" aria-label="本地运行状态">
                 <div className="runtime-heading"><strong>本地状态</strong><span>{runtimeStatus ? `v${runtimeStatus.version}` : "桌面应用"}</span></div>
-                <div className="runtime-status-row runtime-wake-lock">
-                  <div><strong>防休眠</strong><small>{runtimeStatus?.wakeLock.enabled ? "已开启 · 接通电源时锁屏不休眠" : "未开启 · 打开自动抓取后生效"}</small></div>
+                <button type="button" className="runtime-status-row runtime-wake-lock" onClick={() => void enableWakeLock()}
+                  aria-label={runtimeStatus?.wakeLock.enabled ? "防休眠已开启" : "点击开启防休眠"}>
+                  <div><strong>防休眠</strong><small>{wakeLockMessage || (runtimeStatus?.wakeLock.enabled ? "已开启 · 请接通电源并保持屏幕打开，不要合上盖子" : "未开启 · 点击启用；使用时不要合上盖子")}</small></div>
                   <span className={`runtime-state-pill ${runtimeStatus?.wakeLock.enabled ? "is-on" : "is-off"}`}>{runtimeStatus?.wakeLock.enabled ? "已开启" : "未开启"}</span>
-                </div>
+                </button>
                 <div className="runtime-update-row">
                   <div className="runtime-update-copy">
                     <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? updateStatus.message : updateStatus.state === "unavailable" ? updateStatus.message : "检查新版本"}</strong>

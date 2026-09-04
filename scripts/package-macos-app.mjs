@@ -52,7 +52,12 @@ async function createCompletePackage() {
   await mkdir(completeRoot, { recursive: true });
   // Preserve nested framework signatures and resource forks. fs.cp can lose
   // signature metadata when the complete installer is later archived.
-  await exec("ditto", [appPath, path.join(completeRoot, "采光.app")]);
+  const completeApp = path.join(completeRoot, "采光.app");
+  await exec("ditto", [appPath, completeApp]);
+  // Seal the installer copy independently. Copying a deeply signed Electron
+  // bundle can preserve files while invalidating nested framework seals.
+  await exec("codesign", ["--force", "--deep", "--sign", "-", completeApp]);
+  await exec("codesign", ["--verify", "--deep", "--strict", completeApp]);
 
   const packageGuides = {
     "00-先看这里.md": "# 采光\n\n双击 `开始安装.command`。采光已内置 MCP、采集器、下载器和定时任务，不需要外置源码或 Codex 运行。\n",

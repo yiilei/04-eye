@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -25,12 +25,34 @@ let xhsChromeSyncDeadline = 0;
 let xhsChromeSyncPromise;
 let libraryWatcher;
 let libraryChangeTimer;
+let lastNotificationId = "";
+const notificationOnlyLaunch = process.argv.includes("--scheduled-notification");
+if (notificationOnlyLaunch && process.platform === "darwin") app.setActivationPolicy("accessory");
+
+const notificationRequestFile = () => path.join(app.getPath("userData"), "data", "notification-request.json");
+
+async function deliverPendingNotification() {
+  try {
+    const request = JSON.parse(await readFile(notificationRequestFile(), "utf8"));
+    if (!request?.id || request.id === lastNotificationId || !request.body) return false;
+    lastNotificationId = request.id;
+    if (Notification.isSupported()) new Notification({ title: request.title || "采光", body: request.body }).show();
+    await rm(notificationRequestFile(), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function startLibraryWatcher() {
   libraryWatcher?.close();
   const dataDir = path.join(app.getPath("userData"), "data");
   void mkdir(dataDir, { recursive: true }).then(() => {
     libraryWatcher = watch(dataDir, (_eventType, filename) => {
+      if (filename === "notification-request.json") {
+        void deliverPendingNotification();
+        return;
+      }
       if (filename !== "generated-review-items.json") return;
       if (libraryChangeTimer) clearTimeout(libraryChangeTimer);
       libraryChangeTimer = setTimeout(() => {
@@ -346,6 +368,11 @@ async function createWindow() {
 app.setName("采光");
 app.whenReady().then(async () => {
   await migrateLegacyData(app.getPath("userData"));
+  await deliverPendingNotification();
+  if (notificationOnlyLaunch) {
+    setTimeout(() => app.quit(), 1_500).unref();
+    return;
+  }
   const runtimeNode = path.join(process.resourcesPath, "runtime", "node");
   const scheduler = path.join(process.resourcesPath, "runtime", "project", "scripts", "caiguang-scheduler.mjs");
   if (existsSync(runtimeNode) && existsSync(scheduler)) {

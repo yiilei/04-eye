@@ -125,11 +125,12 @@ test("post bylines prefer published or edited time and never substitute capture 
 });
 
 test("automatic capture switch persists and gates the local scheduler", async () => {
-  const [page, css, scheduler, server] = await Promise.all([
+  const [page, css, scheduler, server, main] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/globals.css", root), "utf8"),
     readFile(new URL("scripts/caiguang-scheduler.mjs", root), "utf8"),
     readFile(new URL("desktop/server.mjs", root), "utf8"),
+    readFile(new URL("desktop/main.mjs", root), "utf8"),
   ]);
   assert.match(page, /automaticCaptureEnabled/);
   assert.match(page, /role="switch"/);
@@ -140,8 +141,12 @@ test("automatic capture switch persists and gates the local scheduler", async ()
   assert.match(scheduler, /!schedulerEnabled\(preferences\)[\s\S]*await stopWakeLock\(\)[\s\S]*return/);
   assert.match(scheduler, /spawn\("\/usr\/bin\/caffeinate", \["-s"\]/);
   assert.match(page, /<strong>防休眠<\/strong>/);
-  assert.match(page, /已开启 · 接通电源时锁屏不休眠/);
+  assert.match(page, /不要合上盖子/);
+  assert.match(page, /api\/desktop\/wake-lock/);
+  assert.match(page, /onClick=\{\(\) => void enableWakeLock\(\)\}/);
   assert.match(page, /runtimeStatus\?\.wakeLock\.enabled/);
+  assert.match(main, /new Notification\(\{ title: request\.title \|\| "采光", body: request\.body \}\)\.show\(\)/);
+  assert.doesNotMatch(scheduler, /osascript/);
   assert.match(server, /automaticCaptureEnabled: payload\.automaticCaptureEnabled/);
   assert.match(server, /creatorH5CaptureEnabled: payload\.creatorH5CaptureEnabled/);
 });

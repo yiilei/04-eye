@@ -425,6 +425,9 @@ aside { position: relative; display: flex; min-width: 0; padding: 0 22px 28px; f
 .runtime-heading span { color: rgba(255,255,255,.4); font-family: "DIN Alternate", "DIN Condensed", "Arial Narrow", sans-serif; font-size: 9px; font-variant-numeric: tabular-nums; }
 .runtime-status-row, .runtime-update-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 47px; padding: 8px 11px; }
 .runtime-status-row { border-bottom: 1px solid rgba(255,255,255,.065); }
+.runtime-wake-lock { width: 100%; color: inherit; background: transparent; border: 0; border-bottom: 1px solid rgba(255,255,255,.065); border-radius: 0; text-align: left; cursor: pointer; transition: background .15s ease; }
+.runtime-wake-lock:hover { background: rgba(255,255,255,.045); }
+.runtime-wake-lock:focus-visible { outline: 2px solid #ffe600; outline-offset: -2px; }
 .runtime-status-row > div, .runtime-update-copy { display: grid; min-width: 0; gap: 3px; }
 .runtime-status-row strong, .runtime-update-copy strong { overflow: hidden; font-size: 9px; font-weight: 620; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-status-row small, .runtime-update-copy small { overflow: hidden; color: rgba(255,255,255,.38); font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
@@ -677,6 +680,7 @@ html[data-theme="light"] .runtime-panel { color: rgba(20,22,27,.92); background:
 html[data-theme="light"] .runtime-heading { border-color: rgba(28,33,42,.1); }
 html[data-theme="light"] .runtime-heading span { color: rgba(30,34,42,.52); }
 html[data-theme="light"] .runtime-status-row { border-color: rgba(28,33,42,.09); }
+html[data-theme="light"] .runtime-wake-lock:hover { background: rgba(28,33,42,.045); }
 html[data-theme="light"] .runtime-status-row strong,
 html[data-theme="light"] .runtime-update-copy strong { color: rgba(20,22,27,.88); }
 html[data-theme="light"] .runtime-status-row small,
