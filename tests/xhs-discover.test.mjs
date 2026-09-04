@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountCapturePolicy, diffPosts, isSafetyStopError, latestPostOnly, mergeDiscoveredTasks, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, captureCandidates, diffPosts, isSafetyStopError, latestPostOnly, mergeDiscoveredTasks, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -129,4 +129,10 @@ test("rediscovery refreshes token and releases a stranded task", () => {
 test("rediscovery does not reopen completed work", () => {
   const completed = { id: "note-a", status: "completed", sourceUrl: "https://old" };
   assert.deepEqual(mergeDiscoveredTasks([completed], [{ id: "note-a", status: "pending", sourceUrl: "https://new" }]), [completed]);
+});
+
+test("visible stranded posts are refreshed even when they are not newly published", () => {
+  const posts = [{ id: "old-failed", sourceUrl: "https://fresh" }, { id: "baseline" }];
+  const tasks = [{ id: "note-old-failed", accountKey: "account", status: "needs_browser_capture" }];
+  assert.deepEqual(captureCandidates(posts, [], tasks, "account"), [posts[0]]);
 });

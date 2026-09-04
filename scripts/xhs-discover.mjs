@@ -133,6 +133,14 @@ export function mergeDiscoveredTasks(existingTasks, discoveredTasks) {
   return [...merged, ...discoveredById.values()];
 }
 
+export function captureCandidates(posts, newPosts, existingTasks, accountKey) {
+  const recoverableIds = new Set(existingTasks
+    .filter((task) => task.accountKey === accountKey && ["needs_browser_capture", "retry_pending"].includes(task.status))
+    .map((task) => task.id));
+  const candidates = [...newPosts, ...posts.filter((post) => recoverableIds.has(`note-${post.id}`))];
+  return [...new Map(candidates.map((post) => [post.id, post])).values()];
+}
+
 export function selectAccounts(accounts, accountKeys = [], pinnedAccountIds) {
   const explicit = new Set(accountKeys || []);
   const pinned = Array.isArray(pinnedAccountIds) ? new Set(pinnedAccountIds.map(String)) : null;
@@ -241,7 +249,7 @@ export async function discover(options = {}) {
       const difference = options.firstLatest ? latestPostOnly(posts) : diffPosts(posts, account.lastSeenPostId);
       checks.push({ accountKey: account.searchKey, checkedAt, status: difference.status, latestPostId: difference.latestPostId,
         ...(difference.status === "baseline_missing" ? { error: "主页首批帖子中未找到上次基线，已停止，避免误抓历史内容" } : {}) });
-      for (const post of difference.newPosts) {
+      for (const post of captureCandidates(posts, difference.newPosts, queue.tasks, account.searchKey)) {
         pendingTasks.push({ id: `note-${post.id}`, type: "note", status: "pending", accountKey: account.searchKey,
           title: post.title, slug: slugFor(account, post), sourceUrl: post.sourceUrl,
           captureDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) });
