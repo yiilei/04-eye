@@ -56,13 +56,13 @@ test("unpublished H5 keeps a low-frequency retry after fallback registration", (
 test("completed capture status includes all H5 activities still waiting for publication", async () => {
   const source = await readFile(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8");
   assert.match(source, /task\.type === "h5_event" && task\.status === "fallback_pending"/);
-  assert.match(source, /抓取完成，\$\{fallbackCount\} 项等待活动发布/);
+  assert.match(source, /本轮已结束，\$\{fallbackCount\} 项正文获取失败，等待补抓/);
 });
 
 test("daily report distinguishes queued H5 work and unpublished fallbacks", async () => {
   const source = await readFile(new URL("../scripts/daily-pipeline.mjs", import.meta.url), "utf8");
   assert.match(source, /本轮 H5 任务/);
-  assert.match(source, /活动尚未上线（兜底记录）/);
+  assert.match(source, /活动正文获取失败（兜底记录）/);
   assert.match(source, /下一次定时抓取或手动抓取时继续尝试/);
   assert.match(source, /duplicateTitleCounts/);
 });

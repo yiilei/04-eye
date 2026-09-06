@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
 import { captureIsDue, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
-import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
+import { initializeCapturePreferences } from "./capture-time-policy.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
@@ -80,7 +80,10 @@ async function runCapture(reason = "scheduled") {
   await mkdir(logRoot, { recursive: true });
   const now = clock();
   const captureLog = path.join(logRoot, `${now.date}-capture.log`);
-  const logHandle = await open(captureLog, "w");
+  const logHandle = await open(captureLog, "a");
+  await logHandle.write(`\n[capture-start] ${new Date().toISOString()} ${reason}\n`);
+  // Keep an active job awake on battery too; never keep the display on.
+  const awake = spawn("/usr/bin/caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore" });
   let status = 1;
   try {
     const child = spawn(wrapper, ["auto"], {
@@ -97,6 +100,7 @@ async function runCapture(reason = "scheduled") {
       child.once("exit", (code) => { clearTimeout(timeout); resolve(code ?? 1); });
     });
   } finally {
+    awake.kill();
     await logHandle.close();
   }
   const output = await readFile(captureLog, "utf8").catch(() => "");
@@ -105,6 +109,7 @@ async function runCapture(reason = "scheduled") {
   state.lastCaptureAt = new Date().toISOString();
   state.lastCaptureStatus = ok ? "completed" : "needs_attention";
   state.lastCaptureReason = reason;
+  state.nextCaptureAttemptAt = ok ? null : new Date(Date.now() + 30 * 60_000).toISOString();
   if (ok) state.lastCaptureDate = now.date;
   await atomicJson(statePath, state);
   return { ok, output };
@@ -124,11 +129,12 @@ async function tick() {
   }
   await ensureWakeLock();
   const now = clock();
-  const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
+  const previous = await readJson(statePath, {});
+  const scheduled = { state: { ...previous, captureScheduleDate: now.date, captureScheduleTime: preferences.captureTime }, time: preferences.captureTime, changed: previous.captureScheduleDate !== now.date || previous.captureScheduleTime !== preferences.captureTime };
   const state = scheduled.state;
   if (scheduled.changed) await atomicJson(statePath, state);
   const queue = await readJson(queuePath, { tasks: [] });
-  const retryDue = (queue.tasks || []).some((task) => task.status === "retry_pending"
+  const retryDue = (queue.tasks || []).some((task) => ["retry_pending", "fallback_pending"].includes(task.status)
     && (!task.nextAttemptAt || new Date(task.nextAttemptAt).getTime() <= Date.now()));
   console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time} retryDue=${retryDue}`);
   if (captureIsDue(preferences, state, now, retryDue)) {
@@ -149,6 +155,13 @@ async function tick() {
 
 async function install() {
   await migrateLegacyData(appData);
+  // Reopening the UI must not bootout an active capture and strand its lock.
+  const loaded = spawnSync("/bin/launchctl", ["print", `gui/${process.getuid()}/com.yilei.caiguang.scheduler`], { encoding: "utf8" });
+  const existingRunner = await readFile(localRuntimeRunner, "utf8").catch(() => "");
+  if (loaded.status === 0 && existingRunner.includes(fileURLToPath(import.meta.url))) {
+    console.log(JSON.stringify({ ok: true, installed: launchAgent, alreadyLoaded: true }));
+    return;
+  }
   await mkdir(path.dirname(launchAgent), { recursive: true });
   await mkdir(logRoot, { recursive: true });
   await mkdir(localRuntimeRoot, { recursive: true });

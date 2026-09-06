@@ -33,7 +33,8 @@ class H5CaptureTests(unittest.TestCase):
 
     def test_detects_unpublished_activity_error_page(self):
         message = MODULE.permanent_page_error('{"success":false,"msg":"该应用不存在，请前往发布系统进行录入&发布"}')
-        self.assertIn("尚未发布", message)
+        self.assertIn("activity_url_unavailable", message)
+        self.assertIn("不能据此判断", message)
         self.assertIsNone(MODULE.permanent_page_error("正常活动正文"))
 
     def test_rejects_a_first_screen_masquerading_as_a_full_h5_capture(self):

@@ -37,11 +37,20 @@ test("enabled switch allows due actions and prevents duplicate daily runs", () =
   assert.equal(pushIsDue(preferences, { lastPushDate: now.date }, now), false);
 });
 
-test("daily randomized schedule overrides the legacy fixed preference", () => {
+test("the displayed preference overrides an obsolete daily random schedule", () => {
   const preferences = { automaticCaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" };
   const state = { captureScheduleDate: now.date, captureScheduleTime: "06:37" };
-  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:36" }), false);
+  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "01:59" }), false);
+  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "02:00" }), true);
   assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:37" }), true);
+});
+
+test("failed runs catch up after cooldown, successful runs do not duplicate", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "02:00" };
+  const state = { lastCaptureDate: now.date, lastCaptureStatus: "needs_attention", nextCaptureAttemptAt: "2026-08-24T04:30:00Z" };
+  assert.equal(captureIsDue(preferences, state, { ...now, time: "12:29", timestamp: Date.parse("2026-08-24T04:29:00Z") }), false);
+  assert.equal(captureIsDue(preferences, state, { ...now, time: "12:30", timestamp: Date.parse("2026-08-24T04:30:00Z") }), true);
+  assert.equal(captureIsDue(preferences, { lastCaptureDate: now.date, lastCaptureStatus: "completed" }, now), false);
 });
 
 test("a due retry runs even after the normal daily capture", () => {
@@ -57,4 +66,11 @@ test("missed schedules run once after wake or a later boot", () => {
   assert.equal(captureIsDue(preferences, { lastCaptureDate: now.date }, { date: now.date, time: "18:00" }), false);
   assert.equal(pushIsDue(preferences, {}, { date: now.date, time: "10:59" }), false);
   assert.equal(pushIsDue(preferences, {}, { date: now.date, time: "11:20" }), true);
+});
+
+test("returning after days off catches up even before today's scheduled hour", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "08:00" };
+  assert.equal(captureIsDue(preferences, { lastCaptureDate: "2026-08-21", lastCaptureStatus: "completed" }, now), true);
+  assert.equal(captureIsDue(preferences, { lastCaptureDate: "2026-08-23", lastCaptureStatus: "completed" }, now), false);
+  assert.equal(captureIsDue(preferences, { lastCaptureDate: now.date, lastCaptureStatus: "completed" }, now), false);
 });

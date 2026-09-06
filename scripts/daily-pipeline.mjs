@@ -139,6 +139,9 @@ async function main() {
           if (!result.ok) throw new Error(result.error || "帖子抓取失败");
           report.completed.push({ id: task.id, type: task.type, title: task.title, manifest: result.manifest, images: result.images, videos: result.videos, livePhotos: result.livePhotos });
         } else {
+          if (task.detailResolution === "unresolved" || task.sourceUrl.startsWith("https://creator.xiaohongshu.com/")) {
+            throw new Error(`detail_url_unresolved：${task.detailError || "未取得活动真实正文地址，保留入口等待重新解析"}`);
+          }
           const output = run(process.execPath, h5Arguments(task));
           const result = JSON.parse(output.split("\n").at(-1));
           if (!result.ok) throw new Error(result.error || "H5 登记失败");
@@ -267,7 +270,7 @@ async function main() {
     "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${reportTitle(item)}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
     ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
     ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
-    ...(report.fallbacks.length ? ["", "## 活动尚未上线（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。已尝试 ${item.attempts} 次，${localTime(item.nextAttemptAt)} 起具备重试资格，将在下一次定时抓取或手动抓取时继续尝试。`)] : []),
+    ...(report.fallbacks.length ? ["", "## 活动正文获取失败（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。已尝试 ${item.attempts} 次，${localTime(item.nextAttemptAt)} 起具备重试资格，将在下一次定时抓取或手动抓取时继续尝试。`)] : []),
     ...(report.browserCapture.length ? ["", "## MyFlicker 自动接管", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}，需从已授权页面提取完整媒体清单`)] : []),
     ...(report.failed.length ? ["", "## 需要用户处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
@@ -281,7 +284,19 @@ async function main() {
 
 let lock;
 try {
+  // Old builds left an empty lock behind after termination. Recover only
+  // when no other pipeline process exists; never delete a live owner's lock.
+  try {
+    await readFile(lockPath, "utf8");
+    const processes = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8" });
+    const live = processes.split("\n").some((line) => {
+      const match = line.trim().match(/^(\d+)\s+(.*)$/);
+      return match && Number(match[1]) !== process.pid && /(?:^|\s|\/)daily-pipeline\.mjs(?:\s|$)/.test(match[2]);
+    });
+    if (!live) await unlink(lockPath);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
   lock = await open(lockPath, "wx");
+  await lock.writeFile(String(process.pid));
   await main();
 } catch (error) {
   if (error?.code === "EEXIST") console.error(JSON.stringify({ ok: false, error: "每日流水线已经在运行" }));

@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+
+const source = readFileSync(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8");
+const classify = new Function("results", "pipelineSummary", source.slice(source.indexOf("const failedStep ="), source.indexOf("let fallbackCount =")) + "return ok;");
+test("pipeline occupied/error must not mark the day completed", () => {
+  assert.equal(classify([], { ok: false, error: "每日流水线已经在运行" }), false);
+  assert.equal(classify([], null), false);
+  assert.equal(classify([], { ok: true, failed: 0, validation: "passed" }), true);
+  assert.equal(classify([], { ok: false, failed: 1 }), false);
+});
+test("account failures are not hidden by a zero exit status", () => {
+  assert.equal(classify([{ name: "discover_pinned_accounts", ok: true, summary: '{"ok":false}' }], { ok: true }), false);
+});
+test("X screenshot uses a defined request path", () => {
+  const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /eagleJson/);
+  assert.match(page, /AbortSignal\.timeout\(20_000\)/);
+});

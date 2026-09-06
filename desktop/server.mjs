@@ -1,13 +1,13 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
 import { cleanupReviewedMedia } from "../scripts/review-cache-cleanup.mjs";
-import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
+import { initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -49,7 +49,11 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   // previous undo window and purges already rejected/imported local copies.
   await cleanupReviewedMedia(dataRoot);
   try { await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot); }
-  catch { await writeFile(registryPath, "[]\n"); }
+  catch (error) {
+    // A starter-data failure must never erase a user's existing review list.
+    if (!existsSync(registryPath)) await writeFile(registryPath, "[]\n");
+    else console.error("[desktop] starter data skipped:", error);
+  }
 
   const json = (value, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
@@ -79,14 +83,14 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         if (match) {
           const start = Number(match[1]);
           const end = match[2] ? Math.min(Number(match[2]), info.size - 1) : info.size - 1;
-          const bytes = await readFile(filename);
-          return new Response(bytes.subarray(start, end + 1), { status: 206, headers: {
+          if (start > end || start >= info.size) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${info.size}` } });
+          return new Response(Readable.toWeb(createReadStream(filename, { start, end })), { status: 206, headers: {
             "Content-Type": contentType, "Accept-Ranges": "bytes",
             "Content-Range": `bytes ${start}-${end}/${info.size}`, "Content-Length": String(end - start + 1),
           } });
         }
       }
-      return new Response(await readFile(filename), { headers: { "Content-Type": contentType, "Content-Length": String(info.size) } });
+      return new Response(Readable.toWeb(createReadStream(filename)), { headers: { "Content-Type": contentType, "Content-Length": String(info.size) } });
     } catch { return new Response("Not found", { status: 404 }); }
   };
   const assets = {
@@ -127,10 +131,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       if (pathname === "/api/desktop/preferences" && request.method === "GET") {
         const initialized = initializeCapturePreferences(await readJson(preferencesPath, {}));
         if (initialized.changed) await atomicJson(preferencesPath, { ...initialized.preferences, schemaVersion: 1, updatedAt: new Date().toISOString() });
-        const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
-        const scheduled = ensureDailyCaptureSchedule(await readJson(schedulerStatePath, {}), date);
-        if (scheduled.changed) await atomicJson(schedulerStatePath, scheduled.state);
-        const response = json({ ...initialized.preferences, todayCaptureTime: scheduled.time });
+        const response = json({ ...initialized.preferences, todayCaptureTime: initialized.preferences.captureTime });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);

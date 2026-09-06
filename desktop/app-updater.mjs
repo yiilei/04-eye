@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { checkForUpdate } from "./runtime-status.mjs";
 
 const exec = promisify(execFile);
+const MAX_UPDATE_BYTES = 1024 * 1024 * 1024;
 
 export function isTrustedUpdateDownload(url, version) {
   try {
@@ -22,6 +23,18 @@ export function isTrustedUpdateDownload(url, version) {
 export function currentAppBundle(executable = process.execPath) {
   const candidate = path.resolve(executable, "../../..");
   return candidate.endsWith(".app") ? candidate : null;
+}
+
+export function isTrustedUpdateResponse(url) {
+  if (!url) return true; // Test doubles and older fetch implementations may omit it.
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && [
+      "github.com",
+      "objects.githubusercontent.com",
+      "release-assets.githubusercontent.com",
+    ].includes(parsed.hostname);
+  } catch { return false; }
 }
 
 export async function prepareUpdate({ currentVersion, targetApp, fetchImpl = fetch, notify = () => {} }) {
@@ -39,10 +52,13 @@ export async function prepareUpdate({ currentVersion, targetApp, fetchImpl = fet
     notify({ state: "downloading", percent: 1, message: "正在下载新版本" });
     const response = await fetchImpl(release.downloadUrl, { headers: { "User-Agent": "Caiguang-Updater" }, redirect: "follow" });
     if (!response.ok || !response.body) throw new Error(`下载失败（${response.status}）`);
+    if (!isTrustedUpdateResponse(response.url)) throw new Error("更新下载被重定向到非可信地址");
     const total = Number(response.headers.get("content-length")) || 0;
+    if (total > MAX_UPDATE_BYTES) throw new Error("更新包体积异常，已停止下载");
     let received = 0;
     const stream = Readable.fromWeb(response.body).map((chunk) => {
       received += chunk.length;
+      if (received > MAX_UPDATE_BYTES) throw new Error("更新包体积异常，已停止下载");
       notify({ state: "downloading", percent: total ? Math.min(95, Math.round(received / total * 95)) : 20, message: "正在下载新版本" });
       return chunk;
     });

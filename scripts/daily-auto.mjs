@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { acquireProcessLock } from "./process-lock.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -11,7 +12,18 @@ const dataDir = path.join(dataHome, "data");
 const progressPath = path.join(dataHome, "data", "capture-progress.json");
 const preferencesPath = path.join(dataHome, "data", "user-preferences.json");
 const queuePath = path.join(dataDir, "xhs-capture-queue.json");
+const runLockPath = path.join(dataDir, "daily-auto.lock");
 mkdirSync(dataDir, { recursive: true });
+let releaseRunLock;
+try {
+  releaseRunLock = acquireProcessLock(runLockPath);
+} catch (error) {
+  console.error(JSON.stringify({ ok: false, status: "already_running", error: error instanceof Error ? error.message : "已有抓取任务正在运行" }));
+  process.exit(2);
+}
+process.once("exit", releaseRunLock);
+process.once("SIGTERM", () => process.exit(143));
+process.once("SIGINT", () => process.exit(130));
 for (const name of ["xhs-account-pins.json", "xhs-media-policy.json", "xhs-capture-queue.json", "xhs-events-state.json", "xhs-pending-pins.json"]) {
   const target = path.join(dataDir, name);
   const seed = path.join(root, "data", name);
@@ -55,11 +67,17 @@ try {
 } catch { /* a genuinely malformed result remains a failure */ }
 const failedStep = results.find((item) => !item.ok && item.name !== "capture_validate_report");
 const pipelineHardFailure = !pipelineSummary
+  || Boolean(pipelineSummary.error)
+  || (pipelineSummary.ok === false && !Number(pipelineSummary.browserCapture || 0) && !Number(pipelineSummary.retrying || 0))
   || Number(pipelineSummary.failed || 0) > 0
   || pipelineSummary.validation === "failed";
 // daily-pipeline intentionally exits non-zero while browser/retry fallbacks are
 // pending. Those are recoverable hand-offs, not a failed capture run.
-const ok = !failedStep && !pipelineHardFailure;
+const discoveryFailed = results.some((item) => {
+  if (item.name !== "discover_pinned_accounts") return false;
+  try { return JSON.parse(item.summary).ok === false; } catch { return true; }
+});
+const ok = !failedStep && !pipelineHardFailure && !discoveryFailed;
 let fallbackCount = 0;
 try {
   const queue = JSON.parse(readFileSync(queuePath, "utf8"));
@@ -72,13 +90,17 @@ writeProgress(ok
       ? `已抓取 ${pipelineSummary.completed || 0} 项，${pipelineSummary.browserCapture} 项等待浏览器兜底`
       : Number(pipelineSummary?.retrying || 0)
         ? `已抓取 ${pipelineSummary.completed || 0} 项，其余项目稍后自动重试`
-        : fallbackCount ? `抓取完成，${fallbackCount} 项等待活动发布` : "抓取完成，批阅列表已刷新",
+        : fallbackCount ? `本轮已结束，${fallbackCount} 项正文获取失败，等待补抓` : "抓取完成，批阅列表已刷新",
     percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
   : { state: "failed", phase: "failed", label: failedStep
       ? `${failedStep[1] || "前置步骤"}未完成，请查看日报`
       : Number(pipelineSummary?.failed || 0) > 0
         ? `${pipelineSummary.failed} 项抓取失败，请查看日报`
+      : pipelineSummary?.error
+        ? `抓取未完成：${pipelineSummary.error}。自动任务稍后补试`
+        : discoveryFailed ? "部分账号查询失败，未标记为完成；自动任务稍后补试，请查看日报"
         : "抓取未完成，请查看日报",
     percent: Math.max(6, steps.find((step) => !results.find((result) => result.name === step[0])?.ok)?.[2] || 6), phaseIndex: results.length, phaseCount: steps.length, failedAt: new Date().toISOString() });
 console.log(JSON.stringify({ ok, results }));
 if (!ok) process.exitCode = 1;
+releaseRunLock();

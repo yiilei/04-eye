@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -405,7 +405,17 @@ app.whenReady().then(async () => {
   if (process.platform === "darwin" && !icon.isEmpty()) app.dock.setIcon(icon);
   await createWindow();
 }).catch((error) => dialog.showErrorBox("采光启动失败", error instanceof Error ? error.message : String(error)));
-app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
+let catchUpTimer;
+function requestCatchUp() {
+  clearTimeout(catchUpTimer);
+  catchUpTimer = setTimeout(() => {
+    // Ask the existing launchd job to run: do not start a competing pipeline.
+    execFile("/bin/launchctl", ["kickstart", `gui/${process.getuid()}/com.yilei.caiguang.scheduler`], () => {});
+  }, 30_000);
+  catchUpTimer.unref();
+}
+app.whenReady().then(() => { powerMonitor.on("resume", requestCatchUp); requestCatchUp(); });
+app.on("activate", () => { requestCatchUp(); if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
   stopXhsLoginTimer();

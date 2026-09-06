@@ -9,7 +9,7 @@ export function h5TaskIsDue(task, now = new Date()) {
 }
 
 export function h5FailureIsPermanent(error) {
-  return /activity H5 尚未发布|activity_unpublished|链接已失效/u.test(String(error || ""));
+  return /activity H5 尚未发布|activity_unpublished|activity_url_unavailable|detail_url_unresolved|链接已失效/u.test(String(error || ""));
 }
 
 export function scheduleH5PublicationRetry(task, error, now = new Date()) {

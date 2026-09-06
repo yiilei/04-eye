@@ -52,7 +52,7 @@ def dynamic_payload_kind(payload: bytes, content_type: str = "", url: str = "") 
 def permanent_page_error(body_text: str) -> str | None:
     markers = ("该应用不存在", "请前往发布系统进行录入&发布")
     if any(marker in body_text for marker in markers):
-        return "创作服务中心已展示活动，但活动 H5 尚未发布或链接已失效"
+        return "activity_url_unavailable：当前正文地址返回应用不存在；可能是地址变化或页面不可用，不能据此判断活动未上线"
     return None
 
 
@@ -148,7 +148,7 @@ def main() -> int:
         if permanent_error:
             error = {
                 "ok": False,
-                "status": "activity_unpublished",
+                "status": "activity_url_unavailable",
                 "error": permanent_error,
                 "url": page.url,
             }

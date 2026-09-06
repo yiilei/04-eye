@@ -300,8 +300,12 @@ function expectedImageSize(item: ReviewItem, position: number) {
 async function readImageSize(source: string) {
   return new Promise<{ width: number; height: number }>((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-    image.onerror = () => reject(new Error("图片无法读取"));
+    const timer = window.setTimeout(() => {
+      image.onload = image.onerror = null;
+      reject(new Error("图片校验超时，请切换素材重试"));
+    }, 15_000);
+    image.onload = () => { window.clearTimeout(timer); resolve({ width: image.naturalWidth, height: image.naturalHeight }); };
+    image.onerror = () => { window.clearTimeout(timer); reject(new Error("图片无法读取")); };
     image.src = source;
   });
 }
@@ -328,9 +332,17 @@ async function validateReviewItem(item: ReviewItem) {
     if (!sources[Number(position)]) throw new Error(`Live Photo 第 ${Number(position) + 1} 张位置无效`);
     await new Promise<void>((resolve, reject) => {
       const video = document.createElement("video");
+      const finish = (error?: Error) => {
+        window.clearTimeout(timer);
+        video.onloadedmetadata = video.onerror = null;
+        video.removeAttribute("src");
+        video.load();
+        if (error) reject(error); else resolve();
+      };
+      const timer = window.setTimeout(() => finish(new Error("动态文件校验超时，请切换素材重试")), 15_000);
       video.preload = "metadata";
-      video.onloadedmetadata = () => video.duration > 0 ? resolve() : reject(new Error("动态文件时长异常"));
-      video.onerror = () => reject(new Error(`第 ${Number(position) + 1} 张动态文件无法读取`));
+      video.onloadedmetadata = () => finish(video.duration > 0 ? undefined : new Error("动态文件时长异常"));
+      video.onerror = () => finish(new Error(`第 ${Number(position) + 1} 张动态文件无法读取`));
       video.src = source;
     });
   }
@@ -339,9 +351,9 @@ async function validateReviewItem(item: ReviewItem) {
 async function ensureEagleFolder() {
   let folderResponse: Response;
   try {
-    folderResponse = await fetch(`${eagleBase}/folder/list`, { cache: "no-store" });
+    folderResponse = await fetch(`${eagleBase}/folder/list`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
   } catch {
-    throw new Error("无法连接 Eagle，请先启动 Eagle 后再点 YES");
+    throw new Error("Eagle 未响应或连接超时，请确认 Eagle 已启动后重试");
   }
   const folderResult = await folderResponse.json() as EagleResponse<Array<{ id: string; name: string; children?: [] }>>;
   if (folderResult.status !== "success" || !folderResult.data) throw new Error(folderResult.message || "无法读取 Eagle 文件夹");
@@ -349,6 +361,7 @@ async function ensureEagleFolder() {
   if (existing) return existing;
   const createResponse = await fetch(`${eagleBase}/folder/create`, {
     method: "POST",
+    signal: AbortSignal.timeout(10_000),
     headers: { "Content-Type": "text/plain;charset=UTF-8" },
     body: JSON.stringify({ folderName: "小红书" }),
   });
@@ -482,6 +495,7 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
   const [syncingId, setSyncingId] = useState<string>();
   const [eagleMessage, setEagleMessage] = useState("");
+  const screenshotBusy = useRef(false);
   const [eagleError, setEagleError] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [xhsSetupStatus, setXhsSetupStatus] = useState<"未登录" | "等待登录" | "已登录">("未登录");
@@ -546,10 +560,10 @@ export default function Home() {
   } | null>(null);
 
   useEffect(() => {
-    if (!eagleMessage) return;
+    if (!eagleMessage || eagleError || eagleMessage.startsWith("正在")) return;
     const timer = window.setTimeout(() => setEagleMessage(""), 3000);
     return () => window.clearTimeout(timer);
-  }, [eagleMessage]);
+  }, [eagleMessage, eagleError]);
 
   useEffect(() => {
     if (!pinLinkMessage) return;
@@ -733,6 +747,8 @@ export default function Home() {
     [dismissalKey, dismissedIds, runtimeItems],
   );
   const current = reviewItems[index] ?? emptyItem;
+  // Stable across polling, but changes when a fallback is replaced in place.
+  const currentQualityKey = JSON.stringify(current);
   const allPinAccounts = useMemo(() => [
     ...seededPinAccounts,
     ...manualPinAccounts.filter((manual) => !seededPinAccounts.some((account) => account.profileId === manual.profileId)),
@@ -783,7 +799,7 @@ export default function Home() {
   const isStarterMaterial = current.id.startsWith("starter-");
   const livePhotoCount = current.livePhotos ? Object.keys(current.livePhotos).length : current.livePhotoVideo ? 1 : 0;
   const materialLabel = current.previewOnly
-    ? "活动未上线 · 当前仅保留封面"
+    ? "正文获取失败 · 当前仅保留封面"
     : current.gallery
       ? `${current.gallery.length} 张图片${livePhotoCount ? ` · ${livePhotoCount} 个 Live Photo` : ""}`
       : current.videoPost
@@ -962,7 +978,7 @@ export default function Home() {
   // identities. Revalidate only when the selected material actually changes;
   // otherwise the YES button flickers between checking and passed forever.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current.id]);
+  }, [currentQualityKey]);
 
   useEffect(() => {
     const desktop = new URLSearchParams(window.location.search).get("desktop") === "1";
@@ -1760,6 +1776,7 @@ export default function Home() {
   }, [allPinAccounts, pinnedAccountIds]);
 
   const captureCanvasToEagle = useCallback(async () => {
+    if (screenshotBusy.current) return;
     if (reviewTourStep !== null || onboardingPreview || settingsOpen) return;
     const element = viewer.current;
     const bridge = getDesktopBridge();
@@ -1769,6 +1786,7 @@ export default function Home() {
       return;
     }
     setEagleError(false);
+    screenshotBusy.current = true;
     setEagleMessage("正在截取当前画板…");
     element.classList.add("is-capturing");
     let temporaryPath = "";
@@ -1782,23 +1800,29 @@ export default function Home() {
       if (!captured.ok || !captured.path) throw new Error(captured.error || "画板截取失败");
       temporaryPath = captured.path;
       const folderId = await ensureEagleFolder();
-      const result = await eagleJson<string>("/item/addFromPath", {
+      const result = await (await fetch(`${eagleBase}/item/addFromPath`, {
         method: "POST",
-        body: {
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        signal: AbortSignal.timeout(20_000),
+        body: JSON.stringify({
           path: captured.path, folderId, website: current.sourceUrl,
           name: `${current.title} - 当前画板截取`,
           tags: ["采光", "画板截取", "小红书", "PNG"],
           annotation: `${current.summary}\n发布日期：${postDateLabel(current)}\n截取范围：当前画板可见区域`,
-        },
-      });
+        }),
+      })).json();
       if (result.status !== "success") throw new Error(result.message || "Eagle 导入失败");
+      await bridge.cleanupCapture?.(temporaryPath);
       setEagleMessage(`已截取当前画板并存入 Eagle（${captured.width}×${captured.height}px）`);
     } catch (error) {
       setEagleError(true);
-      setEagleMessage(error instanceof Error ? error.message : "画板截取失败");
+      setEagleMessage(temporaryPath
+        ? `截图已保留，但未存入 Eagle。请确认 Eagle 已打开后重试。文件：${temporaryPath}`
+        : `画板截取失败：${error instanceof Error ? error.message : "请重试"}`);
     } finally {
+      screenshotBusy.current = false;
       element.classList.remove("is-capturing");
-      if (temporaryPath) await bridge.cleanupCapture?.(temporaryPath);
+      // Failed captures remain available locally for recovery.
     }
   }, [current, onboardingPreview, reviewTourStep, settingsOpen]);
 
@@ -2086,7 +2110,7 @@ export default function Home() {
                         }}
                         onBlur={() => setScheduleTooltip((current) => ({ ...current, visible: false }))}
                       >
-                        今日随机抓取
+                        每日抓取时间
                         <span className="settings-schedule-help" aria-hidden="true">?</span>
                       </strong>
                     </div>
@@ -2202,11 +2226,11 @@ export default function Home() {
             </div>
             {current.previewOnly && (
               <div className="fallback-notice" role="status" aria-live="polite">
-                <strong>活动正文暂未上线</strong>
+                <strong>活动正文暂时无法获取</strong>
                 <span>采光已保留封面、失败原因和创作服务中心入口。它不是完整素材，暂时不能通过 YES 导入 Eagle；下次定时抓取或手动抓取时会继续尝试。</span>
               </div>
             )}
-            {quality.state === "failed" && <p className="quality-alert">{quality.message}</p>}
+            {quality.state === "failed" && !current.previewOnly && <p className="quality-alert">{quality.message}</p>}
             <div className="actions">
               <button className="reject" onClick={() => void decide("rejected")} disabled={Boolean(syncingId) || Boolean(eagleItems[current.id])}>NO</button>
               <button className="keep" onClick={() => void decide("kept")} disabled={Boolean(syncingId) || quality.state !== "passed"}>YES</button>
@@ -2214,7 +2238,10 @@ export default function Home() {
             <div className={`post-caption ${formatPostCaption(current.caption) ? "" : "is-empty"}`} role="region" tabIndex={0} aria-label="帖子文案">
               <span className="post-caption-copy">{formatPostCaption(current.caption) || "暂无帖子文案"}</span>
             </div>
-            {eagleMessage && <p className={`eagle-status ${eagleError ? "error" : ""}`}>{eagleMessage}</p>}
+            {eagleMessage && <div className={`eagle-status ${eagleError ? "error" : ""}`} role="status">
+              <span>{eagleMessage}</span>
+              {eagleError && <button type="button" onClick={() => setEagleMessage("")} aria-label="关闭错误提示">关闭</button>}
+            </div>}
             <div className="gallery-position-group">
               <span className="gallery-position" aria-label={`当前第 ${galleryIndex + 1} 张，共 ${current.gallery?.length ?? 1} 张`}>{galleryIndex + 1}/{current.gallery?.length ?? 1}</span>
               {desktopAppMode && (
@@ -2277,7 +2304,7 @@ export default function Home() {
           style={{ left: scheduleTooltip.left, top: scheduleTooltip.top }}
         >
           <b>关于随机抓取</b>
-          <span>每天在 00:00–08:59 随机执行，避免长期按固定频率访问。</span>
+          <span>首次安装时在 00:00–08:59 分配抓取时间。错过时间会在开机或重新打开采光后检查补抓；失败后间隔 30 分钟重试。</span>
         </div>,
         document.body,
       )}

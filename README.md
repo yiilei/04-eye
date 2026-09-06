@@ -1,11 +1,11 @@
 # 采光
 
-“采光”是一个本地运行的小红书视觉素材采集与批阅工具。公开版预置 10 个设计/运营账号埋点，不包含任何登录凭证、Cookie 或私人素材。
+“采光”是一个本地运行的小红书视觉素材采集与批阅工具。公开版预置一组可选的设计/运营账号埋点，不包含任何登录凭证、Cookie 或私人素材。
 
 ## 最快开始
 
 1. 下载 GitHub Release 中的“采光-完整安装包-macOS-arm64.zip”。
-2. 完整解压后双击“开始安装.command”，它会安装应用、源代码、采集引擎、macOS 定时器与 Codex 插件。
+2. 完整解压后双击“开始安装.command”，它会安装应用、采集引擎、macOS 定时器与本地 MCP。
 3. 启动 Eagle（可选）。
 4. 打开 Codex，把安装包内“发给Codex.txt”的内容发给它；首次测试可以直接说：
 
@@ -13,13 +13,13 @@
 帮我抓取最新的小红书创作服务活动
 ```
 
-首次使用时，在采光中点击“独立登录”，再用小红书 App 扫描终端二维码。采光不会读取、复制、打开或修改主 Chrome，会话只保存在采光本机资料目录。登录完成后，发现、下载、清晰度校验和批阅登记都由本地脚本完成。MyFlicker 只在登录失效、页面结构变化或特殊 H5 提取失败时介入。
+首次使用时，在采光中点击“使用 Chrome 登录”。这个明确的用户操作会只读复制 Chrome 当前的小红书登录快照，不会修改 Chrome Cookie；复制失败时才进入采光独立扫码登录。会话只保存在采光本机资料目录。登录完成后，发现、下载、清晰度校验和批阅登记都由本地脚本完成。
 
 从 v0.1.1 开始，抓取脚本和桌面应用共用同一个本地资料库。素材完成校验后，已经打开的应用会自动从首次设置页切换到批阅页，不需要刷新或重新启动。
 
 ## 第一次使用
 
-- 小红书：在源码目录运行 `pnpm xhs:login`，按终端提示使用小红书 App 扫码。该命令建立采光独立会话，不读取、不打开、不修改 Chrome；仓库不保存账号密码或公开 Cookie。
+- 小红书：应用内可由用户点击后复制 Chrome 登录快照，失败时使用独立扫码。源码用户也可运行 `pnpm xhs:login` 建立独立会话。仓库不保存账号密码或公开 Cookie。
 - Eagle：启动 Eagle 后，应用通过 `127.0.0.1:41595` 检测本地连接。点 YES 时才导入；“小红书”文件夹不存在时会自动创建。暂时不用 Eagle 也可以先抓取和批阅。
 - 埋点：设置页可搜索小红书用户，或直接粘贴账号主页链接并点击“埋点”。
 - 时间：设置页可选择每天抓取时间和批阅提醒时间；安装器创建的 macOS 本地定时器每分钟读取该配置，真正执行采集与系统提醒。
@@ -67,7 +67,9 @@ pnpm run desktop:package:public
 `plugins/caiguang/scripts/caiguang setup`：它只安装运行依赖，并复用 pip、pnpm
 与 Camoufox 的本机缓存；重复执行时通常会在数秒内完成。
 
-生成的 macOS 应用和完整安装包都在 `release/desktop`。完整安装包同时包含桌面应用、完整源代码、Codex Skill、公开埋点、采集与校验脚本以及安装说明。当前测试包为 Apple Silicon 版并使用临时签名，首次打开时如被 macOS 拦截，请在访达中右键应用并选择“打开”；正式分发版将补充 Intel 构建、Apple Developer ID 签名与公证。
+生成的 macOS 应用和完整安装包都在 `release/desktop`。安装包包含可直接运行的桌面应用、本地 MCP、公开埋点、采集与校验脚本，但不代替完整开发源码。需要让 Codex 修改时，请同时下载 GitHub 上与安装版号一致的 `Source code (zip)` 或 clone 对应 tag。当前测试包为 Apple Silicon 版并使用临时签名，首次打开时如被 macOS 拦截，请在访达中右键应用并选择“打开”；正式分发版应补充 Intel 构建、Apple Developer ID 签名与公证。
+
+用户遇到问题时，可把版本号、错误文字和截图交给 Codex，按 [CODEX_REPAIR.md](CODEX_REPAIR.md) 排查。发布前按 [RELEASE_QA.md](RELEASE_QA.md) 走查。
 
 ## 隐私
 
@@ -76,6 +78,6 @@ pnpm run desktop:package:public
 ## 复用的开源组件
 
 - [`jackwener/xhs-cli`](https://github.com/jackwener/xhs-cli)（Apache-2.0）：固定主页身份核验、最新帖子发现与本机浏览器会话读取。
-- [`JoeanAmier/XHS-Downloader`](https://github.com/JoeanAmier/XHS-Downloader)：帖子图片、视频与 Live Photo 素材下载。
+- [`JoeanAmier/XHS-Downloader`](https://github.com/JoeanAmier/XHS-Downloader)（GPL-3.0）：帖子图片、视频与 Live Photo 素材下载。
 
 项目只在这两层之间补充队列、基线保护、轮播顺序校验、批阅登记和 Eagle 工作流，避免重复实现成熟的浏览器登录与媒体提取能力。

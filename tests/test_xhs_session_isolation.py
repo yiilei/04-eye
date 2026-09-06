@@ -1,13 +1,14 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-PYTHON = ROOT / "vendor" / "xhs-cli" / ".venv" / "bin" / "python"
+PYTHON = Path(sys.executable)
 XHS = ROOT / "vendor" / "xhs-cli" / ".venv" / "bin" / "xhs"
 AUTH = ROOT / "vendor" / "xhs-cli" / "xhs_cli" / "auth.py"
 CAPTURE = ROOT / "scripts" / "xhs-capture.py"
@@ -17,7 +18,9 @@ class ChromeSessionIsolationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="caiguang-session-test-")
         self.config = Path(self.temporary.name)
-        self.env = {**os.environ, "XHS_CLI_CONFIG_DIR": str(self.config), "XHS_CLI_DISABLE_BROWSER_COOKIE": "1"}
+        inherited_pythonpath = os.environ.get("PYTHONPATH", "")
+        pythonpath = os.pathsep.join(filter(None, [str(ROOT / "vendor" / "xhs-cli"), inherited_pythonpath]))
+        self.env = {**os.environ, "PYTHONPATH": pythonpath, "XHS_CLI_CONFIG_DIR": str(self.config), "XHS_CLI_DISABLE_BROWSER_COOKIE": "1"}
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -65,7 +68,7 @@ class ChromeSessionIsolationTests(unittest.TestCase):
         token_file = self.config / "token_cache.json"
         cookie_file.write_text(json.dumps({"sessionSource": "isolated_qrcode", "cookies": {"a1": "a", "web_session": "s"}}), encoding="utf-8")
         token_file.write_text("{}", encoding="utf-8")
-        result = subprocess.run([str(XHS), "logout"], cwd=ROOT, env=self.env, text=True, capture_output=True)
+        result = subprocess.run([str(PYTHON), "-c", "from xhs_cli.cli import cli; cli()", "logout"], cwd=ROOT, env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0)
         self.assertFalse(cookie_file.exists())
         self.assertFalse(token_file.exists())

@@ -280,10 +280,13 @@ export async function discover(options = {}) {
   }
 
   if (options.write) {
+    // Account checks are deliberately paced. Merge into the latest queue so a
+    // parallel review/capture cannot be reverted by the older initial snapshot.
+    const liveQueue = await readJson(queuePath);
     const selectedKeys = new Set(selected.map((account) => account.searchKey));
-    queue.checkedAccounts = [...queue.checkedAccounts.filter((check) => !selectedKeys.has(check.accountKey)), ...checks];
-    queue.tasks = mergeDiscoveredTasks(queue.tasks, pendingTasks);
-    await atomicJson(queuePath, queue);
+    liveQueue.checkedAccounts = [...liveQueue.checkedAccounts.filter((check) => !selectedKeys.has(check.accountKey)), ...checks];
+    liveQueue.tasks = mergeDiscoveredTasks(liveQueue.tasks, pendingTasks);
+    await atomicJson(queuePath, liveQueue);
   }
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",
     checked: checks.filter((check) => check.status !== "deferred_safety_stop").length, added: pendingTasks.length,

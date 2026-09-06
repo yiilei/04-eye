@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { checkLocalModuleGraph } from "./check-local-module-graph.mjs";
 
 const exec = promisify(execFile);
 const root = process.cwd();
@@ -189,6 +190,7 @@ await exec("xattr", ["-cr", appPath]);
 // `strip` invalidates the copied Node executable's original signature. A
 // standalone file is not re-signed by `codesign --deep` consistently, so sign
 // it explicitly before sealing the outer application bundle.
+await checkLocalModuleGraph(packagedApp);
 await exec("codesign", ["--force", "--sign", "-", path.join(packagedRuntime, "node")]);
 await exec("codesign", ["--force", "--deep", "--sign", "-", appPath]);
 

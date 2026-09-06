@@ -35,6 +35,29 @@ export function diffEvents(events, state, previousLatestEventId = "") {
   return { current: normalized, newEvents: previousIndex >= 0 ? normalized.slice(0, previousIndex) : [] };
 }
 
+export function migrateTaskUrls(tasks, events) {
+  const byId = new Map(events.filter((event) => {
+    try {
+      const url = new URL(event.sourceUrl);
+      return event.detailResolution === "resolved" && url.protocol === "https:" && url.hostname === "fe.xiaohongshu.com"
+        && url.pathname.replace(/\/$/, "").endsWith(`/vincent/${event.id}`);
+    } catch { return false; }
+  }).map((event) => [event.id, event]));
+  for (const task of tasks) {
+    if (!["pending", "needs_h5_capture", "fallback_pending", "retry_pending", "failed"].includes(task.status)) continue;
+    const eventId = String(task.id || "").replace(/^h5-/, "");
+    const event = byId.get(eventId);
+    if (!event || task.sourceUrl === event.sourceUrl) continue;
+    task.sourceUrl = event.sourceUrl;
+    task.detailResolution = "resolved";
+    task.detailEvidence = event.detailEvidence;
+    task.coverUrl = event.coverUrl || task.coverUrl || "";
+    if (["fallback_pending", "failed"].includes(task.status)) task.status = "needs_h5_capture";
+    for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "failedAt", "error"]) delete task[key];
+  }
+  return tasks;
+}
+
 function runBrowser() {
   const output = execFileSync(python, [browserScript], {
     cwd: root, encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"],
@@ -81,20 +104,32 @@ export async function discoverEvents(options = {}) {
     title: event.title, slug: slug(event), sourceUrl: event.sourceUrl, coverUrl: event.coverUrl || "",
     captureDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()),
     displayDate: event.displayDate || "",
+    detailResolution: event.detailResolution || "unresolved", detailError: event.detailError || "",
   }));
   if (options.write) {
+    // Browser discovery can take close to a minute. Re-read immediately before
+    // writing so a capture/decision made during that time is never overwritten.
+    const liveQueue = await readJson(queuePath, queue);
+    const liveState = await readJson(statePath, state);
     const check = { accountKey: "creator-events", checkedAt, status: "verified", latestPostId: currentIds[0] || state.latestEventId || "" };
-    queue.checkedAccounts = [...queue.checkedAccounts.filter((item) => item.accountKey !== "creator-events"), check];
-    const existing = new Set(queue.tasks.map((task) => task.id));
-    queue.tasks.push(...tasks.filter((task) => !existing.has(task.id)));
-    await atomicJson(queuePath, queue);
+    liveQueue.checkedAccounts = [...liveQueue.checkedAccounts.filter((item) => item.accountKey !== "creator-events"), check];
+    // Activities can change frontend route after publication (for example
+    // /ditto/ -> /barleypromotion/). Migrate the existing task by activity ID
+    // before adding anything, and clear the old publication-failure retry.
+    migrateTaskUrls(liveQueue.tasks, difference.current);
+    const existing = new Set(liveQueue.tasks.map((task) => task.id));
+    const inserted = tasks.filter((task) => !existing.has(task.id));
+    liveQueue.tasks.push(...inserted);
+    await atomicJson(queuePath, liveQueue);
     await atomicJson(statePath, {
       schemaVersion: 1,
-      initializedAt: state.initializedAt || checkedAt,
+      initializedAt: liveState.initializedAt || state.initializedAt || checkedAt,
       lastCheckedAt: checkedAt,
-      latestEventId: currentIds[0] || state.latestEventId || "",
-      knownEventIds: [...new Set([...(state.knownEventIds || []), ...currentIds])],
+      latestEventId: currentIds[0] || liveState.latestEventId || state.latestEventId || "",
+      knownEventIds: [...new Set([...(liveState.knownEventIds || []), ...(state.knownEventIds || []), ...currentIds])],
     });
+    return { ok: true, status: "written", baselineOnly, checked: difference.current.length,
+      added: inserted.length, events: difference.current, tasks: inserted };
   }
   return { ok: true, status: options.write ? "written" : "dry_run", baselineOnly, checked: difference.current.length,
     added: tasks.length, events: difference.current, tasks };

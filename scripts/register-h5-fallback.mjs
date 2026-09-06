@@ -21,7 +21,7 @@ const sourceUrl = required("--source-url");
 const creatorCenterUrl = "https://creator.xiaohongshu.com/new/events";
 const failure = args.get("--error") || "页面结构暂时无法识别";
 const classifyFailure = (message) => {
-  if (/尚未发布|应用不存在|链接已失效/u.test(message)) return { type: "活动尚未发布", advice: "进入创作服务中心活动列表，等待活动正式发布后再打开。" };
+  if (/尚未发布|应用不存在|链接已失效|activity_url_unavailable|detail_url_unresolved/u.test(message)) return { type: "活动正文地址暂时无法访问或解析", advice: "可从创作服务中心查看真实详情；此错误不能证明活动未上线，后续将重新解析地址。" };
   if (/login_required|未登录|登录失效|Cookie/u.test(message)) return { type: "登录状态失效", advice: "回到采光重新同步小红书登录状态后再抓取。" };
   if (/风控|反爬|访问受限|403|验证/u.test(message)) return { type: "访问受到限制", advice: "稍后重试；若持续出现，请先在小红书网页正常访问一次。" };
   if (/selector|页面结构|模板|missing|Timeout.*locator/u.test(message)) return { type: "页面模板发生变化", advice: "采光已保留封面和入口，需要更新页面识别规则后重试。" };
@@ -77,7 +77,7 @@ await writeFile(path.join(stagingDir, "manifest.json"), `${JSON.stringify(manife
 let registry = [];
 try { registry = JSON.parse(await readFile(registryPath, "utf8")); } catch { /* first item */ }
 const prefix = `/media/${captureDate}/${slug}`;
-const caption = `活动正文暂未上线，本条为兜底记录，不是完整素材。\n\n情况类型：${failureInfo.type}\n\n失败原因：${failure}\n\n当前保留：活动封面、失败原因、创作服务中心入口。\n\n后续处理：下次定时抓取或手动抓取时，采光会继续尝试；补抓成功前不会通过 YES 导入 Eagle。\n\n处理建议：${failureInfo.advice}\n点击上方链接可进入小红书创作服务中心，在活动列表中查找「${title}」。`;
+const caption = `活动正文获取失败，本条为兜底记录，不是完整素材，不能据此判断活动未上线。\n\n情况类型：${failureInfo.type}\n\n失败原因：${failure}\n\n当前保留：活动封面、失败原因、创作服务中心入口。\n\n后续处理：补抓成功前不会通过 YES 导入 Eagle；请查看抓取结果中的重试安排。\n\n处理建议：${failureInfo.advice}\n点击上方链接可进入小红书创作服务中心，在活动列表中查找「${title}」。`;
 const item = {
   id: slug, postId: slug, title, caption, summary: "小红书创作服务中心 · 抓取失败 · 已保留封面和创作服务中心入口",
   date: displayDate, capturedAt: captureDate, width, height, fallback: true, previewOnly: true,
