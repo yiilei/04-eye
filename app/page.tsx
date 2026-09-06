@@ -2304,7 +2304,7 @@ export default function Home() {
           style={{ left: scheduleTooltip.left, top: scheduleTooltip.top }}
         >
           <b>关于随机抓取</b>
-          <span>首次安装时在 00:00–08:59 分配抓取时间。错过时间会在开机或重新打开采光后检查补抓；失败后间隔 30 分钟重试。</span>
+          <span>每天都会在 00:00–08:59 重新随机分配时间，右侧显示今日实际时间。错过执行、中途失败或仍有失败任务时，会在下次开机或重新打开采光后补抓；失败重试有 30 分钟安全间隔。</span>
         </div>,
         document.body,
       )}

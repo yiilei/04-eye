@@ -123,7 +123,7 @@ export function mergeDiscoveredTasks(existingTasks, discoveredTasks) {
     // were previously stranded by an empty downloader result, while keeping
     // completed work immutable.
     if (task.status === "completed") return task;
-    const recoverable = ["needs_browser_capture", "retry_pending"].includes(task.status);
+    const recoverable = ["needs_browser_capture", "retry_pending", "user_action_required", "failed"].includes(task.status);
     const next = { ...task, ...fresh, status: recoverable ? "pending" : task.status };
     if (recoverable) {
       for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "failedAt", "failureType", "error", "diagnosticsPath"]) delete next[key];
@@ -135,7 +135,7 @@ export function mergeDiscoveredTasks(existingTasks, discoveredTasks) {
 
 export function captureCandidates(posts, newPosts, existingTasks, accountKey) {
   const recoverableIds = new Set(existingTasks
-    .filter((task) => task.accountKey === accountKey && ["needs_browser_capture", "retry_pending"].includes(task.status))
+    .filter((task) => task.accountKey === accountKey && ["needs_browser_capture", "retry_pending", "user_action_required", "failed"].includes(task.status))
     .map((task) => task.id));
   const candidates = [...newPosts, ...posts.filter((post) => recoverableIds.has(`note-${post.id}`))];
   return [...new Map(candidates.map((post) => [post.id, post])).values()];

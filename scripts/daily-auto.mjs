@@ -68,11 +68,11 @@ try {
 const failedStep = results.find((item) => !item.ok && item.name !== "capture_validate_report");
 const pipelineHardFailure = !pipelineSummary
   || Boolean(pipelineSummary.error)
-  || (pipelineSummary.ok === false && !Number(pipelineSummary.browserCapture || 0) && !Number(pipelineSummary.retrying || 0))
+  || pipelineSummary.ok === false
   || Number(pipelineSummary.failed || 0) > 0
   || pipelineSummary.validation === "failed";
-// daily-pipeline intentionally exits non-zero while browser/retry fallbacks are
-// pending. Those are recoverable hand-offs, not a failed capture run.
+// Any unresolved retry/browser task keeps the day in needs_attention. The
+// scheduler applies a cooldown and retries after wake, relaunch, or a later tick.
 const discoveryFailed = results.some((item) => {
   if (item.name !== "discover_pinned_accounts") return false;
   try { return JSON.parse(item.summary).ok === false; } catch { return true; }

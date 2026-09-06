@@ -43,6 +43,13 @@ test("login and verification failures require user action", () => {
   assert.equal(classifyNoteCaptureFailure("需要验证码").action, "user_action_required");
 });
 
+test("previous browser, login and legacy failures remain eligible for a later recovery run", () => {
+  const now = new Date("2026-09-07T01:00:00Z");
+  for (const status of ["needs_browser_capture", "user_action_required", "failed"]) {
+    assert.equal(noteTaskIsDue({ status }, now), true);
+  }
+});
+
 test("successful capture clears retry metadata", () => {
   const task = { status: "retry_pending", attempts: 2, nextAttemptAt: "later", failureType: "transient_network", error: "timeout" };
   clearNoteFailure(task);

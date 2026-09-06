@@ -3,7 +3,7 @@ const BASE_RETRY_DELAY_MS = 15 * 60 * 1000;
 const PUBLICATION_RETRY_DELAY_MS = 6 * 60 * 60 * 1000;
 
 export function h5TaskIsDue(task, now = new Date()) {
-  if (!["pending", "needs_h5_capture", "retry_pending", "fallback_pending"].includes(task.status)) return false;
+  if (!["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "failed"].includes(task.status)) return false;
   if (!["retry_pending", "fallback_pending"].includes(task.status) || !task.nextAttemptAt) return true;
   return new Date(task.nextAttemptAt).getTime() <= now.getTime();
 }
@@ -30,10 +30,12 @@ export function scheduleH5Retry(task, error, now = new Date()) {
   task.lastError = error;
   task.error = error;
   if (attempts >= MAX_H5_ATTEMPTS) {
-    task.status = "failed";
+    // Keep the evidence fallback, but never strand the original task forever.
+    // After bounded fast retries, continue at the lower publication-retry rate.
+    task.status = "fallback_pending";
+    task.nextAttemptAt = new Date(now.getTime() + PUBLICATION_RETRY_DELAY_MS).toISOString();
     task.failedAt = now.toISOString();
-    delete task.nextAttemptAt;
-    return { terminal: true, attempts };
+    return { terminal: true, attempts, nextAttemptAt: task.nextAttemptAt };
   }
   task.status = "retry_pending";
   const delay = BASE_RETRY_DELAY_MS * (2 ** (attempts - 1));

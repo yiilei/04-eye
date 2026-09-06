@@ -9,6 +9,8 @@ test("pipeline occupied/error must not mark the day completed", () => {
   assert.equal(classify([], null), false);
   assert.equal(classify([], { ok: true, failed: 0, validation: "passed" }), true);
   assert.equal(classify([], { ok: false, failed: 1 }), false);
+  assert.equal(classify([], { ok: false, browserCapture: 1, failed: 0, validation: "passed" }), false);
+  assert.equal(classify([], { ok: false, retrying: 1, failed: 0, validation: "passed" }), false);
 });
 test("account failures are not hidden by a zero exit status", () => {
   assert.equal(classify([{ name: "discover_pinned_accounts", ok: true, summary: '{"ok":false}' }], { ok: true }), false);

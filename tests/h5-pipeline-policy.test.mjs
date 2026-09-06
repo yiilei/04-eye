@@ -32,7 +32,8 @@ test("H5 transient failures retry twice before becoming terminal", () => {
   const third = scheduleH5Retry(task, "third failure", new Date(second.nextAttemptAt));
   assert.equal(third.attempts, MAX_H5_ATTEMPTS);
   assert.equal(third.terminal, true);
-  assert.equal(task.status, "failed");
+  assert.equal(task.status, "fallback_pending");
+  assert.equal(h5TaskIsDue(task, new Date(third.nextAttemptAt)), true);
 
   clearH5Retry(task);
   assert.equal(task.attempts, undefined);

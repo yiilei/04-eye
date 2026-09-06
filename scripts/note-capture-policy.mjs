@@ -19,7 +19,7 @@ export function classifyNoteCaptureFailure(message) {
 }
 
 export function noteTaskIsDue(task, now = new Date()) {
-  if (!["pending", "retry_pending"].includes(task.status)) return false;
+  if (!["pending", "retry_pending", "needs_browser_capture", "user_action_required", "failed"].includes(task.status)) return false;
   if (task.status !== "retry_pending" || !task.nextAttemptAt) return true;
   return new Date(task.nextAttemptAt).getTime() <= now.getTime();
 }
@@ -56,7 +56,7 @@ export function transitionNoteFailure(task, message, now = new Date()) {
 }
 
 export function resetRecoverableNoteTask(task) {
-  if (!["needs_browser_capture", "retry_pending"].includes(task.status)) return false;
+  if (!["needs_browser_capture", "retry_pending", "user_action_required", "failed"].includes(task.status)) return false;
   task.status = "pending";
   clearNoteFailure(task);
   return true;

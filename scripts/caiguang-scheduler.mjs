@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
 import { captureIsDue, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
-import { initializeCapturePreferences } from "./capture-time-policy.mjs";
+import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
@@ -129,12 +129,11 @@ async function tick() {
   }
   await ensureWakeLock();
   const now = clock();
-  const previous = await readJson(statePath, {});
-  const scheduled = { state: { ...previous, captureScheduleDate: now.date, captureScheduleTime: preferences.captureTime }, time: preferences.captureTime, changed: previous.captureScheduleDate !== now.date || previous.captureScheduleTime !== preferences.captureTime };
+  const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
   const state = scheduled.state;
   if (scheduled.changed) await atomicJson(statePath, state);
   const queue = await readJson(queuePath, { tasks: [] });
-  const retryDue = (queue.tasks || []).some((task) => ["retry_pending", "fallback_pending"].includes(task.status)
+  const retryDue = (queue.tasks || []).some((task) => ["retry_pending", "fallback_pending", "needs_browser_capture", "user_action_required", "failed"].includes(task.status)
     && (!task.nextAttemptAt || new Date(task.nextAttemptAt).getTime() <= Date.now()));
   console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time} retryDue=${retryDue}`);
   if (captureIsDue(preferences, state, now, retryDue)) {

@@ -116,15 +116,20 @@ async function main() {
   const pendingPins = await readJson(appPendingPinsPath).catch(() => ({ accounts: [] }));
   validateConfiguration(queue, pins, policy);
   const browserCaptureTasks = queue.tasks.filter((task) => task.status === "needs_browser_capture");
+  const userActionTasks = queue.tasks.filter((task) => task.status === "user_action_required");
   const report = { schemaVersion: 1, date: today, startedAt: nowIso, mode: dryRun ? "dry-run" : "run",
     checkedAccounts: queue.checkedAccounts.length, pending: queue.tasks.filter((task) => task.status === "pending").length,
     h5AwaitingCapture: creatorH5CaptureEnabled
       ? queue.tasks.filter((task) => task.status === "needs_h5_capture").length
       : 0,
     pendingPinVerification: Array.isArray(pendingPins.accounts) ? pendingPins.accounts.filter((account) => account.status === "pending_verification").length : 0,
-    completed: [], retrying: [], fallbacks: [], browserCapture: browserCaptureTasks.map((task) => ({
+    completed: [], retrying: [], fallbacks: [], browserCapture: dryRun ? browserCaptureTasks.map((task) => ({
       id: task.id, type: task.type, title: task.title, error: task.error || task.lastError || "本地解析器不可用", failureType: task.failureType || "parser_incompatible",
-    })), failed: [], skipped: [], validation: "not_run", build: "not_run" };
+    })) : [], failed: dryRun ? userActionTasks.map((task) => ({
+      id: task.id, type: task.type, title: task.title,
+      error: task.error || task.lastError || "需要重新登录或完成网页验证后再试",
+      failureType: task.failureType || "user_action_required",
+    })) : [], skipped: [], validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
     for (const task of queue.tasks.filter((item) => item.type === "h5_event"
@@ -242,7 +247,7 @@ async function main() {
     report.build = skipBuild ? "skipped" : "not_required_runtime_refresh";
   }
 
-  report.pending = queue.tasks.filter((task) => ["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "needs_browser_capture"].includes(task.status)).length;
+  report.pending = queue.tasks.filter((task) => ["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "needs_browser_capture", "user_action_required", "failed"].includes(task.status)).length;
   report.finishedAt = new Date().toISOString();
   report.registryItems = await readJson(registryPath).then((items) => items.length).catch(() => 0);
   const duplicateTitleCounts = report.completed.reduce((counts, item) => {

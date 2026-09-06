@@ -37,12 +37,19 @@ test("enabled switch allows due actions and prevents duplicate daily runs", () =
   assert.equal(pushIsDue(preferences, { lastPushDate: now.date }, now), false);
 });
 
-test("the displayed preference overrides an obsolete daily random schedule", () => {
+test("today's displayed random schedule controls the normal run", () => {
   const preferences = { automaticCaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" };
   const state = { captureScheduleDate: now.date, captureScheduleTime: "06:37" };
   assert.equal(captureIsDue(preferences, state, { date: now.date, time: "01:59" }), false);
-  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "02:00" }), true);
+  assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:36" }), false);
   assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:37" }), true);
+});
+
+test("a failed first-ever or manual run retries after cooldown without waiting for today's random hour", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "08:00" };
+  const state = { lastCaptureStatus: "needs_attention", captureScheduleTime: "08:00", nextCaptureAttemptAt: "2026-08-24T01:30:00Z" };
+  assert.equal(captureIsDue(preferences, state, { ...now, time: "07:29", timestamp: Date.parse("2026-08-24T01:29:00Z") }), false);
+  assert.equal(captureIsDue(preferences, state, { ...now, time: "07:30", timestamp: Date.parse("2026-08-24T01:30:00Z") }), true);
 });
 
 test("failed runs catch up after cooldown, successful runs do not duplicate", () => {

@@ -126,6 +126,18 @@ test("rediscovery refreshes token and releases a stranded task", () => {
   assert.equal(task.error, undefined);
 });
 
+test("rediscovery refreshes login and legacy failed tasks instead of stranding them", () => {
+  for (const status of ["user_action_required", "failed"]) {
+    const [task] = mergeDiscoveredTasks(
+      [{ id: "note-a", status, sourceUrl: "https://old", error: "old failure" }],
+      [{ id: "note-a", status: "pending", sourceUrl: "https://fresh" }],
+    );
+    assert.equal(task.status, "pending");
+    assert.equal(task.sourceUrl, "https://fresh");
+    assert.equal(task.error, undefined);
+  }
+});
+
 test("rediscovery does not reopen completed work", () => {
   const completed = { id: "note-a", status: "completed", sourceUrl: "https://old" };
   assert.deepEqual(mergeDiscoveredTasks([completed], [{ id: "note-a", status: "pending", sourceUrl: "https://new" }]), [completed]);
