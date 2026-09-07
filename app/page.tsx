@@ -44,7 +44,7 @@ type DesktopBridge = {
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
   installUpdate?: () => Promise<{ state: string; latestVersion?: string; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
-  openXhsLogin?: () => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
+  openXhsLogin?: (options?: { force?: boolean }) => Promise<{ loggedIn?: boolean; loginStarted?: boolean; chromeOpened?: boolean; error?: string }>;
   syncXhsLogin?: () => Promise<{ loggedIn?: boolean; error?: string }>;
   getXhsLoginStatus?: () => Promise<{ loggedIn?: boolean }>;
   captureCanvas?: (request: { rect: { x: number; y: number; width: number; height: number }; title: string }) => Promise<{ ok: boolean; path?: string; width?: number; height?: number; error?: string }>;
@@ -500,7 +500,10 @@ export default function Home() {
   const [eagleError, setEagleError] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [xhsSetupStatus, setXhsSetupStatus] = useState<"未登录" | "等待登录" | "已登录">("未登录");
+  const [xhsRecoveryRequired, setXhsRecoveryRequired] = useState(false);
+  const [xhsSetupMessage, setXhsSetupMessage] = useState("");
   const [eagleSetupStatus, setEagleSetupStatus] = useState("尚未检测");
+  const [eagleSetupMessage, setEagleSetupMessage] = useState("");
   const [onboardingPreview, setOnboardingPreview] = useState(false);
   const [legalNoticeAccepted, setLegalNoticeAccepted] = useState(false);
   const [camoufoxStatus, setCamoufoxStatus] = useState<"checking" | "ready" | "downloading" | "failed">("checking");
@@ -620,6 +623,23 @@ export default function Home() {
   useEffect(() => getDesktopBridge()?.onUpdateProgress?.((progress) => {
     setUpdateStatus((current) => ({ ...current, ...progress }));
   }), []);
+  const openRecoveryOnboarding = useCallback((kind: "xhs" | "eagle", message?: string) => {
+    setOnboardingPreview(true);
+    setReviewTourStep(null);
+    setLegalNoticeAccepted(true);
+    if (kind === "xhs") {
+      setXhsRecoveryRequired(true);
+      setXhsSetupStatus("未登录");
+      setXhsSetupMessage(message || "小红书登录状态已失效，请重新登录后再继续抓取。");
+    } else {
+      setEagleSetupStatus("等待 Eagle");
+      setEagleSetupMessage(message || "Eagle 当前未连接；可以继续本地抓取，点击 YES 或 X 前请先启动 Eagle。");
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("onboarding", "1");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
   const refreshManualCapture = useCallback(async () => {
     if (!desktopAppMode) return;
     try {
@@ -631,9 +651,12 @@ export default function Home() {
         startedAt?: string | null;
         estimateMinutes?: CaptureEstimate | null;
         exitCode?: number | null;
-        state?: { lastCaptureStatus?: string };
+        state?: { lastCaptureStatus?: string; lastCaptureIssue?: string | null };
         progress?: CaptureProgress;
       };
+      if (payload.state?.lastCaptureIssue === "login_required") {
+        openRecoveryOnboarding("xhs");
+      }
       if (payload.running) {
         setManualCapture({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting", firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes });
       } else if (manualCapture.state === "running") {
@@ -645,7 +668,23 @@ export default function Home() {
     } catch (error) {
       if (manualCapture.state === "running") setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "本地抓取失败", percent: manualCapture.percent, phase: "failed" });
     }
-  }, [desktopAppMode, manualCapture.percent, manualCapture.state]);
+  }, [desktopAppMode, manualCapture.percent, manualCapture.state, openRecoveryOnboarding]);
+
+  useEffect(() => {
+    if (!desktopAppMode || onboardingPreview) return;
+    let active = true;
+    const checkCaptureIssue = async () => {
+      try {
+        const response = await fetch("/api/desktop/capture-now", { cache: "no-store" });
+        if (!response.ok || !active) return;
+        const payload = await response.json() as { state?: { lastCaptureIssue?: string | null } };
+        if (payload.state?.lastCaptureIssue === "login_required") openRecoveryOnboarding("xhs");
+      } catch { /* local-server errors are handled by the normal library poll */ }
+    };
+    void checkCaptureIssue();
+    const timer = window.setInterval(() => void checkCaptureIssue(), 10_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [desktopAppMode, onboardingPreview, openRecoveryOnboarding]);
   const startManualCapture = useCallback(async (firstCapture = false) => {
     if (!desktopAppMode || manualCapture.state === "running") return;
     setManualCapture({ state: "running", message: "准备本地抓取", percent: 3, phase: "starting" });
@@ -676,6 +715,13 @@ export default function Home() {
     url.searchParams.delete("onboarding");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, [desktopAppMode, legalNoticeAccepted]);
+
+  const recoverEagleIfUnavailable = useCallback((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/Eagle|eagle|41595|未响应|连接超时|不可用/u.test(message)) {
+      openRecoveryOnboarding("eagle", "Eagle 当前未连接或 API 不可用；可以继续本地抓取，启动 Eagle 后再点击 YES 或 X。");
+    }
+  }, [openRecoveryOnboarding]);
 
   const enableWakeLock = useCallback(async () => {
     if (!desktopAppMode) return;
@@ -1130,16 +1176,20 @@ export default function Home() {
     const bridge = getDesktopBridge();
     let active = true;
     void bridge?.getXhsLoginStatus?.().then((status) => {
-      if (active && status.loggedIn) setXhsSetupStatus("已登录");
+      if (active && status.loggedIn && !xhsRecoveryRequired) setXhsSetupStatus("已登录");
     }).catch(() => undefined);
     const unsubscribe = bridge?.onXhsLoginChanged?.((status) => {
-      if (active && status.loggedIn) setXhsSetupStatus("已登录");
+      if (active && status.loggedIn) {
+        setXhsRecoveryRequired(false);
+        setXhsSetupMessage("");
+        setXhsSetupStatus("已登录");
+      }
     });
     return () => {
       active = false;
       unsubscribe?.();
     };
-  }, [onboardingPreview]);
+  }, [onboardingPreview, xhsRecoveryRequired]);
 
   useEffect(() => {
     const fitOnboardingFrame = () => {
@@ -1526,9 +1576,10 @@ export default function Home() {
     } catch (error) {
       setEagleError(true);
       setEagleMessage(error instanceof Error ? error.message : "单张图片导入失败");
+      recoverEagleIfUnavailable(error);
     }
     setSyncingId(undefined);
-  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, persistDecision, remainingGalleryPositions.length, reviewItems, savedSingles, syncingId]);
+  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, persistDecision, recoverEagleIfUnavailable, remainingGalleryPositions.length, reviewItems, savedSingles, syncingId]);
 
   const commitDecision = useCallback((decision: Decision) => {
     const next = { ...decisions, [current.id]: decision };
@@ -1591,13 +1642,14 @@ export default function Home() {
       } catch (error) {
         setEagleError(true);
         setEagleMessage(error instanceof Error ? error.message : "Eagle 导入失败");
+        recoverEagleIfUnavailable(error);
         setSyncingId(undefined);
         return;
       }
       setSyncingId(undefined);
     }
     commitDecision(decision);
-  }, [commitDecision, current, eagleItems, removedCurrent, syncingId]);
+  }, [commitDecision, current, eagleItems, recoverEagleIfUnavailable, removedCurrent, syncingId]);
 
   const removeCurrentItem = useCallback(() => {
     if (!reviewItems.length || current.id === "empty") return;
@@ -1813,12 +1865,13 @@ export default function Home() {
       setEagleMessage(temporaryPath
         ? `截图已保留，但未存入 Eagle。请确认 Eagle 已打开后重试。文件：${temporaryPath}`
         : `画板截取失败：${error instanceof Error ? error.message : "请重试"}`);
+      recoverEagleIfUnavailable(error);
     } finally {
       screenshotBusy.current = false;
       element.classList.remove("is-capturing");
       // Failed captures remain available locally for recovery.
     }
-  }, [current, onboardingPreview, reviewTourStep, settingsOpen]);
+  }, [current, onboardingPreview, recoverEagleIfUnavailable, reviewTourStep, settingsOpen]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1878,8 +1931,8 @@ export default function Home() {
             </div>
            <div className="first-run-steps">
               <div className={`first-run-step ${camoufoxStatus === "ready" ? "is-complete" : ""}`}><strong>环境检查：Camoufox 浏览器</strong><div className="first-run-action">{camoufoxStatus === "ready" && (desktopAppMode ? <span className="completion-check">✓</span> : <span className="preview-status">网页预览</span>)}{camoufoxStatus === "checking" && <span style={{ color: "#7c7c78", fontSize: 11 }}>正在检查…</span>}{camoufoxStatus === "downloading" && <span style={{ color: "#2147ff", fontSize: 11 }}>{camoufoxProgress.stage} {Math.round(camoufoxProgress.percent)}%</span>}{camoufoxStatus === "failed" && <span style={{ color: "#c33148", fontSize: 11 }}>下载失败，请检查网络或代理后重试</span>}</div></div>
-             <div className={`first-run-step ${xhsSetupStatus === "已登录" ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && <span className="completion-check">✓</span>}<button title="优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录") return; setXhsSetupStatus("等待登录"); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin().then((status) => { if (status.loggedIn) setXhsSetupStatus("已登录"); else if (status.error) setXhsSetupStatus("未登录"); }).catch(() => setXhsSetupStatus("未登录")); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" ? "已登录" : "使用 Chrome 登录"}</button></div></div>
-             <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => setEagleSetupStatus("等待 Eagle")); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div></div>
+             <div className={`first-run-step ${xhsSetupStatus === "已登录" && !xhsRecoveryRequired ? "is-complete" : ""}`}><strong>步骤 1：登录小红书</strong><div className="first-run-action">{xhsSetupStatus === "已登录" && !xhsRecoveryRequired && <span className="completion-check">✓</span>}<button title="使用 Chrome 登录：优先只读复制 Chrome 当前登录状态；失败时再使用采光独立扫码，不会修改 Chrome Cookie。" onClick={() => { if (xhsSetupStatus === "已登录" && !xhsRecoveryRequired) return; const force = xhsRecoveryRequired; setXhsSetupStatus("等待登录"); setXhsSetupMessage(""); const bridge = getDesktopBridge(); if (bridge?.openXhsLogin) { void bridge.openXhsLogin({ force }).then((status) => { if (status.loggedIn) { setXhsRecoveryRequired(false); setXhsSetupMessage(""); setXhsSetupStatus("已登录"); } else if (status.error) { setXhsSetupMessage(status.error); setXhsSetupStatus("未登录"); } }).catch(() => { setXhsSetupMessage("登录同步失败，请确认 Chrome 已登录小红书后重试。"); setXhsSetupStatus("未登录"); }); } }}>{xhsSetupStatus === "等待登录" ? "正在同步" : xhsSetupStatus === "已登录" && !xhsRecoveryRequired ? "已登录" : "重新登录小红书"}</button></div>{xhsSetupMessage && <small className="first-run-recovery-message">{xhsSetupMessage}</small>}</div>
+             <div className={`first-run-step ${eagleSetupStatus === "已连接" ? "is-complete" : ""}`}><strong>步骤 2：连接 Eagle</strong><div className="first-run-action">{eagleSetupStatus === "已连接" && <span className="completion-check">✓</span>}<button onClick={() => { setEagleSetupStatus("检测中…"); setEagleSetupMessage(""); void fetch("http://127.0.0.1:41595/api/application/info", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setEagleSetupStatus("已连接"); }).catch(() => { setEagleSetupStatus("等待 Eagle"); setEagleSetupMessage("Eagle 未启动或 API 不可用；可以先进入批阅页，启动 Eagle 后再点击 YES 或 X。"); }); }}>{eagleSetupStatus === "已连接" ? "已连接" : eagleSetupStatus === "检测中…" ? "检测中" : eagleSetupStatus === "等待 Eagle" ? "等待 Eagle" : "连接"}</button></div>{eagleSetupMessage && <small className="first-run-recovery-message">{eagleSetupMessage}</small>}</div>
              <div className={`first-run-step first-run-legal ${legalNoticeAccepted ? "is-complete" : ""}`}>
                <span>
                  <strong>使用说明</strong>
@@ -1906,7 +1959,7 @@ export default function Home() {
              <button
                type="button"
                className="first-run-enter"
-               disabled={xhsSetupStatus !== "已登录" || eagleSetupStatus !== "已连接" || !legalNoticeAccepted}
+               disabled={xhsSetupStatus !== "已登录" || xhsRecoveryRequired || !legalNoticeAccepted}
                onClick={finishOnboarding}
              >进入批阅页</button>
            </div>

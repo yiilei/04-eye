@@ -105,10 +105,12 @@ async function runCapture(reason = "scheduled") {
   }
   const output = await readFile(captureLog, "utf8").catch(() => "");
   const ok = status === 0;
+  const loginRequired = /login_required|creator_login_required|登录失效|未登录|需要重新登录|验证码/u.test(output);
   const state = await readJson(statePath, {});
   state.lastCaptureAt = new Date().toISOString();
   state.lastCaptureStatus = ok ? "completed" : "needs_attention";
   state.lastCaptureReason = reason;
+  state.lastCaptureIssue = loginRequired ? "login_required" : null;
   state.nextCaptureAttemptAt = ok ? null : new Date(Date.now() + 30 * 60_000).toISOString();
   if (ok) state.lastCaptureDate = now.date;
   await atomicJson(statePath, state);

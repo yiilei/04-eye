@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld("sharpEyeDesktop", {
   checkForUpdate: () => ipcRenderer.invoke("caiguang:check-update"),
   installUpdate: () => ipcRenderer.invoke("caiguang:install-update"),
   openRelease: (url) => ipcRenderer.invoke("caiguang:open-release", url),
-  openXhsLogin: () => ipcRenderer.invoke("caiguang:open-xhs-login"),
+  openXhsLogin: (options) => ipcRenderer.invoke("caiguang:open-xhs-login", options),
   syncXhsLogin: () => ipcRenderer.invoke("caiguang:sync-xhs-login"),
   getXhsLoginStatus: () => ipcRenderer.invoke("caiguang:xhs-login-status"),
   captureCanvas: (request) => ipcRenderer.invoke("caiguang:capture-canvas", request),

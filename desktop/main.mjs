@@ -157,8 +157,9 @@ async function openXhsCaptureLogin() {
 // First-run onboarding must not create a second Xiaohongshu device session.
 // It only opens the user's existing Chrome profile.  In particular, this
 // deliberately does not read, copy or modify any browser cookies.
-async function openXhsChromeLogin() {
-  if ((await publishXhsLoginStatus()).loggedIn) return { loggedIn: true };
+async function openXhsChromeLogin(options = {}) {
+  const force = options?.force === true;
+  if (!force && (await publishXhsLoginStatus()).loggedIn) return { loggedIn: true };
   const executable = findCaptureEngine();
   if (executable) {
     await mkdir(captureConfigDir(), { recursive: true, mode: 0o700 });
@@ -240,7 +241,7 @@ function startXhsChromeAutoSync() {
   xhsChromeSyncTimer = setTimeout(retry, 1_500);
 }
 
-ipcMain.handle("caiguang:open-xhs-login", () => openXhsChromeLogin());
+ipcMain.handle("caiguang:open-xhs-login", (_event, options) => openXhsChromeLogin(options));
 ipcMain.handle("caiguang:sync-xhs-login", () => syncXhsChromeLogin());
 ipcMain.handle("caiguang:xhs-login-status", () => publishXhsLoginStatus());
 ipcMain.handle("caiguang:capture-canvas", async (event, requested = {}) => {
