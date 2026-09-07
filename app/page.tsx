@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Mouse
 import { createPortal } from "react-dom";
 import generatedItemsData from "../data/generated-review-items.json";
 import accountPinsData from "../data/xhs-account-pins.json";
+import { indexAfterDecision } from "../scripts/review-navigation.mjs";
 
 type Decision = "kept" | "rejected";
 type QualityState = "checking" | "passed" | "failed";
@@ -484,6 +485,7 @@ async function importSingleToEagle(item: ReviewItem, position: number) {
 
 export default function Home() {
   const [runtimeItems, setRuntimeItems] = useState<ReviewItem[]>(items);
+  const [, setLibraryStatus] = useState("正在连接本地资料库…");
   const [index, setIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [eagleItems, setEagleItems] = useState<Record<string, string>>({});
@@ -1497,8 +1499,7 @@ export default function Home() {
         setDecisions(nextDecisions);
         persistDecision(current.id, "kept");
         setEagleMessage("最后一张此前已保存，本篇已自动完成");
-        const pending = reviewItems.findIndex((_item, offset) => !nextDecisions[reviewItems[(index + offset + 1) % reviewItems.length].id]);
-        if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
+        openItem(indexAfterDecision(index, reviewItems.length));
       } else if (savedSingles[key]) {
         setEagleMessage(`第 ${galleryIndex + 1} 张已经单独保存在 Eagle`);
       }
@@ -1518,8 +1519,7 @@ export default function Home() {
         setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision: "kept", index }]);
         setDecisions(nextDecisions);
         persistDecision(current.id, "kept");
-        const pending = reviewItems.findIndex((_item, offset) => !nextDecisions[reviewItems[(index + offset + 1) % reviewItems.length].id]);
-        if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
+        openItem(indexAfterDecision(index, reviewItems.length));
       } else {
         setEagleMessage(`第 ${galleryIndex + 1} 张${currentLivePhoto ? "及对应 Live Photo " : ""}已单独保存到 Eagle；之后删除整篇也不会删除该素材`);
       }
@@ -1535,11 +1535,7 @@ export default function Home() {
     setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision, index }]);
     setDecisions(next);
     persistDecision(current.id, decision);
-    const pending = reviewItems.findIndex((_item, offset) => {
-      const candidate = (index + offset + 1) % reviewItems.length;
-      return !next[reviewItems[candidate].id];
-    });
-    if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
+    openItem(indexAfterDecision(index, reviewItems.length));
   }, [current.id, decisions, index, openItem, persistDecision, reviewItems]);
 
   const removeCurrentSingle = useCallback(() => {
@@ -1557,8 +1553,7 @@ export default function Home() {
       const nextDecisions = { ...decisions, [current.id]: "rejected" as Decision };
       setDecisions(nextDecisions);
       persistDecision(current.id, "rejected");
-      const pending = reviewItems.findIndex((_item, offset) => !nextDecisions[reviewItems[(index + offset + 1) % reviewItems.length].id]);
-      if (pending >= 0) openItem((index + pending + 1) % reviewItems.length);
+      openItem(indexAfterDecision(index, reviewItems.length));
       return;
     }
     const nextPosition = remaining.find((position) => position > galleryIndex) ?? remaining.at(-1)!;
@@ -2207,7 +2202,7 @@ export default function Home() {
             </div>
             <div className="review-info"><span>xxxxx</span></div>
             <div className="empty-review-lines" aria-hidden="true"><span>xxxxx</span><span>xxxxx</span><span>xxxxx</span></div>
-          </div> : <>
+          </div> : <Fragment key={current.id}>
             <div className="review-heading">
               <h1>{current.title}</h1>
               <div className="review-byline">
@@ -2262,7 +2257,7 @@ export default function Home() {
               </span>}
             </div>
             <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo} disabled={!history.length && !decisions[current.id]}>{decisions[current.id] ? "重新选择" : "撤回上一步"}</button>
-          </>}
+          </Fragment>}
         </aside>
       </section>
       {reviewTourStep !== null && (
