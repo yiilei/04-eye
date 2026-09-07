@@ -143,8 +143,10 @@ for (const engine of ["xhs-cli", "XHS-Downloader"]) {
   const bin = path.join(packagedRuntimeProject, "vendor", engine, ".venv", "bin");
   await rm(path.join(bin, "python"), { force: true });
   await rm(path.join(bin, "python3"), { force: true });
+  await rm(path.join(bin, "python3.12"), { force: true });
   await symlink("../../../../../python/bin/python3", path.join(bin, "python3"));
   await symlink("python3", path.join(bin, "python"));
+  await symlink("python3", path.join(bin, "python3.12"));
 }
 // Installation/build tooling is not used after packaging. Removing it keeps
 // the two isolated engines intact while avoiding ~45 MB of duplicate pip,
@@ -160,9 +162,23 @@ for (const relative of [
 // checkout is deliberately not shipped, so remove the stale pointer and make
 // every launcher resolve modules from the embedded vendor directory instead.
 await rm(path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".venv", "lib", "python3.12", "site-packages", "_editable_impl_xhs_cli.pth"), { force: true });
+// All Python entry points (not only the `xhs` launcher) import xhs_cli. A
+// relative .pth keeps that source package discoverable after the checkout's
+// absolute editable-install pointer is removed.
+await writeFile(
+  path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".venv", "lib", "python3.12", "site-packages", "caiguang-xhs-cli.pth"),
+  "../../../..\n",
+);
 const portableXhs = path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".venv", "bin", "xhs");
 await writeFile(portableXhs, "#!/bin/zsh\nset -e\nBIN_DIR=\"${0:A:h}\"\nXHS_ROOT=\"${BIN_DIR:h:h}\"\nexport PYTHONPATH=\"$XHS_ROOT${PYTHONPATH:+:$PYTHONPATH}\"\nexport PYTHONDONTWRITEBYTECODE=1\nexec \"$BIN_DIR/python\" -c 'from xhs_cli.cli import cli; cli()' \"$@\"\n");
 await chmod(portableXhs, 0o755);
+// Execute the same direct-Python path used by H5 capture before signing. This
+// catches missing native wheels, Pillow, Camoufox, and portable xhs_cli paths
+// in the actual bundle instead of after users install it.
+const packagedDiscoveryPython = path.join(packagedRuntimeProject, "vendor", "xhs-cli", ".venv", "bin", "python");
+await exec(packagedDiscoveryPython, [path.join(packagedRuntimeProject, "scripts", "xhs-h5-capture.py"), "--help"], { cwd: packagedRuntimeProject });
+const packagedMediaPython = path.join(packagedRuntimeProject, "vendor", "XHS-Downloader", ".venv", "bin", "python");
+await exec(packagedMediaPython, ["-c", "import curl_cffi, fastapi, lxml, yaml"], { cwd: packagedRuntimeProject });
 for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, entry), path.join(packagedApp, entry), { recursive: true });
 // desktop/server.mjs imports shared runtime modules. Keep every imported
 // script in the app-only bundle as well as in the complete source bundle.

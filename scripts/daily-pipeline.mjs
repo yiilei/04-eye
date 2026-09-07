@@ -276,7 +276,7 @@ async function main() {
     ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
     ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
     ...(report.fallbacks.length ? ["", "## 活动正文获取失败（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。已尝试 ${item.attempts} 次，${localTime(item.nextAttemptAt)} 起具备重试资格，将在下一次定时抓取或手动抓取时继续尝试。`)] : []),
-    ...(report.browserCapture.length ? ["", "## MyFlicker 自动接管", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}，需从已授权页面提取完整媒体清单`)] : []),
+    ...(report.browserCapture.length ? ["", "## 等待浏览器兜底", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}。自动解析未取得完整素材，需在已授权的小红书页面继续提取；完成前不会进入批阅或 Eagle。`)] : []),
     ...(report.failed.length ? ["", "## 需要用户处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
   const ok = report.failed.length === 0 && report.browserCapture.length === 0 && report.retrying.length === 0;

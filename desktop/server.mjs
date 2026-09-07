@@ -17,6 +17,21 @@ const mime = new Map([
   [".mp4", "video/mp4"], [".webm", "video/webm"], [".woff2", "font/woff2"],
 ]);
 
+export function isFirstCaptureRequest(explicitFirstCapture, schedulerState = {}) {
+  // A failed initial run has no successful date and must keep first-run
+  // semantics. Once any capture has succeeded, later failures are recovery
+  // runs and must never backfill the creator-center starter selection again.
+  return Boolean(explicitFirstCapture || !schedulerState.lastCaptureDate);
+}
+
+export function estimateFirstCaptureMinutes(accountCount, creatorH5Enabled = true) {
+  const accounts = Math.max(0, Number(accountCount) || 0);
+  const creatorMinimum = creatorH5Enabled ? 3 : 0;
+  const creatorMaximum = creatorH5Enabled ? 6 : 0;
+  const minimum = Math.max(2, Math.ceil(accounts * 0.18) + creatorMinimum);
+  return { minimum, maximum: Math.max(minimum + 2, Math.ceil(accounts * 0.35) + 1 + creatorMaximum) };
+}
+
 export async function startDesktopServer(appRoot, userDataRoot) {
   const clientRoot = path.join(appRoot, "dist", "client");
   const cssRoot = path.join(clientRoot, "_next", "static", "css");
@@ -248,11 +263,9 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       }
       if (pathname === "/api/desktop/capture-now" && request.method === "POST") {
         const explicitFirstCapture = new URL(request.url).searchParams.get("initial") === "1";
-        // Auto-detect first capture: if no prior capture ever succeeded, treat as first run
+        // Auto-detect first capture only when no capture has ever succeeded.
         const schedulerState = await readJson(schedulerStatePath, {});
-        const firstCapture = explicitFirstCapture
-          || !schedulerState.lastCaptureDate
-          || schedulerState.lastCaptureStatus !== "completed";
+        const firstCapture = isFirstCaptureRequest(explicitFirstCapture, schedulerState);
         if (captureProcess) {
           const response = json({ ok: true, running: true, startedAt: captureStartedAt }, 202);
           outgoing.statusCode = response.status;
@@ -273,8 +286,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         if (firstCapture) {
           const preferences = await readJson(preferencesPath, {});
           const accountCount = Array.isArray(preferences.pinnedAccountIds) ? preferences.pinnedAccountIds.length : 0;
-          const minimum = Math.max(2, Math.ceil(accountCount * 0.18));
-          captureEstimateMinutes = { minimum, maximum: Math.max(minimum + 2, Math.ceil(accountCount * 0.35) + 1) };
+          captureEstimateMinutes = estimateFirstCaptureMinutes(accountCount, preferences.creatorH5CaptureEnabled !== false);
         } else {
           captureEstimateMinutes = null;
         }

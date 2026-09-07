@@ -111,7 +111,10 @@ test("H5 stitched fallback is isolated as a plugin and only runs for risky pages
   assert.match(plugin, /分屏截图接缝无法可靠对齐/);
   assert.match(plugin, /animation-play-state: paused/);
   assert.match(plugin, /stitched\.save/);
-  assert.match(setup, /Pillow>=11,<13/);
+  assert.match(setup, /h5-requirements\.txt/);
+  assert.match(setup, /import camoufox, PIL, xhs_cli/);
+  const requirements = await readFile(new URL("../scripts/h5-requirements.txt", import.meta.url), "utf8");
+  assert.match(requirements, /Pillow>=11,<13/);
   const register = await readFile(new URL("../scripts/register-h5-event.mjs", import.meta.url), "utf8");
   assert.match(register, /captureMethod: captureEvidence\.captureMethod/);
 });
@@ -122,6 +125,7 @@ test("installer is complete, cached, and keeps development dependencies optional
   assert.match(setup, /\.caiguang-setup/);
   assert.match(setup, /Camoufox 浏览器已缓存/);
   assert.match(setup, /engine_pid=\$!/);
+  assert.match(setup, /python3\.12/);
   const wrapper = await readFile(path.join(root, "plugins", "caiguang", "scripts", "caiguang"), "utf8");
   assert.match(wrapper, /pnpm install --prod --frozen-lockfile --prefer-offline/);
   assert.match(wrapper, /setup-dev\)/);

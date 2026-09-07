@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from urllib.parse import urlparse
@@ -153,7 +154,8 @@ def main() -> int:
         # card's “查看详情” action is clicked. Resolve those routes while the
         # authenticated browser session is still alive, then return to the list.
         resolution_deadline = time.monotonic() + 65
-        for event in events:
+        resolution_events = events[:3] if os.environ.get("CAIGUANG_FIRST_CAPTURE") == "1" else events
+        for event in resolution_events:
             if time.monotonic() >= resolution_deadline:
                 event.setdefault("detailError", "本轮详情解析已达到时间上限，将在后续抓取重试")
                 continue
@@ -162,7 +164,7 @@ def main() -> int:
             except Exception as error:
                 event["detailError"] = str(error).split("\n")[0]
         diagnostics = page.evaluate(
-            """() => {
+            r"""() => {
               const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
               return ({
               title: document.title,

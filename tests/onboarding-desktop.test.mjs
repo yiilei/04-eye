@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { estimateFirstCaptureMinutes, isFirstCaptureRequest } from "../desktop/server.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -76,6 +77,18 @@ test("desktop can force the real onboarding route for a fresh-run test", async (
   const main = await readFile(new URL("desktop/main.mjs", root), "utf8");
   assert.match(main, /process\.argv\.includes\("--onboarding"\)/);
   assert.match(main, /searchParams\.set\("onboarding", "1"\)/);
+});
+
+test("a later failed run is recovery, not another first capture", () => {
+  assert.equal(isFirstCaptureRequest(false, {}), true);
+  assert.equal(isFirstCaptureRequest(false, { lastCaptureStatus: "needs_attention" }), true);
+  assert.equal(isFirstCaptureRequest(false, { lastCaptureDate: "2026-09-06", lastCaptureStatus: "needs_attention" }), false);
+  assert.equal(isFirstCaptureRequest(true, { lastCaptureDate: "2026-09-06", lastCaptureStatus: "completed" }), true);
+});
+
+test("first-capture estimate includes the three creator H5 activities", () => {
+  assert.deepEqual(estimateFirstCaptureMinutes(0, false), { minimum: 2, maximum: 4 });
+  assert.deepEqual(estimateFirstCaptureMinutes(13, true), { minimum: 6, maximum: 12 });
 });
 
 test("native onboarding and review chrome expose drag regions without swallowing controls", async () => {
@@ -225,6 +238,12 @@ test("desktop packager replaces rather than merges the previous app payload", as
   assert.match(packager, /await rm\(packagedRuntime, \{ recursive: true, force: true \}\)/);
   assert.match(packager, /pnpm", \["prune", "--prod", "--ignore-scripts"\]/);
   assert.match(packager, /runtimeNodeModulesKilobytes > 100 \* 1024/);
+  assert.match(packager, /rm\(path\.join\(bin, "python3\.12"\)/);
+  assert.match(packager, /symlink\("python3", path\.join\(bin, "python3\.12"\)\)/);
+  assert.match(packager, /caiguang-xhs-cli\.pth/);
+  assert.match(packager, /"\.\.\/\.\.\/\.\.\/\.\.\\n"/);
+  assert.match(packager, /xhs-h5-capture\.py"\), "--help"/);
+  assert.match(packager, /import curl_cffi, fastapi, lxml, yaml/);
 });
 
 test("desktop app bundle includes every shared module imported by the server", async () => {

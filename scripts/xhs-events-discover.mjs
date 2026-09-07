@@ -29,7 +29,14 @@ const slug = (event) => `xhs-event-${eventId(event)}`;
 
 export function diffEvents(events, state, previousLatestEventId = "") {
   const known = new Set(state?.knownEventIds || []);
-  const normalized = events.filter((event) => event?.sourceUrl).map((event) => ({ ...event, id: eventId(event) }));
+  const unique = new Map();
+  for (const event of events.filter((item) => item?.sourceUrl)) {
+    const normalized = { ...event, id: eventId(event) };
+    // Keep the last observation because detail resolution may replace a list
+    // route with the verified H5 route while preserving the original order.
+    unique.set(normalized.id, normalized);
+  }
+  const normalized = [...unique.values()];
   if (state?.initializedAt) return { current: normalized, newEvents: normalized.filter((event) => !known.has(event.id)) };
   const previousIndex = previousLatestEventId ? normalized.findIndex((event) => event.id === previousLatestEventId) : -1;
   return { current: normalized, newEvents: previousIndex >= 0 ? normalized.slice(0, previousIndex) : [] };

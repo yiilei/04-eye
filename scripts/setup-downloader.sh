@@ -42,7 +42,7 @@ venv_portable() {
   [[ -x "$script_path" ]] || return 1
   local shebang
   shebang="$(head -1 "$script_path" 2>/dev/null)"
-  [[ "$shebang" == "#!$venv_bin/python" || "$shebang" == "#!$venv_bin/python3" ]]
+  [[ "$shebang" == "#!$venv_bin/python" || "$shebang" == "#!$venv_bin/python3" || "$shebang" == "#!$venv_bin/python3.12" ]]
 }
 
 retry_network_step() {
@@ -94,7 +94,7 @@ PYTHON_VERSION="$($PYTHON_BIN -c 'import sys; print(f"{sys.version_info.major}.{
 ENGINE_STAMP="$SETUP_STATE_DIR/downloader.sha256"
 DISCOVERY_STAMP="$SETUP_STATE_DIR/xhs-cli.sha256"
 ENGINE_FINGERPRINT="$(fingerprint "$ENGINE_ROOT/requirements.txt")"
-DISCOVERY_FINGERPRINT="$(fingerprint "$DISCOVERY_ROOT/pyproject.toml" "$DISCOVERY_ROOT/uv.lock")"
+DISCOVERY_FINGERPRINT="$(fingerprint "$DISCOVERY_ROOT/pyproject.toml" "$DISCOVERY_ROOT/uv.lock" "$PROJECT_ROOT/scripts/h5-requirements.txt")"
 
 engine_ready=0
 if [[ "${FORCE_SETUP:-0}" != "1" ]] && stamp_matches "$ENGINE_STAMP" "$ENGINE_FINGERPRINT"; then
@@ -105,7 +105,7 @@ fi
 
 discovery_ready=0
 if [[ "${FORCE_SETUP:-0}" != "1" ]] && stamp_matches "$DISCOVERY_STAMP" "$DISCOVERY_FINGERPRINT"; then
-  if venv_portable "$DISCOVERY_ROOT/.venv/bin" "xhs" && "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, xhs_cli' 2>/dev/null; then
+  if venv_portable "$DISCOVERY_ROOT/.venv/bin" "xhs" && "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, PIL, xhs_cli' 2>/dev/null; then
     discovery_ready=1
   fi
 fi
@@ -133,7 +133,7 @@ else
   log_step "2/3" "安装账号发现依赖…"
   (
     "$PYTHON_BIN" -m venv "$DISCOVERY_ROOT/.venv"
-    "$DISCOVERY_ROOT/.venv/bin/python" -m pip install --disable-pip-version-check --no-input -e "$DISCOVERY_ROOT" "Pillow>=11,<13"
+    "$DISCOVERY_ROOT/.venv/bin/python" -m pip install --disable-pip-version-check --no-input -e "$DISCOVERY_ROOT" -r "$PROJECT_ROOT/scripts/h5-requirements.txt"
     "$DISCOVERY_ROOT/.venv/bin/python" -c 'import camoufox, PIL, xhs_cli'
     write_stamp "$DISCOVERY_STAMP" "$DISCOVERY_FINGERPRINT"
   ) > "$SETUP_STATE_DIR/xhs-cli.log" 2>&1 &

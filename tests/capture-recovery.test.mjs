@@ -20,3 +20,9 @@ test("X screenshot uses a defined request path", () => {
   assert.doesNotMatch(page, /eagleJson/);
   assert.match(page, /AbortSignal\.timeout\(20_000\)/);
 });
+test("daily report describes browser recovery honestly", () => {
+  const pipeline = readFileSync(new URL("../scripts/daily-pipeline.mjs", import.meta.url), "utf8");
+  assert.match(pipeline, /等待浏览器兜底/);
+  assert.doesNotMatch(pipeline, /MyFlicker 自动接管/);
+  assert.match(pipeline, /完成前不会进入批阅或 Eagle/);
+});

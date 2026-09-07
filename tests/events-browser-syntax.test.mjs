@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("embedded browser JavaScript parses, not just the Python wrapper", () => {
@@ -14,4 +15,10 @@ print(json.dumps([n.args[0].value for n in ast.walk(tree)
 `], { encoding: "utf8" }));
   assert.ok(expressions.length >= 2);
   for (const expression of expressions) assert.doesNotThrow(() => new Function(`return (${expression});`));
+});
+
+test("first capture resolves only the three creator activities it will keep", async () => {
+  const source = await readFile("scripts/xhs-events-browser.py", "utf8");
+  assert.match(source, /CAIGUANG_FIRST_CAPTURE/);
+  assert.match(source, /events\[:3\]/);
 });
