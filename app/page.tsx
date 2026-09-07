@@ -2286,7 +2286,7 @@ export default function Home() {
             </>}
             {reviewTourStep === 3 && <>
               <h2>试试第一次抓取</h2>
-              <p>高光区域是本地抓手。完成引导后，由你自己点击抓手开始首次采集：默认抓取每个已启用埋点账号的最新一条，不回填历史；如需创作服务 H5，可在设置中打开。完成按钮不会自动抓取。</p>
+              <p>高光区域是本地抓手。完成引导后，由你自己点击抓手开始首次采集：默认抓取每个已启用埋点账号的最新一条，以及创作服务中最新的 3 个活动，不回填其他历史。完成按钮不会自动抓取。</p>
             </>}
             <div className="review-tour-controls">
               <button type="button" className="review-tour-back" onClick={() => moveReviewTour(-1)} disabled={reviewTourStep === 0 || reviewTourTransitioning}>上一步</button>

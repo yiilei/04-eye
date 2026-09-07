@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { diffEvents, migrateTaskUrls } from "../scripts/xhs-events-discover.mjs";
+import { diffEvents, firstCaptureEvents, migrateTaskUrls } from "../scripts/xhs-events-discover.mjs";
 
 const events = [
   { activityId: "latest", title: "最新活动", sourceUrl: "https://creator.xiaohongshu.com/new/events#activity=latest" },
@@ -17,6 +17,15 @@ test("later creator-center checks return only unseen activities", () => {
   const baseline = diffEvents(events.slice(1), { initializedAt: null, knownEventIds: [] });
   const result = diffEvents(events, { initializedAt: "2026-08-24T00:00:00.000Z", knownEventIds: baseline.current.map((item) => item.id) });
   assert.deepEqual(result.newEvents.map((item) => item.title), ["最新活动"]);
+});
+
+test("first capture selects the latest three creator-center activities", () => {
+  const current = [
+    ...events,
+    { activityId: "older", title: "更早活动", sourceUrl: "https://creator.xiaohongshu.com/new/events#activity=older" },
+    { activityId: "oldest", title: "最早活动", sourceUrl: "https://creator.xiaohongshu.com/new/events#activity=oldest" },
+  ];
+  assert.deepEqual(firstCaptureEvents(current).map((item) => item.title), ["最新活动", "旧活动", "更早活动"]);
 });
 
 test("published activity route migrates an old fallback task", () => {

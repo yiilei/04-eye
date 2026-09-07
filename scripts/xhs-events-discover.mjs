@@ -35,6 +35,10 @@ export function diffEvents(events, state, previousLatestEventId = "") {
   return { current: normalized, newEvents: previousIndex >= 0 ? normalized.slice(0, previousIndex) : [] };
 }
 
+export function firstCaptureEvents(events, limit = 3) {
+  return events.slice(0, Math.max(0, limit));
+}
+
 export function migrateTaskUrls(tasks, events) {
   const byId = new Map(events.filter((event) => {
     try {
@@ -96,7 +100,7 @@ export async function discoverEvents(options = {}) {
   const previousCreatorCheck = queue.checkedAccounts.find((item) => item.accountKey === "creator-events");
   const previousLatestEventId = state.latestEventId || previousCreatorCheck?.latestPostId || "";
   const difference = diffEvents(result.events || [], state, previousLatestEventId);
-  if (options.firstLatest && difference.current.length) difference.newEvents = difference.current.slice(0, 1);
+  if (options.firstLatest && difference.current.length) difference.newEvents = firstCaptureEvents(difference.current);
   const currentIds = difference.current.map((event) => event.id);
   const baselineOnly = !state.initializedAt && !previousLatestEventId;
   const tasks = difference.newEvents.map((event) => ({
