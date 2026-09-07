@@ -484,7 +484,6 @@ async function importSingleToEagle(item: ReviewItem, position: number) {
 
 export default function Home() {
   const [runtimeItems, setRuntimeItems] = useState<ReviewItem[]>(items);
-  const [libraryStatus, setLibraryStatus] = useState("正在连接本地资料库…");
   const [index, setIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [eagleItems, setEagleItems] = useState<Record<string, string>>({});
