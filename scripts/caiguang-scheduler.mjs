@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
 import { captureIsDue, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
+import { schedulerInstallationIsCurrent } from "./scheduler-install-policy.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
@@ -208,7 +209,19 @@ async function install() {
   // Reopening the UI must not bootout an active capture and strand its lock.
   const loaded = spawnSync("/bin/launchctl", ["print", `gui/${process.getuid()}/com.yilei.caiguang.scheduler`], { encoding: "utf8" });
   const existingRunner = await readFile(localRuntimeRunner, "utf8").catch(() => "");
-  if (loaded.status === 0 && existingRunner.includes(fileURLToPath(import.meta.url))) {
+  const existingPlist = await readFile(launchAgent, "utf8").catch(() => "");
+  const runtimeNodeExists = await access(localRuntimeNode).then(() => true).catch(() => false);
+  if (schedulerInstallationIsCurrent({
+    loaded: loaded.status === 0,
+    runnerSource: existingRunner,
+    plistSource: existingPlist,
+    schedulerEntry: fileURLToPath(import.meta.url),
+    runtimeNode: localRuntimeNode,
+    localRuntimeRunner,
+    stdoutPath: path.join(logRoot, "scheduler.stdout.log"),
+    stderrPath: path.join(logRoot, "scheduler.stderr.log"),
+    runtimeNodeExists,
+  })) {
     console.log(JSON.stringify({ ok: true, installed: launchAgent, alreadyLoaded: true }));
     return;
   }
