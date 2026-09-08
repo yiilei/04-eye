@@ -5,6 +5,9 @@ import { createPortal } from "react-dom";
 import generatedItemsData from "../data/generated-review-items.json";
 import accountPinsData from "../data/xhs-account-pins.json";
 import { indexAfterDecision } from "../scripts/review-navigation.mjs";
+import { sortReviewItemsNewestFirst } from "../scripts/review-item-order.mjs";
+import { eagleItemValidity, findTaggedEagleItem, nextEagleImportAction } from "../scripts/eagle-import-policy.mjs";
+import { positionsForStableMedia, singleStateKey, stableMediaId, stableMediaIdsForPositions } from "../scripts/review-ui-state.mjs";
 
 type Decision = "kept" | "rejected";
 type QualityState = "checking" | "passed" | "failed";
@@ -16,6 +19,13 @@ type HistoryEntry =
   | { kind: "remove-single"; id: string; previousRemoved: number[]; removedPosition: number; previousDecision?: Decision; index: number }
   | { kind: "remove-item"; id: string; index: number };
 type EagleResponse<T> = { status: "success" | "error"; data?: T; message?: string };
+type EagleImportFile = { state?: "pending" | "uncertain" | "completed"; token?: string; eagleId?: string; error?: string };
+type ReviewUiState = {
+  savedSingles: Record<string, string>;
+  removedSingles: Record<string, number[]>;
+  dismissedIds: string[];
+  unavailableUndo: Record<string, string>;
+};
 type PinAccount = {
   searchKey: string; xiaohongshuId: string; displayName: string; group: string;
   profileId: string; profileUrl: string; status: string;
@@ -88,8 +98,8 @@ function postDateLabel(item: ReviewItem) {
     }
     return clean.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? clean;
   };
-  if (item.editedAt) return `编辑于 ${readable(item.editedAt.replace(/^编辑于\s*/, ""))}`;
   if (item.publishedAt) return readable(item.publishedAt);
+  if (item.editedAt) return `编辑于 ${readable(item.editedAt.replace(/^编辑于\s*/, ""))}`;
   if (item.summary.includes("小红书创作服务中心") || item.sourceUrl.includes("creator_activity_center")) return item.date || "日期未知";
   const noteId = item.postId || item.id.match(/[0-9a-f]{24}/i)?.[0] || "";
   if (/^[0-9a-f]{24}$/i.test(noteId)) {
@@ -371,6 +381,108 @@ async function ensureEagleFolder() {
   return created.data.id;
 }
 
+async function readEagleImportProgress(itemId: string) {
+  const response = await fetch(`/api/desktop/eagle-import-progress?id=${encodeURIComponent(itemId)}`, {
+    cache: "no-store", signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error("无法读取 Eagle 导入进度");
+  return (await response.json() as { files?: Record<string, EagleImportFile> }).files || {};
+}
+
+async function writeEagleImportProgress(itemId: string, key: string, entry: EagleImportFile) {
+  const response = await fetch("/api/desktop/eagle-import-progress", {
+    method: "POST", signal: AbortSignal.timeout(5_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: itemId, key, ...entry }),
+  });
+  if (!response.ok) throw new Error("无法保存 Eagle 导入进度");
+}
+
+async function eagleItemInfo(eagleId: string, expected?: { width: number; height: number }) {
+  try {
+    const response = await fetch(`${eagleBase}/item/info?id=${encodeURIComponent(eagleId)}`, {
+      cache: "no-store", signal: AbortSignal.timeout(6_000),
+    });
+    const result = await response.json() as EagleResponse<{
+      id?: string; isDeleted?: boolean; width?: number; height?: number; size?: number; ext?: string;
+    }>;
+    if (!response.ok || result.status !== "success") throw new Error("Eagle 文件核对失败，导入结果待确认");
+    return eagleItemValidity(result.data, eagleId, expected).valid;
+  } catch { throw new Error("Eagle 文件核对暂不可用，导入结果待确认；请稍后重试"); }
+}
+
+async function findEagleItemByToken(token: string, expected?: { width: number; height: number }) {
+  return findTaggedEagleItem(fetch, eagleBase, token, expected, eagleItemInfo);
+}
+
+async function importEagleFile(item: ReviewItem, folderId: string, spec: {
+  key: string; path: string; name: string; tags: string[]; expected?: { width: number; height: number }; annotation?: string;
+}) {
+  const token = `caiguang:${item.id}:${spec.key}`;
+  const progress = await readEagleImportProgress(item.id);
+  const previous = progress[spec.key];
+  if (previous?.state === "completed" && previous.eagleId) {
+    const valid = await eagleItemInfo(previous.eagleId, spec.expected);
+    if (nextEagleImportAction({ previousState: previous.state, directValidity: { valid }, reconciliation: "not_checked" }) === "reuse") {
+      return previous.eagleId;
+    }
+  }
+
+  if (previous?.state === "pending" || previous?.state === "uncertain" || previous?.state === "completed") {
+    let recovered = "";
+    try { recovered = await findEagleItemByToken(previous.token || token, spec.expected); }
+    catch {
+      if (nextEagleImportAction({ previousState: previous.state, reconciliation: "unavailable" }) === "wait") {
+        throw new Error("上次导入结果待确认；Eagle 核对服务暂不可用，已停止重复导入");
+      }
+    }
+    if (recovered) {
+      await writeEagleImportProgress(item.id, spec.key, { state: "completed", token, eagleId: recovered });
+      return recovered;
+    }
+  }
+
+  await writeEagleImportProgress(item.id, spec.key, { state: "pending", token });
+  try {
+    const response = await fetch(`${eagleBase}/item/addFromPath`, {
+      method: "POST", signal: AbortSignal.timeout(20_000),
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify({
+        path: spec.path, name: spec.name, website: item.sourceUrl,
+        tags: [...spec.tags, token], folderId,
+        annotation: `${spec.annotation || `${item.summary}\n发布日期：${postDateLabel(item)}\n抓取日期：${item.capturedAt}`}\n采光导入标记：${token}`,
+      }),
+    });
+    const result = await response.json() as EagleResponse<string>;
+    if (result.status !== "success" || !result.data) throw new Error(result.message || "Eagle 导入失败");
+    let verified = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (await eagleItemInfo(result.data, spec.expected)) { verified = true; break; }
+    }
+    if (!verified) throw new Error("Eagle 已接收文件，但尚未完成校验");
+    await writeEagleImportProgress(item.id, spec.key, { state: "completed", token, eagleId: result.data });
+    return result.data;
+  } catch (error) {
+    // addFromPath can finish inside Eagle after the browser request times out.
+    // Reconcile using the unique tag before a later retry is allowed to resend.
+    let recovered = "";
+    try {
+      for (let attempt = 0; attempt < 5 && !recovered; attempt += 1) {
+        if (attempt) await new Promise((resolve) => setTimeout(resolve, 600));
+        recovered = await findEagleItemByToken(token, spec.expected);
+      }
+    } catch { /* keep the operation uncertain until Eagle responds again */ }
+    if (recovered) {
+      await writeEagleImportProgress(item.id, spec.key, { state: "completed", token, eagleId: recovered });
+      return recovered;
+    }
+    const message = error instanceof Error ? error.message : "Eagle 导入结果待确认";
+    await writeEagleImportProgress(item.id, spec.key, { state: "uncertain", token, error: message });
+    throw new Error(`${message}；源文件已保留，再次点击时会先核对 Eagle`);
+  }
+}
+
 async function importItemToEagle(item: ReviewItem, removedPositions: number[] = []) {
   await validateReviewItem(item);
   for (const [sourceIndex, source] of (item.gallery ?? [item.image]).entries()) {
@@ -383,63 +495,45 @@ async function importItemToEagle(item: ReviewItem, removedPositions: number[] = 
 
   const folderId = await ensureEagleFolder();
 
-  const addFromPath = async (path: string, name: string, tags: string[]) => {
-    const response = await fetch(`${eagleBase}/item/addFromPath`, {
-      method: "POST",
-      // text/plain is intentional: it avoids Eagle's unsupported OPTIONS preflight.
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({
-        path,
-        name,
-        website: item.sourceUrl,
-        tags,
-        folderId,
-        annotation: `${item.summary}\n发布日期：${postDateLabel(item)}\n抓取日期：${item.capturedAt}`,
-      }),
-    });
-    const result = await response.json() as EagleResponse<string>;
-    if (result.status !== "success") throw new Error(result.message || "Eagle 导入失败");
-    return result.data;
-  };
-
-  const imageIds: Array<string | undefined> = [];
+  const imageIds: string[] = [];
+  let firstImportedImage: { id: string; expected: { width: number; height: number } } | undefined;
   if (item.galleryLocalPaths?.length) {
     for (const [position, path] of item.galleryLocalPaths.entries()) {
       if (removedPositions.includes(position)) continue;
-      imageIds.push(await addFromPath(path, `${item.title} - ${String(position + 1).padStart(2, "0")}`, ["小红书", "账号帖子", "组图"]));
+      const expected = expectedImageSize(item, position);
+      const id = await importEagleFile(item, folderId, { key: `image-${stableMediaId(item, position)}`, path,
+        name: `${item.title} - ${String(position + 1).padStart(2, "0")}`, tags: ["小红书", "账号帖子", "组图"], expected });
+      imageIds.push(id);
+      firstImportedImage ||= { id, expected };
     }
   } else {
-    imageIds.push(await addFromPath(item.localPath, `${item.title} - 高清长图`, ["小红书", "创作活动", "H5长图"]));
+    const expected = expectedImageSize(item, 0);
+    const id = await importEagleFile(item, folderId, { key: `image-${stableMediaId(item, 0)}`, path: item.localPath,
+      name: `${item.title} - 高清长图`, tags: ["小红书", "创作活动", "H5长图"], expected });
+    imageIds.push(id);
+    firstImportedImage = { id, expected };
   }
-  const eagleId = imageIds[0];
-  let videoId: string | undefined;
+  let videoId = "";
   if ("videoLocalPath" in item && item.videoLocalPath) {
-    videoId = await addFromPath(item.videoLocalPath, `${item.title} - 动态头图`, ["小红书", "创作活动", "H5动态头图", "MP4"]);
+    videoId = await importEagleFile(item, folderId, { key: "video", path: item.videoLocalPath,
+      name: `${item.title} - 动态头图`, tags: ["小红书", "创作活动", "H5动态头图", "MP4"] });
   } else if (item.animationLocalPath) {
     const format = (item.animationFormat || "动效").toUpperCase();
-    videoId = await addFromPath(item.animationLocalPath, `${item.title} - 原始动效`, ["小红书", "创作活动", "H5动态头图", format]);
+    videoId = await importEagleFile(item, folderId, { key: "animation", path: item.animationLocalPath,
+      name: `${item.title} - 原始动效`, tags: ["小红书", "创作活动", "H5动态头图", format] });
   } else if (item.livePhotoLocalPath) {
-    videoId = await addFromPath(item.livePhotoLocalPath, `${item.title} - Live Photo`, ["小红书", "账号帖子", "Live Photo", "MP4"]);
+    videoId = await importEagleFile(item, folderId, { key: "legacy-live", path: item.livePhotoLocalPath,
+      name: `${item.title} - Live Photo`, tags: ["小红书", "账号帖子", "Live Photo", "MP4"] });
   }
-  const livePhotoIds: Array<string | undefined> = [];
+  const livePhotoIds: string[] = [];
   for (const [position, path] of Object.entries(item.livePhotoLocalPaths ?? {})) {
     if (removedPositions.includes(Number(position))) continue;
-    livePhotoIds.push(await addFromPath(path, `${item.title} - Live Photo ${String(Number(position) + 1).padStart(2, "0")}`, ["小红书", "账号帖子", "Live Photo", "MP4"]));
+    livePhotoIds.push(await importEagleFile(item, folderId, { key: `live-${stableMediaId(item, Number(position))}`, path,
+      name: `${item.title} - Live Photo ${String(Number(position) + 1).padStart(2, "0")}`,
+      tags: ["小红书", "账号帖子", "Live Photo", "MP4"] }));
   }
-
-  if (eagleId) {
-    const firstExpectedSize = expectedImageSize(item, 0);
-    let verified = false;
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      if (attempt) await new Promise((resolve) => setTimeout(resolve, 500));
-      const checkResponse = await fetch(`${eagleBase}/item/info?id=${encodeURIComponent(eagleId)}`, { cache: "no-store" });
-      const checkResult = await checkResponse.json() as EagleResponse<{ width?: number; height?: number }>;
-      if (checkResult.status === "success" && checkResult.data?.width === firstExpectedSize.width && checkResult.data?.height === firstExpectedSize.height) {
-        verified = true;
-        break;
-      }
-    }
-    if (!verified) throw new Error("图片和视频已导入，但 Eagle 尺寸复核未通过，请暂停继续批阅");
+  if (!firstImportedImage || !await eagleItemInfo(firstImportedImage.id, firstImportedImage.expected)) {
+    throw new Error("图片已导入，但 Eagle 尺寸复核未通过，请暂停继续批阅");
   }
   return [...imageIds, videoId, ...livePhotoIds].filter(Boolean).join("|") || item.id;
 }
@@ -448,37 +542,24 @@ async function importSingleToEagle(item: ReviewItem, position: number) {
   const source = item.gallery?.[position];
   const path = item.galleryLocalPaths?.[position];
   if (!source || !path) throw new Error("当前素材不是可单张保存的组图");
+  const galleryLength = item.gallery?.length ?? 0;
   const size = await readImageSize(source);
   const expected = expectedImageSize(item, position);
   if (size.width !== expected.width || size.height !== expected.height) throw new Error("当前图片尺寸校验未通过，已阻止导入");
 
   const folderId = await ensureEagleFolder();
-  const response = await fetch(`${eagleBase}/item/addFromPath`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=UTF-8" },
-    body: JSON.stringify({
-      path, folderId, website: item.sourceUrl,
-      name: `${item.title} - 单张精选 ${String(position + 1).padStart(2, "0")}`,
-      tags: ["小红书", "单张精选", "账号帖子", "排版"],
-      annotation: `${item.summary}\n原帖第 ${position + 1}/${item.gallery.length} 张\n抓取日期：${item.capturedAt}`,
-    }),
-  });
-  const result = await response.json() as EagleResponse<string>;
-  if (result.status !== "success" || !result.data) throw new Error(result.message || "单张图片导入 Eagle 失败");
-  const ids = [result.data];
+  const imageId = await importEagleFile(item, folderId, { key: `image-${stableMediaId(item, position)}`, path,
+    name: `${item.title} - 单张精选 ${String(position + 1).padStart(2, "0")}`,
+    tags: ["小红书", "单张精选", "账号帖子", "排版"], expected,
+    annotation: `${item.summary}\n原帖第 ${position + 1}/${galleryLength} 张\n抓取日期：${item.capturedAt}` });
+  const ids = [imageId];
   const livePath = item.livePhotoLocalPaths?.[position]
     ?? (item.livePhotoIndex === position ? item.livePhotoLocalPath : undefined);
   if (livePath) {
-    const liveResponse = await fetch(`${eagleBase}/item/addFromPath`, {
-      method: "POST", headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({ path: livePath, folderId, website: item.sourceUrl,
-        name: `${item.title} - 单张精选 ${String(position + 1).padStart(2, "0")} Live Photo`,
-        tags: ["小红书", "单张精选", "账号帖子", "Live Photo", "MP4"],
-        annotation: `${item.summary}\n原帖第 ${position + 1}/${item.gallery.length} 张动态文件\n抓取日期：${item.capturedAt}` }),
-    });
-    const liveResult = await liveResponse.json() as EagleResponse<string>;
-    if (liveResult.status !== "success" || !liveResult.data) throw new Error(liveResult.message || "Live Photo 导入 Eagle 失败");
-    ids.push(liveResult.data);
+    ids.push(await importEagleFile(item, folderId, { key: `live-${stableMediaId(item, position)}`, path: livePath,
+      name: `${item.title} - 单张精选 ${String(position + 1).padStart(2, "0")} Live Photo`,
+      tags: ["小红书", "单张精选", "账号帖子", "Live Photo", "MP4"],
+      annotation: `${item.summary}\n原帖第 ${position + 1}/${galleryLength} 张动态文件\n抓取日期：${item.capturedAt}` }));
   }
   return ids.join("|");
 }
@@ -492,6 +573,13 @@ export default function Home() {
   const [savedSingles, setSavedSingles] = useState<Record<string, string>>({});
   const [removedSingles, setRemovedSingles] = useState<Record<string, number[]>>({});
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  const [unavailableUndo, setUnavailableUndo] = useState<Record<string, string>>({});
+  const savedSinglesRef = useRef<Record<string, string>>({});
+  const removedSinglesRef = useRef<Record<string, number[]>>({});
+  const dismissedIdsRef = useRef<string[]>([]);
+  const unavailableUndoRef = useRef<Record<string, string>>({});
+  const reviewUiLoaded = useRef(false);
+  const reviewLibraryLoaded = useRef(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [syncingId, setSyncingId] = useState<string>();
@@ -790,10 +878,21 @@ export default function Home() {
   }, [reviewTourStep, settingsOpen, windowSize]);
   const dismissalKey = useCallback((item: ReviewItem) => `${item.id}@${item.capturedAt || item.date || "unknown"}`, []);
   const reviewItems = useMemo(
-    () => runtimeItems.filter((item) => !dismissedIds.includes(dismissalKey(item))),
+    () => sortReviewItemsNewestFirst(runtimeItems.filter((item) => !dismissedIds.includes(dismissalKey(item)))) as ReviewItem[],
     [dismissalKey, dismissedIds, runtimeItems],
   );
   const current = reviewItems[index] ?? emptyItem;
+  const selectedReviewId = useRef("");
+  useEffect(() => {
+    setIndex((currentIndex) => {
+      const selectedIndex = reviewItems.findIndex((item) => item.id === selectedReviewId.current);
+      const nextIndex = selectedIndex >= 0
+        ? selectedIndex
+        : Math.max(0, Math.min(currentIndex, reviewItems.length - 1));
+      selectedReviewId.current = reviewItems[nextIndex]?.id || "";
+      return nextIndex;
+    });
+  }, [reviewItems]);
   // Stable across polling, but changes when a fallback is replaced in place.
   const currentQualityKey = JSON.stringify(current);
   const allPinAccounts = useMemo(() => [
@@ -827,6 +926,76 @@ export default function Home() {
     return { level: "high", label: "大", color: "红" } as const;
   }, [pinExport.count]);
   const removedCurrent = useMemo(() => removedSingles[current.id] ?? [], [current.id, removedSingles]);
+  const encodeReviewUiState = useCallback((state: ReviewUiState) => {
+    const itemById = new Map(runtimeItems.map((item) => [item.id, item]));
+    const stableSaved: Record<string, string> = {};
+    for (const [key, eagleId] of Object.entries(state.savedSingles)) {
+      let stableKey = key;
+      for (const item of runtimeItems) {
+        const prefix = `${item.id}:`;
+        if (!key.startsWith(prefix)) continue;
+        const suffix = key.slice(prefix.length);
+        if (/^\d+$/.test(suffix)) stableKey = singleStateKey(item, Number(suffix));
+        break;
+      }
+      stableSaved[stableKey] = eagleId;
+    }
+    const stableRemoved = Object.fromEntries(Object.entries(state.removedSingles).map(([id, positions]) => {
+      const item = itemById.get(id);
+      return [id, item ? stableMediaIdsForPositions(item, positions) : positions.map((position) => `position-${position}`)];
+    }));
+    return { schemaVersion: 1, initialized: true, savedSingles: stableSaved,
+      removedSingles: stableRemoved, dismissedIds: state.dismissedIds, unavailableUndo: state.unavailableUndo };
+  }, [runtimeItems]);
+
+  const decodeReviewUiState = useCallback((value: {
+    savedSingles?: Record<string, string>; removedSingles?: Record<string, Array<string | number>>;
+    dismissedIds?: string[]; unavailableUndo?: Record<string, string>;
+  }): ReviewUiState => {
+    const saved = value.savedSingles || {};
+    const stableSaved: Record<string, string> = {};
+    for (const [key, eagleId] of Object.entries(saved)) {
+      let stableKey = key;
+      for (const item of runtimeItems) {
+        const prefix = `${item.id}:`;
+        if (key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length))) {
+          stableKey = singleStateKey(item, Number(key.slice(prefix.length)));
+          break;
+        }
+      }
+      stableSaved[stableKey] = eagleId;
+    }
+    const removed: Record<string, number[]> = {};
+    for (const [id, identifiers] of Object.entries(value.removedSingles || {})) {
+      const item = runtimeItems.find((candidate) => candidate.id === id);
+      if (!item) continue;
+      removed[id] = positionsForStableMedia(item, identifiers);
+    }
+    return { savedSingles: stableSaved, removedSingles: removed,
+      dismissedIds: Array.isArray(value.dismissedIds) ? value.dismissedIds : [],
+      unavailableUndo: value.unavailableUndo || {} };
+  }, [runtimeItems]);
+
+  const persistReviewUiState = useCallback(async (patch: Partial<ReviewUiState>, migration = false) => {
+    const next: ReviewUiState = {
+      savedSingles: patch.savedSingles ?? savedSinglesRef.current,
+      removedSingles: patch.removedSingles ?? removedSinglesRef.current,
+      dismissedIds: patch.dismissedIds ?? dismissedIdsRef.current,
+      unavailableUndo: patch.unavailableUndo ?? unavailableUndoRef.current,
+    };
+    if (desktopAppMode) {
+      const response = await fetch("/api/desktop/review-ui-state", {
+        method: "POST", signal: AbortSignal.timeout(6_000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: encodeReviewUiState(next), migration }),
+      });
+      if (!response.ok) throw new Error("无法保存批阅页面状态，请重试");
+    }
+    savedSinglesRef.current = next.savedSingles;
+    removedSinglesRef.current = next.removedSingles;
+    dismissedIdsRef.current = next.dismissedIds;
+    unavailableUndoRef.current = next.unavailableUndo;
+  }, [desktopAppMode, encodeReviewUiState]);
   const remainingGalleryPositions = useMemo(
     () => current.gallery?.map((_source, position) => position).filter((position) => !removedCurrent.includes(position)) ?? [],
     [current.gallery, removedCurrent],
@@ -1044,11 +1213,15 @@ export default function Home() {
         const payload = await response.json() as {
           items?: ReviewItem[];
           decisions?: Record<string, { decision?: Decision }>;
+          reviewState?: { status?: "ready" | "waiting"; message?: string };
         };
         if (!active) return;
         const nextItems = Array.isArray(payload.items) ? payload.items : [];
+        reviewLibraryLoaded.current = true;
         setRuntimeItems(nextItems);
-        setLibraryStatus(nextItems.length ? `已发现 ${nextItems.length} 组素材，正在进入批阅页` : "已连接，等待首次抓取…");
+        setLibraryStatus(payload.reviewState?.status === "waiting"
+          ? `${payload.reviewState.message || "批阅资料正在更新"}，采光会自动重试`
+          : nextItems.length ? `已发现 ${nextItems.length} 组素材，正在进入批阅页` : "已连接，等待首次抓取…");
         if (payload.decisions) {
           const persisted = Object.fromEntries(Object.entries(payload.decisions)
             .filter(([, value]) => value?.decision === "kept" || value?.decision === "rejected")
@@ -1099,9 +1272,21 @@ export default function Home() {
   useEffect(() => {
     try { setDecisions(JSON.parse(localStorage.getItem(storageKey) || "{}")); } catch { /* ignore invalid local data */ }
     try { setEagleItems(JSON.parse(localStorage.getItem(eagleStorageKey) || "{}")); } catch { /* ignore invalid local data */ }
-    try { setSavedSingles(JSON.parse(localStorage.getItem(singleStorageKey) || "{}")); } catch { /* ignore invalid local data */ }
-    try { setRemovedSingles(JSON.parse(localStorage.getItem(removedSingleStorageKey) || "{}")); } catch { /* ignore invalid local data */ }
-    try { setDismissedIds(JSON.parse(localStorage.getItem(dismissedItemsStorageKey) || "[]")); } catch { /* ignore invalid local data */ }
+    try {
+      const value = JSON.parse(localStorage.getItem(singleStorageKey) || "{}");
+      savedSinglesRef.current = value;
+      setSavedSingles(value);
+    } catch { /* ignore invalid local data */ }
+    try {
+      const value = JSON.parse(localStorage.getItem(removedSingleStorageKey) || "{}");
+      removedSinglesRef.current = value;
+      setRemovedSingles(value);
+    } catch { /* ignore invalid local data */ }
+    try {
+      const value = JSON.parse(localStorage.getItem(dismissedItemsStorageKey) || "[]");
+      dismissedIdsRef.current = value;
+      setDismissedIds(value);
+    } catch { /* ignore invalid local data */ }
     try {
       const savedPins = JSON.parse(localStorage.getItem(pinnedAccountsStorageKey) || "null");
       if (Array.isArray(savedPins)) setPinnedAccountIds(savedPins);
@@ -1307,6 +1492,48 @@ export default function Home() {
     requestAnimationFrame(() => viewer.current?.scrollTo({ top: 0, left: 0 }));
   }, [galleryIndex]);
 
+  useEffect(() => {
+    savedSinglesRef.current = savedSingles;
+    removedSinglesRef.current = removedSingles;
+    dismissedIdsRef.current = dismissedIds;
+    unavailableUndoRef.current = unavailableUndo;
+  }, [dismissedIds, removedSingles, savedSingles, unavailableUndo]);
+
+  useEffect(() => {
+    if (!hydrated || !desktopAppMode || !reviewLibraryLoaded.current || reviewUiLoaded.current) return;
+    reviewUiLoaded.current = true;
+    let active = true;
+    let completed = false;
+    void fetch("/api/desktop/review-ui-state", { cache: "no-store", signal: AbortSignal.timeout(6_000) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("review state unavailable");
+        return response.json() as Promise<{ state?: { initialized?: boolean; savedSingles?: Record<string, string>;
+          removedSingles?: Record<string, Array<string | number>>; dismissedIds?: string[]; unavailableUndo?: Record<string, string> } }>;
+      })
+      .then(async ({ state }) => {
+        if (!active) return;
+        if (state?.initialized) {
+          const decoded = decodeReviewUiState(state);
+          savedSinglesRef.current = decoded.savedSingles;
+          removedSinglesRef.current = decoded.removedSingles;
+          dismissedIdsRef.current = decoded.dismissedIds;
+          unavailableUndoRef.current = decoded.unavailableUndo;
+          setSavedSingles(decoded.savedSingles);
+          setRemovedSingles(decoded.removedSingles);
+          setDismissedIds(decoded.dismissedIds);
+          setUnavailableUndo(decoded.unavailableUndo);
+        } else {
+          // One-time migration from the old origin-bound browser state. The
+          // server refuses to let this empty migration overwrite initialized
+          // app data from another launch.
+          await persistReviewUiState({}, true);
+        }
+        completed = true;
+      })
+      .catch(() => { reviewUiLoaded.current = false; });
+    return () => { active = false; if (!completed) reviewUiLoaded.current = false; };
+  }, [decodeReviewUiState, desktopAppMode, hydrated, persistReviewUiState]);
+
   useEffect(() => { if (hydrated) localStorage.setItem(storageKey, JSON.stringify(decisions)); }, [decisions, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem(eagleStorageKey, JSON.stringify(eagleItems)); }, [eagleItems, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem(singleStorageKey, JSON.stringify(savedSingles)); }, [savedSingles, hydrated]);
@@ -1384,6 +1611,7 @@ export default function Home() {
   }, [decisions, eagleItems, hydrated, removedSingles, reviewItems]);
 
   const openItem = useCallback((next: number) => {
+    selectedReviewId.current = reviewItems[next]?.id || "";
     setIndex(next);
     setGalleryIndex(0);
     zoomRef.current = 1;
@@ -1393,7 +1621,7 @@ export default function Home() {
     setEagleMessage("");
     setLinkCopied(false);
     viewer.current?.scrollTo({ top: 0, left: 0 });
-  }, []);
+  }, [reviewItems]);
 
   const resetZoom = useCallback(() => {
     zoomRef.current = 1;
@@ -1521,17 +1749,20 @@ export default function Home() {
     });
   }, [current.gallery, remainingGalleryPositions]);
 
-  const persistDecision = useCallback((id: string, decision: Decision | "pending") => {
+  const persistDecision = useCallback(async (id: string, decision: Decision | "pending") => {
     if (!desktopAppMode) return;
-    void fetch("/api/desktop/review-decision", {
+    const response = await fetch("/api/desktop/review-decision", {
       method: "POST", headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(8_000),
       body: JSON.stringify({ id, decision }),
-    }).then((response) => {
-      if (!response.ok) throw new Error("decision write failed");
-    }).catch(() => {
-      setEagleError(true);
-      setEagleMessage("本地资料库状态写入失败，请重试");
     });
+    if (!response.ok) {
+      let payload: { error?: string; unrecoverable?: boolean } = {};
+      try { payload = await response.json() as typeof payload; } catch { /* old server response */ }
+      const error = new Error(payload.error || "本地资料库状态写入失败") as Error & { unrecoverable?: boolean };
+      error.unrecoverable = payload.unrecoverable;
+      throw error;
+    }
   }, [desktopAppMode]);
 
   const saveCurrentSingle = useCallback(async () => {
@@ -1540,35 +1771,24 @@ export default function Home() {
       setEagleMessage("当前是完整活动长图，不适用单张保存");
       return;
     }
-    const key = `${current.id}:${galleryIndex}`;
-    if (savedSingles[key] || syncingId) {
-      if (savedSingles[key] && remainingGalleryPositions.length === 1) {
-        const nextDecisions = { ...decisions, [current.id]: "kept" as Decision };
-        setEagleItems((value) => ({ ...value, [current.id]: savedSingles[key] }));
-        setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision: "kept", index }]);
-        setDecisions(nextDecisions);
-        persistDecision(current.id, "kept");
-        setEagleMessage("最后一张此前已保存，本篇已自动完成");
-        openItem(indexAfterDecision(index, reviewItems.length));
-      } else if (savedSingles[key]) {
-        setEagleMessage(`第 ${galleryIndex + 1} 张已经单独保存在 Eagle`);
-      }
-      return;
-    }
+    const key = singleStateKey(current, galleryIndex);
+    if (syncingId) return;
     setSyncingId(key);
     setEagleError(false);
     setEagleMessage(`正在单独保存第 ${galleryIndex + 1} 张…`);
     try {
       await validateReviewItem(current);
       const eagleId = await importSingleToEagle(current, galleryIndex);
-      setSavedSingles((value) => ({ ...value, [key]: eagleId }));
+      const nextSaved = { ...savedSinglesRef.current, [key]: eagleId };
+      await persistReviewUiState({ savedSingles: nextSaved });
+      setSavedSingles(nextSaved);
       if (remainingGalleryPositions.length === 1) {
+        await persistDecision(current.id, "kept");
         setEagleItems((value) => ({ ...value, [current.id]: eagleId }));
         setEagleMessage("最后一张已保存到 Eagle，本篇已自动完成");
         const nextDecisions = { ...decisions, [current.id]: "kept" as Decision };
         setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision: "kept", index }]);
         setDecisions(nextDecisions);
-        persistDecision(current.id, "kept");
         openItem(indexAfterDecision(index, reviewItems.length));
       } else {
         setEagleMessage(`第 ${galleryIndex + 1} 张${currentLivePhoto ? "及对应 Live Photo " : ""}已单独保存到 Eagle；之后删除整篇也不会删除该素材`);
@@ -1579,17 +1799,17 @@ export default function Home() {
       recoverEagleIfUnavailable(error);
     }
     setSyncingId(undefined);
-  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, persistDecision, recoverEagleIfUnavailable, remainingGalleryPositions.length, reviewItems, savedSingles, syncingId]);
+  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, persistDecision, persistReviewUiState, recoverEagleIfUnavailable, remainingGalleryPositions.length, reviewItems, syncingId]);
 
-  const commitDecision = useCallback((decision: Decision) => {
+  const commitDecision = useCallback(async (decision: Decision) => {
+    await persistDecision(current.id, decision);
     const next = { ...decisions, [current.id]: decision };
     setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision, index }]);
     setDecisions(next);
-    persistDecision(current.id, decision);
     openItem(indexAfterDecision(index, reviewItems.length));
   }, [current.id, decisions, index, openItem, persistDecision, reviewItems]);
 
-  const removeCurrentSingle = useCallback(() => {
+  const removeCurrentSingle = useCallback(async () => {
     if (!current.gallery?.length || syncingId) {
       setEagleError(true);
       setEagleMessage("当前素材不支持删除单张");
@@ -1597,21 +1817,37 @@ export default function Home() {
     }
     const nextRemoved = Array.from(new Set([...removedCurrent, galleryIndex])).sort((a, b) => a - b);
     const remaining = current.gallery.map((_source, position) => position).filter((position) => !nextRemoved.includes(position));
-    setHistory((value) => [...value, { kind: "remove-single", id: current.id, previousRemoved: removedCurrent, removedPosition: galleryIndex, previousDecision: decisions[current.id], index }]);
-    setRemovedSingles((value) => ({ ...value, [current.id]: nextRemoved }));
+    const previousRemovedState = removedSinglesRef.current;
+    const nextRemovedState = { ...removedSinglesRef.current, [current.id]: nextRemoved };
+    try { await persistReviewUiState({ removedSingles: nextRemovedState }); }
+    catch (error) {
+      setEagleError(true);
+      setEagleMessage(error instanceof Error ? error.message : "无法保存单张删除状态，请重试");
+      return;
+    }
     if (!remaining.length) {
+      try { await persistDecision(current.id, "rejected"); }
+      catch (error) {
+        await persistReviewUiState({ removedSingles: previousRemovedState }).catch(() => undefined);
+        setEagleError(true);
+        setEagleMessage(error instanceof Error ? error.message : "本地资料库状态写入失败，请重试");
+        return;
+      }
+      setHistory((value) => [...value, { kind: "remove-single", id: current.id, previousRemoved: removedCurrent, removedPosition: galleryIndex, previousDecision: decisions[current.id], index }]);
+      setRemovedSingles(nextRemovedState);
       setEagleMessage("全部图片都已移除，本篇已自动删除");
       const nextDecisions = { ...decisions, [current.id]: "rejected" as Decision };
       setDecisions(nextDecisions);
-      persistDecision(current.id, "rejected");
       openItem(indexAfterDecision(index, reviewItems.length));
       return;
     }
+    setHistory((value) => [...value, { kind: "remove-single", id: current.id, previousRemoved: removedCurrent, removedPosition: galleryIndex, previousDecision: decisions[current.id], index }]);
+    setRemovedSingles(nextRemovedState);
     const nextPosition = remaining.find((position) => position > galleryIndex) ?? remaining.at(-1)!;
     setGalleryIndex(nextPosition);
     setEagleError(false);
     setEagleMessage(`已移除第 ${galleryIndex + 1} 张；留下时只保存剩余 ${remaining.length} 张`);
-  }, [current, decisions, galleryIndex, index, openItem, persistDecision, removedCurrent, reviewItems, syncingId]);
+  }, [current, decisions, galleryIndex, index, openItem, persistDecision, persistReviewUiState, removedCurrent, reviewItems, syncingId]);
 
   const decide = useCallback(async (decision: Decision) => {
     if (syncingId) return;
@@ -1623,7 +1859,11 @@ export default function Home() {
       }
       setEagleError(false);
       setEagleMessage("已移入临时撤回区；下次抓取或重新打开采光时会永久删除本地文件");
-      commitDecision(decision);
+      try { await commitDecision(decision); }
+      catch (error) {
+        setEagleError(true);
+        setEagleMessage(error instanceof Error ? error.message : "无法移入撤回区，请重试");
+      }
       return;
     }
     if (current.previewOnly) {
@@ -1631,7 +1871,7 @@ export default function Home() {
       setEagleMessage("当前是失败兜底预览。采光会定时补抓完整活动；补抓完成前不会导入 Eagle，也不会把它误记为已保留");
       return;
     }
-    if (!eagleItems[current.id]) {
+    {
       setSyncingId(current.id);
       setEagleError(false);
       setEagleMessage("正在导入 Eagle…");
@@ -1648,50 +1888,98 @@ export default function Home() {
       }
       setSyncingId(undefined);
     }
-    commitDecision(decision);
+    try { await commitDecision(decision); }
+    catch (error) {
+      setEagleError(true);
+      setEagleMessage(error instanceof Error ? error.message : "无法保存批阅结果，请重试");
+    }
   }, [commitDecision, current, eagleItems, recoverEagleIfUnavailable, removedCurrent, syncingId]);
 
-  const removeCurrentItem = useCallback(() => {
+  const removeCurrentItem = useCallback(async () => {
     if (!reviewItems.length || current.id === "empty") return;
     const removedIndex = index;
     const remainingCount = reviewItems.length - 1;
-    setHistory((value) => [...value, { kind: "remove-item", id: current.id, index: removedIndex }]);
     const key = dismissalKey(current);
-    setDismissedIds((value) => value.includes(key) ? value : [...value, key]);
+    const nextDismissed = dismissedIdsRef.current.includes(key) ? dismissedIdsRef.current : [...dismissedIdsRef.current, key];
+    try { await persistReviewUiState({ dismissedIds: nextDismissed }); }
+    catch (error) {
+      setEagleError(true);
+      setEagleMessage(error instanceof Error ? error.message : "无法保存整组隐藏状态，请重试");
+      return;
+    }
+    setHistory((value) => [...value, { kind: "remove-item", id: current.id, index: removedIndex }]);
+    setDismissedIds(nextDismissed);
     openItem(remainingCount ? Math.min(removedIndex, remainingCount - 1) : 0);
     setEagleError(false);
     setEagleMessage("已从批阅页面移除整组素材，可按 Command + Z 撤回");
-  }, [current, dismissalKey, index, openItem, reviewItems.length]);
+  }, [current, dismissalKey, index, openItem, persistReviewUiState, reviewItems.length]);
 
-  const undo = useCallback(() => {
+  const undo = useCallback(async () => {
     const last = history.at(-1);
     if (!last) return;
-    setHistory((value) => value.slice(0, -1));
     if (last.kind === "remove-item") {
       const restoredItem = runtimeItems.find((item) => item.id === last.id);
       const restoredKey = restoredItem ? dismissalKey(restoredItem) : last.id;
       const nextDismissed = dismissedIds.filter((id) => id !== restoredKey && id !== last.id);
       const restoredItems = runtimeItems.filter((item) => !nextDismissed.includes(dismissalKey(item)));
       const restoredIndex = restoredItems.findIndex((item) => item.id === last.id);
+      try { await persistReviewUiState({ dismissedIds: nextDismissed }); }
+      catch (error) {
+        setEagleError(true);
+        setEagleMessage(error instanceof Error ? error.message : "撤回失败");
+        return;
+      }
       setDismissedIds(nextDismissed);
+      setHistory((value) => value.slice(0, -1));
       openItem(restoredIndex >= 0 ? restoredIndex : last.index);
       setEagleError(false);
       setEagleMessage("已撤回：整组素材已经恢复到批阅页面");
       return;
     }
     if (last.kind === "remove-single") {
-      setRemovedSingles((value) => ({ ...value, [last.id]: last.previousRemoved }));
+      try { await persistDecision(last.id, last.previousDecision ?? "pending"); }
+      catch (error) {
+        if ((error as Error & { unrecoverable?: boolean }).unrecoverable) {
+          const reason = error instanceof Error ? error.message : "撤回期已结束，文件已清理";
+          const nextUnavailable = { ...unavailableUndoRef.current, [last.id]: reason };
+          await persistReviewUiState({ unavailableUndo: nextUnavailable }).catch(() => undefined);
+          setUnavailableUndo(nextUnavailable);
+        }
+        setEagleError(true);
+        setEagleMessage(error instanceof Error ? error.message : "撤回失败");
+        return;
+      }
+      const nextRemoved = { ...removedSinglesRef.current, [last.id]: last.previousRemoved };
+      try { await persistReviewUiState({ removedSingles: nextRemoved }); }
+      catch (error) {
+        setEagleError(true);
+        setEagleMessage(error instanceof Error ? error.message : "撤回状态保存失败");
+        return;
+      }
+      setRemovedSingles(nextRemoved);
+      setHistory((value) => value.slice(0, -1));
       setDecisions((value) => {
         const next = { ...value };
         if (last.previousDecision) next[last.id] = last.previousDecision;
         else delete next[last.id];
         return next;
       });
-      persistDecision(last.id, last.previousDecision ?? "pending");
       openItem(last.index);
       setGalleryIndex(last.removedPosition);
       setEagleError(false);
       setEagleMessage(`已撤回：第 ${last.removedPosition + 1} 张已经恢复`);
+      return;
+    }
+    try { await persistDecision(last.id, last.previous ?? "pending"); }
+    catch (error) {
+      if ((error as Error & { unrecoverable?: boolean }).unrecoverable) {
+        const reason = error instanceof Error ? error.message : "撤回期已结束，文件已清理";
+        const nextUnavailable = { ...unavailableUndoRef.current, [last.id]: reason };
+        await persistReviewUiState({ unavailableUndo: nextUnavailable }).catch(() => undefined);
+        setUnavailableUndo(nextUnavailable);
+      }
+      setEagleError(true);
+      setEagleMessage(error instanceof Error ? error.message : "撤回失败");
       return;
     }
     setDecisions((value) => {
@@ -1700,16 +1988,22 @@ export default function Home() {
       else delete next[last.id];
       return next;
     });
-    persistDecision(last.id, last.previous ?? "pending");
+    setHistory((value) => value.slice(0, -1));
     openItem(last.index);
     setEagleError(false);
     setEagleMessage(last.decision === "kept" && Boolean(eagleItems[last.id])
       ? "已撤回“留下”状态；为避免误删，已经导入 Eagle 的文件仍然保留"
       : "已撤回上一步");
-  }, [dismissalKey, dismissedIds, eagleItems, history, openItem, persistDecision, runtimeItems]);
+  }, [dismissalKey, dismissedIds, eagleItems, history, openItem, persistDecision, persistReviewUiState, runtimeItems]);
 
-  const undoCurrent = useCallback(() => {
+  const undoCurrent = useCallback(async () => {
     if (!decisions[current.id]) return;
+    try { await persistDecision(current.id, "pending"); }
+    catch (error) {
+      setEagleError(true);
+      setEagleMessage(error instanceof Error ? error.message : "撤回失败");
+      return;
+    }
     const wasKeptInEagle = decisions[current.id] === "kept" && Boolean(eagleItems[current.id]);
     setDecisions((value) => {
       const next = { ...value };
@@ -1717,7 +2011,6 @@ export default function Home() {
       return next;
     });
     setHistory((value) => value.filter((entry) => entry.id !== current.id));
-    persistDecision(current.id, "pending");
     setEagleError(false);
     setEagleMessage(wasKeptInEagle
       ? "已撤回本条的“留下”状态；为避免误删，已经导入 Eagle 的文件仍然保留"
@@ -1754,15 +2047,17 @@ export default function Home() {
         });
         const preview = await previewResponse.json() as { ok?: boolean; displayName?: string; xiaohongshuId?: string; avatarUrl?: string; error?: string };
         if (!previewResponse.ok || !preview.ok || !preview.displayName || !preview.avatarUrl) throw new Error(preview.error || "preview");
+        const displayName = preview.displayName;
+        const avatarUrl = preview.avatarUrl;
         setManualPinAccounts((accounts) => [...accounts, {
           searchKey: profileId,
           xiaohongshuId: preview.xiaohongshuId || "待晚间核验",
-          displayName: preview.displayName,
+          displayName,
           group: "manual_pending",
           profileId,
           profileUrl: `https://www.xiaohongshu.com/user/profile/${profileId}`,
-          status: "pending_verification",
-          avatarUrl: preview.avatarUrl,
+          status: "pending_verification" as const,
+          avatarUrl,
           addedAt: new Date().toISOString(),
         }]);
       }
@@ -1846,18 +2141,15 @@ export default function Home() {
       if (!captured.ok || !captured.path) throw new Error(captured.error || "画板截取失败");
       temporaryPath = captured.path;
       const folderId = await ensureEagleFolder();
-      const result = await (await fetch(`${eagleBase}/item/addFromPath`, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=UTF-8" },
-        signal: AbortSignal.timeout(20_000),
-        body: JSON.stringify({
-          path: captured.path, folderId, website: current.sourceUrl,
-          name: `${current.title} - 当前画板截取`,
-          tags: ["采光", "画板截取", "小红书", "PNG"],
-          annotation: `${current.summary}\n发布日期：${postDateLabel(current)}\n截取范围：当前画板可见区域`,
-        }),
-      })).json();
-      if (result.status !== "success") throw new Error(result.message || "Eagle 导入失败");
+      const filename = captured.path.split("/").at(-1) || String(Date.now());
+      await importEagleFile(current, folderId, {
+        key: `canvas-${filename}`,
+        path: captured.path,
+        name: `${current.title} - 当前画板截取`,
+        tags: ["采光", "画板截取", "小红书", "PNG"],
+        expected: captured.width && captured.height ? { width: captured.width, height: captured.height } : undefined,
+        annotation: `${current.summary}\n发布日期：${postDateLabel(current)}\n截取范围：当前画板可见区域`,
+      });
       await bridge.cleanupCapture?.(temporaryPath);
       setEagleMessage(`已截取当前画板并存入 Eagle（${captured.width}×${captured.height}px）`);
     } catch (error) {
@@ -1877,6 +2169,7 @@ export default function Home() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, select, textarea, [contenteditable='true']")) return;
+      if (onboardingPreview || settingsOpen || reviewTourStep !== null) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
         event.preventDefault();
         undo();
@@ -1890,7 +2183,7 @@ export default function Home() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key === "Backspace") {
         event.preventDefault();
-        removeCurrentItem();
+        void removeCurrentItem();
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -1911,7 +2204,7 @@ export default function Home() {
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [captureCanvasToEagle, current.id, decide, decisions, index, moveGallery, openItem, removeCurrentItem, removeCurrentSingle, resetZoom, reviewItems.length, saveCurrentSingle, undo, undoCurrent]);
+  }, [captureCanvasToEagle, current.id, decide, decisions, index, moveGallery, onboardingPreview, openItem, removeCurrentItem, removeCurrentSingle, resetZoom, reviewItems.length, reviewTourStep, saveCurrentSingle, settingsOpen, undo, undoCurrent]);
 
   if (onboardingPreview) {
     return (
@@ -2309,7 +2602,11 @@ export default function Home() {
                 {manualCapture.state === "failed" && <button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>确定</button>}
               </span>}
             </div>
-            <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo} disabled={!history.length && !decisions[current.id]}>{decisions[current.id] ? "重新选择" : "撤回上一步"}</button>
+            <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo}
+              title={unavailableUndo[history.at(-1)?.id || current.id] || undefined}
+              disabled={(!history.length && !decisions[current.id]) || Boolean(unavailableUndo[history.at(-1)?.id || current.id])}>
+              {unavailableUndo[history.at(-1)?.id || current.id] ? "文件已清理" : decisions[current.id] ? "重新选择" : "撤回上一步"}
+            </button>
           </Fragment>}
         </aside>
       </section>

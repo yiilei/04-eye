@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { access, chmod, cp, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -22,6 +22,8 @@ const localRuntimeNode = path.join(localRuntimeRoot, "node");
 const localRuntimeRunner = path.join(localRuntimeRoot, "scheduler-runner.zsh");
 const wakeLockPath = path.join(localRuntimeRoot, "caffeinate.pid");
 const notificationRequestPath = path.join(dataRoot, "notification-request.json");
+const progressPath = path.join(dataRoot, "capture-progress.json");
+const runLockPath = path.join(dataRoot, "daily-auto.lock");
 
 const readJson = async (file, fallback) => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return fallback; }
@@ -76,9 +78,48 @@ async function ensureWakeLock() {
   await writeFile(wakeLockPath, `${child.pid}\n`);
 }
 
+async function recoverInterruptedCapture(state) {
+  const progress = await readJson(progressPath, {});
+  if (progress.state !== "running") return state;
+  const owner = Number((await readFile(runLockPath, "utf8").catch(() => "")).trim());
+  let ownerAlive = false;
+  if (Number.isInteger(owner) && owner > 1) {
+    try {
+      process.kill(owner, 0);
+      const command = spawnSync("/bin/ps", ["-p", String(owner), "-o", "command="], { encoding: "utf8" }).stdout?.trim() || "";
+      ownerAlive = /(?:^|\s|\/)daily-auto\.mjs(?:\s|$)/.test(command);
+    } catch { /* stale lock */ }
+  }
+  if (ownerAlive) return state;
+  // daily-auto creates the lock before writing its PID. A scheduler tick in
+  // that tiny interval must wait instead of deleting a live, still-empty lock.
+  const lockMetadata = await stat(runLockPath).catch(() => null);
+  if ((!Number.isInteger(owner) || owner <= 1) && lockMetadata && Date.now() - lockMetadata.mtimeMs < 5_000) return state;
+  await rm(runLockPath, { force: true });
+  const interruptedAt = new Date().toISOString();
+  await atomicJson(progressPath, {
+    ...progress,
+    state: "failed",
+    phase: "interrupted",
+    label: "上次抓取意外中断，正在自动恢复",
+    updatedAt: interruptedAt,
+    failedAt: interruptedAt,
+  });
+  state.lastCaptureStatus = "needs_attention";
+  state.lastCaptureIssue = "browser_interrupted";
+  state.nextCaptureAttemptAt = null;
+  await atomicJson(statePath, state);
+  return state;
+}
+
 async function runCapture(reason = "scheduled") {
   await mkdir(logRoot, { recursive: true });
   const now = clock();
+  const stateBeforeCapture = await readJson(statePath, {});
+  // A scheduler tick may win the race immediately after onboarding. Until one
+  // capture has succeeded, every entry point must retain first-capture
+  // semantics (latest post per selected account + latest three creator events).
+  const firstCapture = process.env.CAIGUANG_FIRST_CAPTURE === "1" || !stateBeforeCapture.lastCaptureDate;
   const captureLog = path.join(logRoot, `${now.date}-capture.log`);
   const logHandle = await open(captureLog, "a");
   await logHandle.write(`\n[capture-start] ${new Date().toISOString()} ${reason}\n`);
@@ -88,7 +129,7 @@ async function runCapture(reason = "scheduled") {
   try {
     const child = spawn(wrapper, ["auto"], {
       cwd: projectRoot,
-      env: { ...process.env, SHARP_EYE_HOME: appData },
+      env: { ...process.env, SHARP_EYE_HOME: appData, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0" },
       stdio: ["ignore", logHandle.fd, logHandle.fd],
     });
     status = await new Promise((resolve) => {
@@ -111,8 +152,16 @@ async function runCapture(reason = "scheduled") {
   state.lastCaptureStatus = ok ? "completed" : "needs_attention";
   state.lastCaptureReason = reason;
   state.lastCaptureIssue = loginRequired ? "login_required" : null;
-  state.nextCaptureAttemptAt = ok ? null : new Date(Date.now() + 30 * 60_000).toISOString();
-  if (ok) state.lastCaptureDate = now.date;
+  // Manual/first-run captures must be retryable immediately after a transient
+  // browser failure. Keep the cooldown only for unattended scheduled runs so
+  // a failed background job cannot repeatedly hit the platform.
+  state.nextCaptureAttemptAt = ok || reason === "manual"
+    ? null
+    : new Date(Date.now() + 30 * 60_000).toISOString();
+  if (ok) {
+    state.lastCaptureDate = now.date;
+    if (firstCapture && !state.initialCaptureCompletedAt) state.initialCaptureCompletedAt = state.lastCaptureAt;
+  }
   await atomicJson(statePath, state);
   return { ok, output };
 }
@@ -132,7 +181,7 @@ async function tick() {
   await ensureWakeLock();
   const now = clock();
   const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
-  const state = scheduled.state;
+  const state = await recoverInterruptedCapture(scheduled.state);
   if (scheduled.changed) await atomicJson(statePath, state);
   const queue = await readJson(queuePath, { tasks: [] });
   const retryDue = (queue.tasks || []).some((task) => ["retry_pending", "fallback_pending", "needs_browser_capture", "user_action_required", "failed"].includes(task.status)

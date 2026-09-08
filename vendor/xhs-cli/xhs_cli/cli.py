@@ -533,11 +533,13 @@ def user(user_id: str, as_json: bool):
 @cli.command("user-posts")
 @click.argument("user_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def user_posts(user_id: str, as_json: bool):
+@click.option("--until-note", default="", help="Load more until this note ID is visible")
+@click.option("--max-pages", default=1, type=click.IntRange(1, 48), help="Maximum bounded scroll batches")
+def user_posts(user_id: str, as_json: bool, until_note: str, max_pages: int):
     """List a user's published notes."""
     try:
         with _get_client() as client:
-            posts = client.get_user_posts(user_id)
+            posts = client.get_user_posts(user_id, until_note=until_note, max_pages=max_pages)
 
             if as_json:
                 click.echo(json.dumps(posts, indent=2, ensure_ascii=False))

@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { acquireProcessLock } from "./process-lock.mjs";
+import { isTransientBrowserFailure, shouldRetryDiscovery } from "./browser-recovery-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -55,10 +56,19 @@ const results = [];
 writeProgress({ state: "running", phase: "starting", label: "准备本地抓取", percent: 3, phaseIndex: 0, phaseCount: steps.length });
 for (const [index, [name, label, percent, args]] of steps.entries()) {
   writeProgress({ state: "running", phase: name, label, percent, phaseIndex: index + 1, phaseCount: steps.length });
-  const result = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8", timeout: 60 * 60 * 1000,
+  const runStep = () => spawnSync(process.execPath, args, { cwd: root, encoding: "utf8", timeout: 60 * 60 * 1000,
     env: { ...process.env, CAIGUANG_CAPTURE_CREATOR_H5: creatorH5CaptureEnabled ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  results.push({ name, ok: result.status === 0, status: result.status, output,
+  let child = runStep();
+  let output = [child.stdout, child.stderr].filter(Boolean).join("\n").trim();
+  let retried = false;
+  // A closed Playwright target is transient. Re-running the discovery step
+  // creates a fresh browser/context without duplicating successful work.
+  if (shouldRetryDiscovery(name, output)) {
+    retried = true;
+    child = runStep();
+    output = `${output}\n[automatic-browser-retry]\n${[child.stdout, child.stderr].filter(Boolean).join("\n").trim()}`.trim();
+  }
+  results.push({ name, label, ok: child.status === 0, status: child.status, output, retried,
     summary: output.split("\n").filter(Boolean).at(-1) || "" });
 }
 let pipelineSummary = null;
@@ -93,7 +103,9 @@ writeProgress(ok
         : fallbackCount ? `本轮已结束，${fallbackCount} 项正文获取失败，等待补抓` : "抓取完成，批阅列表已刷新",
     percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
   : { state: "failed", phase: "failed", label: failedStep
-      ? `${failedStep[1] || "前置步骤"}未完成，请查看日报`
+      ? isTransientBrowserFailure(failedStep.output)
+        ? "浏览器连续两次未能启动，任务已保留，稍后自动补抓"
+        : `${failedStep.label || "抓取步骤"}未完成，请查看日报`
       : Number(pipelineSummary?.failed || 0) > 0
         ? `${pipelineSummary.failed} 项抓取失败，请查看日报`
       : pipelineSummary?.error

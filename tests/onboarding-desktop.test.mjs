@@ -86,6 +86,13 @@ test("a later failed run is recovery, not another first capture", () => {
   assert.equal(isFirstCaptureRequest(true, { lastCaptureDate: "2026-09-06", lastCaptureStatus: "completed" }), true);
 });
 
+test("a scheduler race cannot consume first-capture semantics", async () => {
+  const scheduler = await readFile(new URL("scripts/caiguang-scheduler.mjs", root), "utf8");
+  assert.match(scheduler, /const firstCapture = process\.env\.CAIGUANG_FIRST_CAPTURE === "1" \|\| !stateBeforeCapture\.lastCaptureDate/);
+  assert.match(scheduler, /CAIGUANG_FIRST_CAPTURE: firstCapture \? "1" : "0"/);
+  assert.match(scheduler, /initialCaptureCompletedAt/);
+});
+
 test("first-capture estimate includes the three creator H5 activities", () => {
   assert.deepEqual(estimateFirstCaptureMinutes(0, false), { minimum: 2, maximum: 4 });
   assert.deepEqual(estimateFirstCaptureMinutes(13, true), { minimum: 6, maximum: 12 });
@@ -249,5 +256,7 @@ test("desktop packager replaces rather than merges the previous app payload", as
 test("desktop app bundle includes every shared module imported by the server", async () => {
   const packager = await readFile(new URL("../scripts/package-macos-app.mjs", import.meta.url), "utf8");
   assert.match(packager, /review-cache-cleanup\.mjs/);
+  assert.match(packager, /review-state-store\.mjs/);
   assert.match(packager, /capture-time-policy\.mjs/);
+  assert.match(packager, /releaseExcluded = new Set\(\["install-local-recovery-fix\.mjs"\]\)/);
 });

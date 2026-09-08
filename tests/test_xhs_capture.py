@@ -1,5 +1,6 @@
 import importlib.util
 import unittest
+import tempfile
 from unittest.mock import patch
 from pathlib import Path
 
@@ -12,6 +13,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 class CaptureParsingTests(unittest.TestCase):
+    def test_corrupt_journal_is_preserved_and_blocks_capture(self):
+        with tempfile.TemporaryDirectory() as folder:
+            journal = Path(folder) / "review-operation.json"
+            with patch.object(MODULE, "REVIEW_OPERATION", journal):
+                for raw in ["{", "{}", "null"]:
+                    journal.write_text(raw, encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, "恢复日志"):
+                        MODULE.recover_review_operation_unlocked()
+                    self.assertEqual(journal.read_text(encoding="utf-8"), raw)
+
     def test_media_index_accepts_downloader_and_normalized_names(self):
         self.assertEqual(MODULE.media_index(Path("post_12.webp")), 12)
         self.assertEqual(MODULE.media_index(Path("01.webp")), 1)

@@ -32,6 +32,9 @@ test("cleanup permanently removes reviewed bridge media but keeps pending media"
   assert.equal(await exists(rejectedFolder), false);
   assert.equal(await exists(pendingFolder), true);
   assert.deepEqual(JSON.parse(await readFile(path.join(dataDir, "generated-review-items.json"), "utf8")).map((item) => item.id), ["pending"]);
-  assert.deepEqual(JSON.parse(await readFile(path.join(dataDir, "review-trash.json"), "utf8")), {});
+  const tombstone = JSON.parse(await readFile(path.join(dataDir, "review-trash.json"), "utf8")).rejected;
+  assert.equal(tombstone.state, "purged");
+  assert.equal(tombstone.recoverable, false);
+  assert.equal(tombstone.reason, "撤回期已结束，文件已清理");
   await rm(dataHome, { recursive: true, force: true });
 });

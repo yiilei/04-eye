@@ -7,6 +7,7 @@ import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
 import { cleanupReviewedMedia } from "../scripts/review-cache-cleanup.mjs";
+import { recoverReviewOperationUnlocked, withReviewStateLock } from "../scripts/review-state-store.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
 
 const mime = new Map([
@@ -42,10 +43,13 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   const registryPath = path.join(dataRoot, "data", "generated-review-items.json");
   const decisionsPath = path.join(dataRoot, "data", "review-decisions.json");
   const trashIndexPath = path.join(dataRoot, "data", "review-trash.json");
+  const reviewOperationPath = path.join(dataRoot, "data", "review-operation.json");
   const preferencesPath = path.join(dataRoot, "data", "user-preferences.json");
   const pendingPinsPath = path.join(dataRoot, "data", "xhs-pending-pins.json");
   const schedulerStatePath = path.join(dataRoot, "data", "scheduler-state.json");
   const captureProgressPath = path.join(dataRoot, "data", "capture-progress.json");
+  const eagleImportProgressPath = path.join(dataRoot, "data", "eagle-import-progress.json");
+  const reviewUiStatePath = path.join(dataRoot, "data", "review-ui-state.json");
   const installedSourceRoot = path.join(dataRoot, "source");
   const bundledRuntimeRoot = path.resolve(appRoot, "..", "runtime", "project");
   const runtimeRoot = existsSync(path.join(bundledRuntimeRoot, "scripts", "caiguang-scheduler.mjs")) ? bundledRuntimeRoot : installedSourceRoot;
@@ -62,12 +66,28 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   await mkdir(trashRoot, { recursive: true });
   // Review media is a bridge, not a permanent library. A restart closes the
   // previous undo window and purges already rejected/imported local copies.
-  await cleanupReviewedMedia(dataRoot);
-  try { await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot); }
+  let reviewStartupState = { status: "ready", message: "" };
+  try {
+    await cleanupReviewedMedia(dataRoot);
+  } catch (error) {
+    // A second live process may briefly own the review state. The app must
+    // still open and expose a retryable state instead of crashing at startup.
+    reviewStartupState = {
+      status: "waiting",
+      message: error instanceof Error ? error.message : "批阅资料正在更新，请稍后重试",
+    };
+    console.warn("[desktop] review cleanup deferred:", reviewStartupState.message);
+  }
+  try {
+    await withReviewStateLock(dataRoot, async () => {
+      await recoverReviewOperationUnlocked(dataRoot);
+      await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot);
+    });
+  }
   catch (error) {
     // A starter-data failure must never erase a user's existing review list.
-    if (!existsSync(registryPath)) await writeFile(registryPath, "[]\n");
-    else console.error("[desktop] starter data skipped:", error);
+    reviewStartupState = { status: "waiting", message: error instanceof Error ? error.message : "批阅资料正在更新，请稍后重试" };
+    console.error("[desktop] starter data skipped:", error);
   }
 
   const json = (value, status = 200) => new Response(JSON.stringify(value), {
@@ -136,9 +156,97 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       });
       const pathname = new URL(request.url).pathname;
       if (pathname === "/api/desktop/review-items" && request.method === "GET") {
+        if (reviewStartupState.status === "waiting") {
+          try {
+            await cleanupReviewedMedia(dataRoot);
+            await withReviewStateLock(dataRoot, async () => {
+              await recoverReviewOperationUnlocked(dataRoot);
+              await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot);
+            });
+            reviewStartupState = { status: "ready", message: "" };
+          } catch (error) {
+            reviewStartupState = { status: "waiting",
+              message: error instanceof Error ? error.message : "批阅资料正在更新，请稍后重试" };
+          }
+        }
         const items = await readJson(registryPath, []);
         const decisions = await readJson(decisionsPath, {});
-        const response = json({ items, decisions, updatedAt: new Date().toISOString() });
+        const response = json({ items, decisions, reviewState: reviewStartupState, updatedAt: new Date().toISOString() });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/eagle-import-progress" && request.method === "GET") {
+        const id = new URL(request.url).searchParams.get("id") || "";
+        const progress = await readJson(eagleImportProgressPath, { schemaVersion: 1, items: {} });
+        const response = json({ ok: true, files: progress.items?.[id]?.files || {} });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/eagle-import-progress" && request.method === "POST") {
+        const payload = await request.json();
+        if (!payload?.id || !payload?.key || !["pending", "uncertain", "completed"].includes(payload.state)) {
+          const response = json({ ok: false, error: "invalid import progress" }, 400);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        await withReviewStateLock(dataRoot, async () => {
+          const progress = await readJson(eagleImportProgressPath, { schemaVersion: 1, items: {} });
+          progress.items ||= {};
+          progress.items[payload.id] ||= { files: {} };
+          progress.items[payload.id].files[payload.key] = {
+            state: payload.state,
+            token: String(payload.token || "").slice(0, 240),
+            eagleId: String(payload.eagleId || "").slice(0, 240),
+            error: String(payload.error || "").slice(0, 500),
+            updatedAt: new Date().toISOString(),
+          };
+          await atomicJson(eagleImportProgressPath, progress);
+        });
+        const response = json({ ok: true });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/review-ui-state" && request.method === "GET") {
+        const state = await readJson(reviewUiStatePath, {
+          schemaVersion: 1, initialized: false, savedSingles: {}, removedSingles: {}, dismissedIds: [], unavailableUndo: {},
+        });
+        const response = json({ ok: true, state });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/review-ui-state" && request.method === "POST") {
+        const payload = await request.json();
+        if (!payload?.state || typeof payload.state !== "object") {
+          const response = json({ ok: false, error: "invalid review ui state" }, 400);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        await withReviewStateLock(dataRoot, async () => {
+          await recoverReviewOperationUnlocked(dataRoot);
+          const existing = await readJson(reviewUiStatePath, { schemaVersion: 1, initialized: false });
+          const incomingState = payload.state;
+          // An empty migration payload must never erase data already stored by
+          // another app launch.
+          const next = payload.migration && existing.initialized
+            ? existing
+            : {
+                schemaVersion: 1,
+                initialized: true,
+                savedSingles: incomingState.savedSingles && typeof incomingState.savedSingles === "object" ? incomingState.savedSingles : {},
+                removedSingles: incomingState.removedSingles && typeof incomingState.removedSingles === "object" ? incomingState.removedSingles : {},
+                dismissedIds: Array.isArray(incomingState.dismissedIds) ? incomingState.dismissedIds.map(String) : [],
+                unavailableUndo: incomingState.unavailableUndo && typeof incomingState.unavailableUndo === "object" ? incomingState.unavailableUndo : {},
+                updatedAt: new Date().toISOString(),
+              };
+          await atomicJson(reviewUiStatePath, next);
+        });
+        const response = json({ ok: true });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
@@ -292,7 +400,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         }
         const child = spawn(process.execPath, [installedScheduler, "run"], {
           cwd: runtimeRoot,
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0" },
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot,
+            CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0", CAIGUANG_MANUAL_CONTINUE: "1" },
           stdio: "ignore",
         });
         captureProcess = child;
@@ -432,41 +541,73 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           response.headers.forEach((value, key) => outgoing.setHeader(key, value));
           return Readable.fromWeb(response.body).pipe(outgoing);
         }
-        const decisions = await readJson(decisionsPath, {});
-        const registry = await readJson(registryPath, []);
-        const trashIndex = await readJson(trashIndexPath, {});
-        if (payload.decision === "rejected") {
-          const itemIndex = registry.findIndex((item) => item.id === payload.id);
-          const item = registry[itemIndex];
-          if (item && !trashIndex[payload.id]) {
-            const originalFolder = itemFolder(item);
-            if (!originalFolder) throw new Error("素材目录不在应用资料库中，已阻止删除");
-            const safeId = String(payload.id).replace(/[^a-zA-Z0-9_-]+/g, "-");
-            const trashFolder = path.join(trashRoot, `${Date.now()}-${safeId}`);
-            await rename(originalFolder, trashFolder);
-            registry.splice(itemIndex, 1);
-            trashIndex[payload.id] = { item, itemIndex, originalFolder, trashFolder, deletedAt: new Date().toISOString() };
-            await atomicJson(registryPath, registry);
-            await atomicJson(trashIndexPath, trashIndex);
+        const result = await withReviewStateLock(dataRoot, async () => {
+          // A journal represents the only operation allowed to mutate review
+          // files. It must be fully recovered before a new operation can write
+          // or replace that journal.
+          await recoverReviewOperationUnlocked(dataRoot);
+          reviewStartupState = { status: "ready", message: "" };
+          // Always re-read under the shared lock. Capture registration and
+          // cleanup use the same lock, so an older UI snapshot cannot overwrite
+          // media that was added or moved concurrently.
+          const decisions = await readJson(decisionsPath, {});
+          const registry = await readJson(registryPath, []);
+          const trashIndex = await readJson(trashIndexPath, {});
+          if (payload.decision === "rejected") {
+            const itemIndex = registry.findIndex((item) => item.id === payload.id);
+            const item = registry[itemIndex];
+            const existingTrash = trashIndex[payload.id];
+            if (item && !existingTrash) {
+              const originalFolder = itemFolder(item);
+              if (!originalFolder) throw new Error("素材目录不在应用资料库中，已阻止删除");
+              const safeId = String(payload.id).replace(/[^a-zA-Z0-9_-]+/g, "-");
+              const trashFolder = path.join(trashRoot, `${Date.now()}-${safeId}`);
+              await atomicJson(reviewOperationPath, { type: "reject", id: payload.id, item, itemIndex,
+                originalFolder, trashFolder, startedAt: new Date().toISOString() });
+              await recoverReviewOperationUnlocked(dataRoot);
+            } else if (!item && !existingTrash) {
+              throw Object.assign(new Error("素材不存在，无法删除"), { status: 404 });
+            }
+            const latestTrash = (await readJson(trashIndexPath, {}))[payload.id];
+            if (latestTrash?.recoverable === false) {
+              return { ok: true, recoverable: false, reason: latestTrash.reason || "文件已清理" };
+            }
+            return { ok: true, recoverable: true };
+          } else if (payload.decision === "pending") {
+            const entry = trashIndex[payload.id];
+            if (!entry) {
+              if (registry.some((item) => item.id === payload.id)) return { ok: true, recoverable: true, alreadyRestored: true };
+              throw Object.assign(new Error("没有可撤回的素材记录"), { status: 404 });
+            }
+            if (entry.recoverable === false || ["purged", "missing"].includes(entry.state)) {
+              throw Object.assign(new Error(entry.reason || "撤回期已结束，文件已清理"), { status: 410, unrecoverable: true });
+            }
+            const trashExists = await access(entry.trashFolder).then(() => true).catch(() => false);
+            if (!trashExists) {
+              trashIndex[payload.id] = { ...entry, state: "missing", recoverable: false, reason: "撤回期已结束，文件已清理" };
+              decisions[payload.id] = { decision: "rejected", recoverable: false, cleanupState: "missing",
+                reason: "撤回期已结束，文件已清理", updatedAt: new Date().toISOString() };
+              await atomicJson(trashIndexPath, trashIndex);
+              await atomicJson(decisionsPath, decisions);
+              throw Object.assign(new Error("撤回期已结束，文件已清理"), { status: 410, unrecoverable: true });
+            }
+            await atomicJson(reviewOperationPath, { type: "restore", id: payload.id, item: entry.item,
+              itemIndex: entry.itemIndex, originalFolder: entry.originalFolder,
+              trashFolder: entry.trashFolder, startedAt: new Date().toISOString() });
+            await recoverReviewOperationUnlocked(dataRoot);
+            const restored = (await readJson(registryPath, [])).some((item) => item.id === payload.id);
+            if (!restored) {
+              const latest = (await readJson(trashIndexPath, {}))[payload.id];
+              throw Object.assign(new Error(latest?.reason || "撤回失败，必要文件缺失"), { status: 410, unrecoverable: true });
+            }
+            return { ok: true, recoverable: true };
+          } else {
+            decisions[payload.id] = { decision: payload.decision, updatedAt: new Date().toISOString() };
           }
-          decisions[payload.id] = { decision: "rejected", updatedAt: new Date().toISOString(), recoverable: true };
-        } else if (payload.decision === "pending") {
-          const entry = trashIndex[payload.id];
-          if (entry) {
-            await mkdir(path.dirname(entry.originalFolder), { recursive: true });
-            await rename(entry.trashFolder, entry.originalFolder);
-            const insertAt = Math.max(0, Math.min(Number(entry.itemIndex) || 0, registry.length));
-            if (!registry.some((item) => item.id === payload.id)) registry.splice(insertAt, 0, entry.item);
-            delete trashIndex[payload.id];
-            await atomicJson(registryPath, registry);
-            await atomicJson(trashIndexPath, trashIndex);
-          }
-          delete decisions[payload.id];
-        } else {
-          decisions[payload.id] = { decision: payload.decision, updatedAt: new Date().toISOString() };
-        }
-        await atomicJson(decisionsPath, decisions);
-        const response = json({ ok: true, recoverable: payload.decision === "rejected" });
+          await atomicJson(decisionsPath, decisions);
+          return { ok: true, recoverable: payload.decision === "rejected" };
+        });
+        const response = json(result);
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);
@@ -492,8 +633,11 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       if (!response.body) return outgoing.end();
       Readable.fromWeb(response.body).pipe(outgoing);
     } catch (error) {
-      outgoing.statusCode = 500;
-      outgoing.end(error instanceof Error ? error.message : "Desktop server failed");
+      outgoing.statusCode = Number(error?.status) || 500;
+      outgoing.setHeader("Content-Type", "application/json; charset=utf-8");
+      outgoing.end(JSON.stringify({ ok: false,
+        error: error instanceof Error ? error.message : "Desktop server failed",
+        unrecoverable: Boolean(error?.unrecoverable) }));
     }
   });
   await new Promise((resolve, reject) => {

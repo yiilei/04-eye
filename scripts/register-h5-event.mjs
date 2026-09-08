@@ -4,6 +4,7 @@ import { access, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:f
 import path from "node:path";
 import process from "node:process";
 import os from "node:os";
+import { recoverReviewOperationUnlocked, withReviewStateLock } from "./review-state-store.mjs";
 
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const rawArgs = process.argv.slice(2).filter((value) => value !== "--");
@@ -84,8 +85,6 @@ const manifest = {
 
 const prefix = `/media/${captureDate}/${slug}`;
 const registryPath = path.join(dataHome, "data", "generated-review-items.json");
-let registry = [];
-try { registry = JSON.parse(await readFile(registryPath, "utf8")); } catch { /* first capture */ }
 const imagePath = path.join(targetDir, imageName);
 const item = {
   id: slug,
@@ -110,8 +109,6 @@ const item = {
   sourceQuality: "web_highest_available",
   captureMethod: captureEvidence.captureMethod || "single_full_page",
 };
-const nextRegistry = [item, ...registry.filter((existing) => existing.id !== slug && existing.postId !== slug)];
-
 // Build in a private staging directory. Only after every source/evidence check
 // passes do we atomically swap it into review, so a rejected capture cannot
 // leave a half-populated item behind.
@@ -120,37 +117,43 @@ const nonce = `${process.pid}-${Date.now()}`;
 const stagingDir = path.join(reviewDateDir, `.${slug}.staging-${nonce}`);
 const backupDir = path.join(reviewDateDir, `.${slug}.previous-${nonce}`);
 const registryTemp = `${registryPath}.${nonce}.tmp`;
-await mkdir(reviewDateDir, { recursive: true });
-await mkdir(path.dirname(registryPath), { recursive: true });
-await mkdir(stagingDir, { recursive: true });
-let previousMoved = false;
-let stagedInstalled = false;
-try {
-  await copyFile(sourceImagePath, path.join(stagingDir, imageName));
-  await copyFile(sourceCoverPath, path.join(stagingDir, coverName));
-  if (hasVideo) await copyFile(sourceVideoPath, path.join(stagingDir, videoName));
-  if (hasAnimation && animationEvidence.kind !== "mp4") await copyFile(sourceAnimationPath, path.join(stagingDir, animationName));
-  await writeFile(path.join(stagingDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+await withReviewStateLock(dataHome, async () => {
+  await recoverReviewOperationUnlocked(dataHome);
+  let registry = [];
+  try { registry = JSON.parse(await readFile(registryPath, "utf8")); } catch { /* first capture */ }
+  const nextRegistry = [item, ...registry.filter((existing) => existing.id !== slug && existing.postId !== slug)];
+  await mkdir(reviewDateDir, { recursive: true });
+  await mkdir(path.dirname(registryPath), { recursive: true });
+  await mkdir(stagingDir, { recursive: true });
+  let previousMoved = false;
+  let stagedInstalled = false;
+  try {
+    await copyFile(sourceImagePath, path.join(stagingDir, imageName));
+    await copyFile(sourceCoverPath, path.join(stagingDir, coverName));
+    if (hasVideo) await copyFile(sourceVideoPath, path.join(stagingDir, videoName));
+    if (hasAnimation && animationEvidence.kind !== "mp4") await copyFile(sourceAnimationPath, path.join(stagingDir, animationName));
+    await writeFile(path.join(stagingDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  if (await access(targetDir).then(() => true).catch(() => false)) {
-    await rename(targetDir, backupDir);
-    previousMoved = true;
+    if (await access(targetDir).then(() => true).catch(() => false)) {
+      await rename(targetDir, backupDir);
+      previousMoved = true;
+    }
+    await rename(stagingDir, targetDir);
+    stagedInstalled = true;
+    await writeFile(registryTemp, `${JSON.stringify(nextRegistry, null, 2)}\n`);
+    await rename(registryTemp, registryPath);
+    if (previousMoved) await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+  } catch (error) {
+    await rm(registryTemp, { force: true }).catch(() => {});
+    if (stagedInstalled) await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    else await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    if (previousMoved) await rename(backupDir, targetDir).catch(() => {});
+    throw error;
   }
-  await rename(stagingDir, targetDir);
-  stagedInstalled = true;
-  await writeFile(registryTemp, `${JSON.stringify(nextRegistry, null, 2)}\n`);
-  await rename(registryTemp, registryPath);
-  if (previousMoved) await rm(backupDir, { recursive: true, force: true }).catch(() => {});
-  // The reviewed copy is now complete and atomically registered. The H5
-  // capture directory is only evidence/staging and must not duplicate it.
-  if (sourceDir.includes(`${path.sep}data${path.sep}h5-staging${path.sep}`)) {
-    await rm(sourceDir, { recursive: true, force: true });
-  }
-} catch (error) {
-  await rm(registryTemp, { force: true }).catch(() => {});
-  if (stagedInstalled) await rm(targetDir, { recursive: true, force: true }).catch(() => {});
-  else await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
-  if (previousMoved) await rename(backupDir, targetDir).catch(() => {});
-  throw error;
+});
+// The reviewed copy is now complete and atomically registered. The H5
+// capture directory is only evidence/staging and must not duplicate it.
+if (sourceDir.includes(`${path.sep}data${path.sep}h5-staging${path.sep}`)) {
+  await rm(sourceDir, { recursive: true, force: true });
 }
 console.log(JSON.stringify({ ok: true, id: slug, images: 1, videos: hasVideo ? 1 : 0, animations: hasAnimation ? 1 : 0, width, height, manifest: path.join(targetDir, "manifest.json") }));

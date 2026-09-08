@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
+import { recoverReviewOperationUnlocked, withReviewStateLock } from "./review-state-store.mjs";
 
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const raw = process.argv.slice(2).filter((value) => value !== "--");
@@ -74,8 +75,6 @@ const manifest = {
 };
 await writeFile(path.join(stagingDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-let registry = [];
-try { registry = JSON.parse(await readFile(registryPath, "utf8")); } catch { /* first item */ }
 const prefix = `/media/${captureDate}/${slug}`;
 const caption = `活动正文获取失败，本条为兜底记录，不是完整素材，不能据此判断活动未上线。\n\n情况类型：${failureInfo.type}\n\n失败原因：${failure}\n\n当前保留：活动封面、失败原因、创作服务中心入口。\n\n后续处理：补抓成功前不会通过 YES 导入 Eagle；请查看抓取结果中的重试安排。\n\n处理建议：${failureInfo.advice}\n点击上方链接可进入小红书创作服务中心，在活动列表中查找「${title}」。`;
 const item = {
@@ -84,20 +83,25 @@ const item = {
   cover: `${prefix}/${coverName}`, image: `${prefix}/${coverName}`, localPath: path.join(targetDir, coverName),
   sourceUrl: creatorCenterUrl, attemptedSourceUrl: sourceUrl, sourceQuality: "web_highest_available",
 };
-const next = [item, ...registry.filter((entry) => entry.id !== slug && entry.postId !== slug)];
-await mkdir(path.dirname(registryPath), { recursive: true });
 const backup = `${targetDir}.previous-${nonce}`;
-let moved = false;
-try {
-  if (await access(targetDir).then(() => true).catch(() => false)) { await rename(targetDir, backup); moved = true; }
-  await rename(stagingDir, targetDir);
-  const temp = `${registryPath}.${nonce}.tmp`;
-  await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`);
-  await rename(temp, registryPath);
-  if (moved) await rm(backup, { recursive: true, force: true });
-} catch (error) {
-  await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
-  if (moved) await rename(backup, targetDir).catch(() => {});
-  throw error;
-}
+await withReviewStateLock(dataHome, async () => {
+  await recoverReviewOperationUnlocked(dataHome);
+  let registry = [];
+  try { registry = JSON.parse(await readFile(registryPath, "utf8")); } catch { /* first item */ }
+  const next = [item, ...registry.filter((entry) => entry.id !== slug && entry.postId !== slug)];
+  await mkdir(path.dirname(registryPath), { recursive: true });
+  let moved = false;
+  try {
+    if (await access(targetDir).then(() => true).catch(() => false)) { await rename(targetDir, backup); moved = true; }
+    await rename(stagingDir, targetDir);
+    const temp = `${registryPath}.${nonce}.tmp`;
+    await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`);
+    await rename(temp, registryPath);
+    if (moved) await rm(backup, { recursive: true, force: true });
+  } catch (error) {
+    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    if (moved) await rename(backup, targetDir).catch(() => {});
+    throw error;
+  }
+});
 console.log(JSON.stringify({ ok: true, id: slug, fallback: true, manifest: path.join(targetDir, "manifest.json") }));

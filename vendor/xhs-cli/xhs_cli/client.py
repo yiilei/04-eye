@@ -393,7 +393,7 @@ class XhsClient:
 
     # ===== User Posts =====
 
-    def get_user_posts(self, user_id: str) -> list[dict]:
+    def get_user_posts(self, user_id: str, until_note: str = "", max_pages: int = 1) -> list[dict]:
         """Get a user's published notes by navigating to their profile page.
 
         Prefer the legacy __INITIAL_STATE__ payload, then fall back to the
@@ -478,7 +478,50 @@ class XhsClient:
         }"""
         )
 
-        return result if isinstance(result, list) else []
+        initial = result if isinstance(result, list) else []
+        if max_pages <= 1:
+            return initial
+
+        def note_id(item: dict) -> str:
+            if not isinstance(item, dict):
+                return ""
+            card = item.get("note_card", item.get("noteCard", item))
+            return str(item.get("id") or item.get("note_id") or item.get("noteId")
+                       or (card.get("id") if isinstance(card, dict) else "") or "")
+
+        merged = {note_id(item): item for item in initial if note_id(item)}
+        stagnant = 0
+        previous_height = 0
+        for _ in range(max(0, min(max_pages, 48) - 1)):
+            if until_note and until_note in merged:
+                break
+            height = int(self._page.evaluate("document.scrollingElement?.scrollHeight || document.body.scrollHeight || 0"))
+            self._page.evaluate("window.scrollTo(0, document.scrollingElement?.scrollHeight || document.body.scrollHeight || 0)")
+            self._page.wait_for_timeout(1500)
+            rendered = self._page.evaluate(
+                """() => Array.from(document.querySelectorAll('section.note-item[data-note-id]')).map(card => {
+                  const noteId = card.dataset.noteId || '';
+                  const detailLink = Array.from(card.querySelectorAll('a[href]')).find(link => link.href.includes(`/${noteId}`));
+                  let token = '';
+                  try { token = new URL(detailLink?.href || '', location.href).searchParams.get('xsec_token') || ''; } catch (_) {}
+                  const authorLink = card.querySelector('a.author[href*="/user/profile/"]');
+                  const profileMatch = (authorLink?.getAttribute('href') || '').match(/\\/user\\/profile\\/([^?\\/]+)/);
+                  const nickname = (card.querySelector('.author .name')?.textContent || '').trim();
+                  return { note_id: noteId, display_title: (card.querySelector('.title')?.textContent || '').trim(),
+                    xsec_token: token, interact_info: { sticky: (card.querySelector('.top-wrapper')?.textContent || '').includes('置顶') },
+                    user: { user_id: profileMatch?.[1] || '', nickname, nick_name: nickname } };
+                }).filter(note => note.note_id)"""
+            )
+            before = len(merged)
+            for item in rendered or []:
+                if note_id(item):
+                    merged[note_id(item)] = item
+            next_height = int(self._page.evaluate("document.scrollingElement?.scrollHeight || document.body.scrollHeight || 0"))
+            stagnant = stagnant + 1 if len(merged) == before and next_height <= max(height, previous_height) else 0
+            previous_height = next_height
+            if stagnant >= 2:
+                break
+        return list(merged.values())
 
     # ===== Feed (Explore/Recommend) =====
 

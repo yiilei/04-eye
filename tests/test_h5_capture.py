@@ -45,6 +45,15 @@ class H5CaptureTests(unittest.TestCase):
         payload = b"\xff\xd8\xff\xc0\x00\x11\x08" + (2109).to_bytes(2, "big") + (1125).to_bytes(2, "big") + b"\x03" + (b"\x00" * 10)
         self.assertEqual(MODULE.jpeg_dimensions(payload), (1125, 2109))
 
+    def test_capture_removes_only_floating_publish_controls(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("hide_floating_ctas", source)
+        self.assertIn("element.closest('button, a, [role=\"button\"]')", source)
+        self.assertIn("actionLabel", source)
+        self.assertIn("Math.abs(first.top - second.top) < 4", source)
+        self.assertIn("actualScroll >= 40", source)
+        self.assertNotIn("filter(element => /^(?:去)?发布$/", source)
+
 
 if __name__ == "__main__":
     unittest.main()

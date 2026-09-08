@@ -116,7 +116,8 @@ for (const brokenLink of ["lib/pkgconfig/python3.pc", "lib/pkgconfig/python3-emb
 }
 const runtimeFilter = (source) => {
   const blocked = new Set([".git", ".pytest_cache", "__pycache__", ".DS_Store", "Download"]);
-  return !source.split(path.sep).some((part) => blocked.has(part)) && !source.endsWith(".pyc");
+  const releaseExcluded = new Set(["install-local-recovery-fix.mjs"]);
+  return !source.split(path.sep).some((part) => blocked.has(part) || releaseExcluded.has(part)) && !source.endsWith(".pyc");
 };
 for (const entry of ["data", "desktop", "plugins", "public", "scripts", "vendor"]) {
   await cp(path.join(root, entry), path.join(packagedRuntimeProject, entry), { recursive: true, verbatimSymlinks: true, filter: runtimeFilter });
@@ -183,7 +184,7 @@ for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, ent
 // desktop/server.mjs imports shared runtime modules. Keep every imported
 // script in the app-only bundle as well as in the complete source bundle.
 await mkdir(path.join(packagedApp, "scripts"), { recursive: true });
-for (const script of ["review-cache-cleanup.mjs", "capture-time-policy.mjs"]) {
+for (const script of ["review-cache-cleanup.mjs", "review-state-store.mjs", "capture-time-policy.mjs"]) {
   await cp(path.join(root, "scripts", script), path.join(packagedApp, "scripts", script));
 }
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });

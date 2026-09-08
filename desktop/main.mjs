@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, shell } from "electron";
 import { existsSync, watch } from "node:fs";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
@@ -30,6 +30,59 @@ const notificationOnlyLaunch = process.argv.includes("--scheduled-notification")
 if (notificationOnlyLaunch && process.platform === "darwin") app.setActivationPolicy("accessory");
 
 const notificationRequestFile = () => path.join(app.getPath("userData"), "data", "notification-request.json");
+const screenshotCleanupFile = () => path.join(app.getPath("userData"), "data", "screenshot-cleanup.json");
+const screenshotTimers = new Map();
+
+async function readScreenshotCleanup() {
+  try { return JSON.parse(await readFile(screenshotCleanupFile(), "utf8")); }
+  catch { return { schemaVersion: 1, entries: {} }; }
+}
+
+async function writeScreenshotCleanup(value) {
+  const target = screenshotCleanupFile();
+  await mkdir(path.dirname(target), { recursive: true });
+  const temporary = `${target}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporary, target);
+}
+
+function validScreenshotPath(value) {
+  const captureRoot = path.resolve(app.getPath("userData"), "captures");
+  const target = path.resolve(String(value || ""));
+  const relative = path.relative(captureRoot, target);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? target : "";
+}
+
+async function finishScreenshotCleanup(target) {
+  const safeTarget = validScreenshotPath(target);
+  if (!safeTarget) return false;
+  const state = await readScreenshotCleanup();
+  const entry = state.entries?.[safeTarget];
+  if (!entry || entry.state !== "imported") return false;
+  await rm(safeTarget, { force: true });
+  delete state.entries[safeTarget];
+  await writeScreenshotCleanup(state);
+  screenshotTimers.delete(safeTarget);
+  return true;
+}
+
+async function scheduleScreenshotCleanup(target, cleanupAfter) {
+  const safeTarget = validScreenshotPath(target);
+  if (!safeTarget) return false;
+  if (screenshotTimers.has(safeTarget)) clearTimeout(screenshotTimers.get(safeTarget));
+  const delay = Math.max(0, Date.parse(cleanupAfter) - Date.now());
+  const timer = setTimeout(() => void finishScreenshotCleanup(safeTarget), delay);
+  timer.unref();
+  screenshotTimers.set(safeTarget, timer);
+  return true;
+}
+
+async function recoverScreenshotCleanup() {
+  const state = await readScreenshotCleanup();
+  for (const [target, entry] of Object.entries(state.entries || {})) {
+    if (entry?.state === "imported" && entry.cleanupAfter) await scheduleScreenshotCleanup(target, entry.cleanupAfter);
+  }
+}
 
 async function deliverPendingNotification() {
   try {
@@ -262,6 +315,9 @@ ipcMain.handle("caiguang:capture-canvas", async (event, requested = {}) => {
     const filename = `${safeTitle}-${new Date().toISOString().replace(/[.:]/g, "-")}.png`;
     const target = path.join(directory, filename);
     await writeFile(target, image.toPNG());
+    const cleanup = await readScreenshotCleanup();
+    cleanup.entries[target] = { state: "captured", createdAt: new Date().toISOString() };
+    await writeScreenshotCleanup(cleanup);
     const size = image.getSize();
     return { ok: true, path: target, width: size.width, height: size.height };
   } catch (error) {
@@ -269,16 +325,16 @@ ipcMain.handle("caiguang:capture-canvas", async (event, requested = {}) => {
   }
 });
 ipcMain.handle("caiguang:cleanup-capture", async (_event, value) => {
-  const captureRoot = path.resolve(app.getPath("userData"), "captures");
-  const target = path.resolve(String(value || ""));
-  const relative = path.relative(captureRoot, target);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  const target = validScreenshotPath(value);
+  if (!target) return false;
   // Eagle queues addFromPath asynchronously and may not stat/copy the source
   // until several seconds after returning success. Keep the PNG available for
   // ten minutes; cleanup is delayed instead of racing Eagle's import worker.
-  const timer = setTimeout(() => void rm(target, { force: true }), 10 * 60 * 1_000);
-  timer.unref();
-  return true;
+  const cleanupAfter = new Date(Date.now() + 10 * 60 * 1_000).toISOString();
+  const cleanup = await readScreenshotCleanup();
+  cleanup.entries[target] = { ...(cleanup.entries[target] || {}), state: "imported", cleanupAfter };
+  await writeScreenshotCleanup(cleanup);
+  return scheduleScreenshotCleanup(target, cleanupAfter);
 });
 ipcMain.handle("caiguang:runtime-status", async () => {
   const pidPath = path.join(app.getPath("userData"), "runtime", "caffeinate.pid");
@@ -388,6 +444,7 @@ async function createWindow() {
 app.setName("采光");
 app.whenReady().then(async () => {
   await migrateLegacyData(app.getPath("userData"));
+  await recoverScreenshotCleanup();
   await deliverPendingNotification();
   if (notificationOnlyLaunch) {
     setTimeout(() => app.quit(), 1_500).unref();

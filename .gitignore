@@ -47,3 +47,4 @@ yarn-error.log*
 /release/
 __pycache__/
 *.pyc
+*.tsbuildinfo

@@ -14,6 +14,8 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -26,8 +28,157 @@ DEFAULT_OUTPUT = DATA_HOME / "review"
 REGISTRY = DATA_HOME / "data/generated-review-items.json"
 STAGING = DATA_HOME / "data/capture-staging"
 LOCK_FILE = DATA_HOME / "data/xhs-capture.lock"
+REVIEW_STATE_LOCK = DATA_HOME / "data/review-state.lock"
+REVIEW_OPERATION = DATA_HOME / "data/review-operation.json"
+REVIEW_DECISIONS = DATA_HOME / "data/review-decisions.json"
+REVIEW_TRASH_INDEX = DATA_HOME / "data/review-trash.json"
 IMAGE_SUFFIXES = {".webp", ".jpeg", ".jpg", ".png", ".avif", ".heic"}
 VIDEO_SUFFIXES = {".mp4", ".mov"}
+
+
+@contextmanager
+def review_state_lock(timeout: float = 8.0):
+    """Coordinate registry moves with the desktop UI and cleanup process."""
+    REVIEW_STATE_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    descriptor = None
+    while descriptor is None:
+        try:
+            descriptor = os.open(REVIEW_STATE_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.write(descriptor, (json.dumps({"pid": os.getpid(), "createdAt": datetime.now().astimezone().isoformat()}) + "\n").encode())
+        except FileExistsError:
+            stale = False
+            try:
+                owner = json.loads(REVIEW_STATE_LOCK.read_text(encoding="utf-8"))
+                owner_pid = int(owner.get("pid", 0))
+                if owner_pid <= 1:
+                    # A creator can be observed after open(O_EXCL) but before
+                    # its owner PID is completely written. Give it the same
+                    # short grace period as malformed/empty JSON.
+                    stale = time.time() - REVIEW_STATE_LOCK.stat().st_mtime > 5.0
+                else:
+                    os.kill(owner_pid, 0)
+            except ProcessLookupError:
+                stale = True
+            except FileNotFoundError:
+                stale = False
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Another process may have created the lock but not finished
+                # writing its owner JSON. Only reclaim malformed locks after a
+                # grace period, otherwise two writers could enter together.
+                try:
+                    stale = time.time() - REVIEW_STATE_LOCK.stat().st_mtime > 5.0
+                except FileNotFoundError:
+                    stale = False
+            except PermissionError:
+                stale = False
+            if stale:
+                REVIEW_STATE_LOCK.unlink(missing_ok=True)
+                continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError("批阅资料正在更新，请稍后重试")
+            time.sleep(0.04)
+    try:
+        yield
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            owner = json.loads(REVIEW_STATE_LOCK.read_text(encoding="utf-8"))
+            if int(owner.get("pid", 0)) == os.getpid():
+                REVIEW_STATE_LOCK.unlink(missing_ok=True)
+        except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+
+def read_json(path: Path, fallback):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        return fallback
+
+
+def atomic_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def recover_review_operation_unlocked() -> None:
+    """Finish the desktop journal before capture changes the same registry."""
+    try:
+        operation = json.loads(REVIEW_OPERATION.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as error:
+        raise RuntimeError("批阅恢复日志无法读取，已停止后续写入，请保留资料并重试") from error
+    if not isinstance(operation, dict) or not operation.get("type") or not operation.get("id"):
+        raise RuntimeError("批阅恢复日志不完整，已停止后续写入")
+    review_root = (DATA_HOME / "review").resolve()
+    trash_root = (DATA_HOME / "trash").resolve()
+    original = Path(str(operation.get("originalFolder", ""))).resolve()
+    trash = Path(str(operation.get("trashFolder", ""))).resolve()
+    if not original.is_relative_to(review_root) or not trash.is_relative_to(trash_root):
+        raise RuntimeError("未完成的批阅操作路径无效，已停止后续写入")
+    original_exists, trash_exists = original.exists(), trash.exists()
+    if original_exists and trash_exists:
+        raise RuntimeError("未完成的批阅操作同时存在原目录和撤回目录，需要人工检查")
+
+    registry = read_json(REGISTRY, [])
+    decisions = read_json(REVIEW_DECISIONS, {})
+    trash_index = read_json(REVIEW_TRASH_INDEX, {})
+    item_id = str(operation["id"])
+    timestamp = operation.get("startedAt") or datetime.now().astimezone().isoformat()
+    if operation["type"] == "reject":
+        if original_exists and not trash_exists:
+            trash.parent.mkdir(parents=True, exist_ok=True)
+            original.rename(trash)
+            trash_exists = True
+        registry = [item for item in registry if item.get("id") != item_id]
+        if trash_exists:
+            trash_index[item_id] = {"state": "available", "recoverable": True,
+                "item": operation.get("item"), "itemIndex": operation.get("itemIndex", 0),
+                "originalFolder": str(original), "trashFolder": str(trash), "deletedAt": timestamp}
+            decisions[item_id] = {"decision": "rejected", "updatedAt": timestamp, "recoverable": True}
+        else:
+            trash_index[item_id] = {"state": "missing", "recoverable": False,
+                "itemId": item_id, "reason": "文件缺失", "updatedAt": timestamp}
+            decisions[item_id] = {"decision": "rejected", "updatedAt": timestamp,
+                "recoverable": False, "cleanupState": "missing", "reason": "文件缺失"}
+    elif operation["type"] == "restore":
+        if trash_exists and not original_exists:
+            original.parent.mkdir(parents=True, exist_ok=True)
+            trash.rename(original)
+            original_exists = True
+        item = operation.get("item") or {}
+        local_values = list(item.get("galleryLocalPaths") or [])
+        local_values += [item.get("localPath"), item.get("videoLocalPath")]
+        live_values = item.get("livePhotoLocalPaths") or {}
+        local_values += list(live_values.values()) if isinstance(live_values, dict) else list(live_values)
+        required = []
+        for value in filter(None, local_values):
+            candidate = Path(str(value)).resolve()
+            if candidate.is_relative_to(original):
+                required.append(candidate)
+        files_complete = original_exists and (not required or all(candidate.exists() for candidate in required))
+        if files_complete:
+            if not any(item.get("id") == item_id for item in registry):
+                index = max(0, min(int(operation.get("itemIndex") or 0), len(registry)))
+                registry.insert(index, operation.get("item"))
+            trash_index.pop(item_id, None)
+            decisions.pop(item_id, None)
+        else:
+            trash_index[item_id] = {"state": "missing", "recoverable": False,
+                "itemId": item_id, "reason": "文件缺失", "updatedAt": timestamp}
+            decisions[item_id] = {"decision": "rejected", "updatedAt": timestamp,
+                "recoverable": False, "cleanupState": "missing", "reason": "文件缺失"}
+    else:
+        raise RuntimeError(f"未知的批阅恢复操作：{operation['type']}")
+    atomic_json(REGISTRY, registry)
+    atomic_json(REVIEW_TRASH_INDEX, trash_index)
+    atomic_json(REVIEW_DECISIONS, decisions)
+    REVIEW_OPERATION.unlink(missing_ok=True)
 
 
 def post_id_from_url(url: str) -> str:
@@ -312,7 +463,7 @@ def register_for_app(manifest: Path) -> None:
         "id": data["id"], "postId": data["postId"], "title": data["title"],
         "caption": data.get("caption", ""),
         "summary": f"{account} · {' · '.join(counts)}",
-        "date": (f"编辑于 {data['editedAt']}" if data.get("editedAt") else data.get("publishedAt") or "日期未知"),
+        "date": data.get("publishedAt") or (f"编辑于 {data['editedAt']}" if data.get("editedAt") else "日期未知"),
         "publishedAt": data.get("publishedAt", ""), "editedAt": data.get("editedAt", ""),
         "capturedAt": data["capturedAt"][:10], "width": first["width"], "height": first["height"],
         "fallback": False,
@@ -332,12 +483,16 @@ def register_for_app(manifest: Path) -> None:
         item["videoPost"] = True
         item["video"] = f"{public_prefix}/{data['videos'][0]}"
         item["videoLocalPath"] = f"{local_prefix}/{data['videos'][0]}"
-    registry = json.loads(REGISTRY.read_text(encoding="utf-8")) if REGISTRY.exists() else []
-    registry = [existing for existing in registry
-                if existing.get("id") != item["id"] and existing.get("postId") != item["postId"]]
-    registry.insert(0, item)
-    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
-    REGISTRY.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with review_state_lock():
+        recover_review_operation_unlocked()
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8")) if REGISTRY.exists() else []
+        registry = [existing for existing in registry
+                    if existing.get("id") != item["id"] and existing.get("postId") != item["postId"]]
+        registry.insert(0, item)
+        REGISTRY.parent.mkdir(parents=True, exist_ok=True)
+        temporary = REGISTRY.with_name(f"{REGISTRY.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, REGISTRY)
 
 
 def capture(args: argparse.Namespace) -> dict:

@@ -295,6 +295,82 @@ def main() -> int:
 
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(350)
+        # The creator shell can render CTA overlays inside an iframe, shadow
+        # root, or transformed wrapper. Detect floating controls by comparing
+        # their viewport position before/after a small scroll, then remove only
+        # short action labels. Poster text scrolls with the artwork and stays.
+        hide_floating_ctas = r"""async () => {
+          const roots = [document];
+          for (let index = 0; index < roots.length; index += 1) {
+            for (const node of roots[index].querySelectorAll('*')) {
+              if (node.shadowRoot) roots.push(node.shadowRoot);
+            }
+          }
+          const actionLabel = /^(?:(?:立即|马上|去|点击)?(?:发布|投稿|参与|参加|报名|领取|体验)(?:活动|笔记)?|开始创作)$/u;
+          const controls = new Set();
+          for (const root of roots) {
+            for (const element of root.querySelectorAll('*')) {
+              const label = (element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('alt') || '').trim();
+              if (!actionLabel.test(label)) continue;
+              const control = element.closest('button, a, [role="button"]');
+              if (!control) continue;
+              const rect = control.getBoundingClientRect();
+              const style = getComputedStyle(control);
+              if (rect.width < 24 || rect.height < 18 || rect.width > innerWidth * 0.8 || rect.height > innerHeight * 0.35
+                  || style.display === 'none' || style.visibility === 'hidden') continue;
+              controls.add(control);
+            }
+          }
+          let hidden = 0;
+          for (const control of controls) {
+            const composedParent = node => node.parentElement || node.getRootNode()?.host || null;
+            let scroller = composedParent(control);
+            while (scroller) {
+              const style = getComputedStyle(scroller);
+              if (/(auto|scroll)/.test(style.overflowY) && scroller.scrollHeight > scroller.clientHeight + 8) break;
+              scroller = composedParent(scroller);
+            }
+            scroller ||= document.scrollingElement;
+            if (!scroller) continue;
+            const originalScroll = scroller.scrollTop;
+            const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+            const requestedScroll = originalScroll + 180 <= maximum
+              ? originalScroll + 180
+              : Math.max(0, originalScroll - 180);
+            const first = control.getBoundingClientRect();
+            scroller.scrollTop = requestedScroll;
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const actualScroll = Math.abs(scroller.scrollTop - originalScroll);
+            const second = control.getBoundingClientRect();
+            const style = getComputedStyle(control);
+            scroller.scrollTop = originalScroll;
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            const stationary = actualScroll >= 40
+              && Math.abs(first.top - second.top) < 4
+              && Math.abs(first.left - second.left) < 4;
+            const confirmedOverlay = style.position === 'fixed'
+              || (style.position === 'sticky' && stationary)
+              || stationary;
+            if (confirmedOverlay) {
+              control.style.setProperty('display', 'none', 'important');
+              hidden += 1;
+            }
+          }
+          return hidden;
+        }"""
+        hidden_floating_ctas = 0
+        for pass_index in range(2):
+            if pass_index:
+                # Some activity shells mount the CTA after the rest of the
+                # artwork. A second bounded pass catches that delayed overlay.
+                page.wait_for_timeout(500)
+            for frame in page.frames:
+                try:
+                    hidden_floating_ctas += int(frame.evaluate(hide_floating_ctas) or 0)
+                except Exception:
+                    # Cross-origin or already-detached advertising frames are not
+                    # part of the selected activity canvas.
+                    pass
         capture = page.evaluate(
             r"""(selectors) => {
               const app = document.querySelector('#app')
@@ -396,11 +472,13 @@ def main() -> int:
                 excludedRecommendations: true,
                 recommendationBoundaryFound: Boolean(notes),
                 brokenImages,
+                hiddenPublishCtas: 0,
                 deviceScaleFactor: devicePixelRatio,
               };
             }""",
             NOTES_SELECTORS,
         )
+        capture["hiddenPublishCtas"] = hidden_floating_ctas
         capture["canvasAnimated"] = page.evaluate(
             """async () => {
               const canvases = [...document.querySelectorAll('canvas')];
@@ -525,6 +603,7 @@ def main() -> int:
         "fallbackSegments": fallback_capture["segments"] if fallback_capture else 0,
         "preflightUnloadedImages": preflight["unloadedImages"],
         "preflightViewportCarousels": preflight["viewportCarousels"],
+        "hiddenPublishCtas": capture["hiddenPublishCtas"],
     }
     (output_dir / "capture-result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n",

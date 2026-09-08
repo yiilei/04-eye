@@ -12,6 +12,7 @@ const queuePath = path.join(appData, "data", "xhs-capture-queue.json");
 const xhsExecutable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs");
 const cliConfig = path.join(appData, "xhs-cli");
 const preferencesPath = path.join(appData, "data", "user-preferences.json");
+const backlogPath = path.join(appData, "data", "xhs-discovery-backlog.json");
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const atomicJson = async (file, value) => {
@@ -141,6 +142,22 @@ export function captureCandidates(posts, newPosts, existingTasks, accountKey) {
   return [...new Map(candidates.map((post) => [post.id, post])).values()];
 }
 
+export function mergeBacklogPosts(previous = [], current = []) {
+  const currentIds = new Set(current.map((post) => post.id));
+  return [...current, ...previous.filter((post) => !currentIds.has(post.id))];
+}
+
+export function nextBacklogScan(previous, baselineId, { manual = false, step = 6, automaticLimit = 24, hardLimit = 48 } = {}) {
+  const sameBaseline = previous?.baselineId === baselineId;
+  const depth = sameBaseline ? Math.max(0, Number(previous.scanDepth) || 0) : 0;
+  if (sameBaseline && previous.state === "manual_required" && !manual) {
+    return { scan: false, scanDepth: depth, state: "manual_required" };
+  }
+  const limit = manual ? hardLimit : automaticLimit;
+  const scanDepth = Math.min(limit, Math.max(step, depth + step));
+  return { scan: true, scanDepth, state: scanDepth >= limit ? "manual_required" : "pending" };
+}
+
 export function selectAccounts(accounts, accountKeys = [], pinnedAccountIds) {
   const explicit = new Set(accountKeys || []);
   const pinned = Array.isArray(pinnedAccountIds) ? new Set(pinnedAccountIds.map(String)) : null;
@@ -170,7 +187,8 @@ function slugFor(account, post) {
 }
 
 function parseArguments(argv) {
-  const result = { accountKeys: [], write: false, fixture: "", maxAccounts: Infinity, firstLatest: process.env.CAIGUANG_FIRST_CAPTURE === "1" };
+  const result = { accountKeys: [], write: false, fixture: "", maxAccounts: Infinity,
+    firstLatest: process.env.CAIGUANG_FIRST_CAPTURE === "1", continueBacklog: process.env.CAIGUANG_MANUAL_CONTINUE === "1" };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--") continue;
@@ -179,6 +197,7 @@ function parseArguments(argv) {
     else if (value === "--fixture") result.fixture = argv[++index];
     else if (value === "--max-accounts") result.maxAccounts = Number(argv[++index]);
     else if (value === "--first-latest") result.firstLatest = true;
+    else if (value === "--continue-backlog") result.continueBacklog = true;
     else throw new Error(`未知参数：${value}`);
   }
   return result;
@@ -215,6 +234,8 @@ export async function discover(options = {}) {
   const pins = await readJson(pinsPath);
   const queue = await readJson(queuePath);
   const preferences = await readJson(preferencesPath).catch(() => null);
+  const backlog = await readJson(backlogPath).catch(() => ({ schemaVersion: 1, accounts: {} }));
+  backlog.accounts ||= {};
   const selected = selectAccounts(pins.accounts, options.accountKeys, preferences?.pinnedAccountIds)
     .slice(0, Math.min(100, options.maxAccounts ?? 100));
   if (!selected.length) {
@@ -245,10 +266,56 @@ export async function discover(options = {}) {
         checks.push({ accountKey: account.searchKey, checkedAt, status: "pin_invalid", latestPostId: account.lastSeenPostId, error: identityError });
         continue;
       }
-      const posts = normalizePosts(postsPayload, account);
-      const difference = options.firstLatest ? latestPostOnly(posts) : diffPosts(posts, account.lastSeenPostId);
+      let posts = normalizePosts(postsPayload, account);
+      let difference = options.firstLatest ? latestPostOnly(posts) : diffPosts(posts, account.lastSeenPostId);
+      if (!options.firstLatest && account.lastSeenPostId && difference.status === "baseline_missing") {
+        const previousBacklog = backlog.accounts[account.searchKey];
+        const plan = nextBacklogScan(previousBacklog, account.lastSeenPostId, { manual: options.continueBacklog === true });
+        if (plan.scan) {
+          // The site exposes no stable public cursor. Continue safely by
+          // remembering the boundary and increasing a bounded scan window;
+          // merge every discovered post until the saved baseline is proven.
+          let deeperPosts = posts;
+          if (!fixturePayload) {
+            const backlogPayload = JSON.parse(runXhs([
+              "user-posts", account.profileId, "--json",
+              "--until-note", account.lastSeenPostId, "--max-pages", String(plan.scanDepth),
+            ]));
+            deeperPosts = normalizePosts(backlogPayload, account);
+          } else if (Array.isArray(fixturePayload.backlogPages)) {
+            deeperPosts = normalizePosts(fixturePayload.backlogPages.slice(0, plan.scanDepth).flat(), account);
+          }
+          posts = mergeBacklogPosts(previousBacklog?.posts, deeperPosts);
+          difference = diffPosts(posts, account.lastSeenPostId);
+          if (difference.status === "verified") {
+            delete backlog.accounts[account.searchKey];
+          } else {
+            backlog.accounts[account.searchKey] = {
+              baselineId: account.lastSeenPostId,
+              state: plan.state,
+              scanDepth: plan.scanDepth,
+              lastBoundaryId: posts.at(-1)?.id || previousBacklog?.lastBoundaryId || "",
+              posts,
+              updatedAt: checkedAt,
+              reason: plan.state === "manual_required"
+                ? "平台没有可靠续页游标，补抓尚未完成，请在采光中点击继续检查"
+                : `补抓尚未完成，已保存 ${posts.length} 条和扫描边界；下轮从 ${plan.scanDepth + 1} 批继续`,
+            };
+            difference = { status: plan.state === "manual_required" ? "baseline_unresolved" : "backlog_incomplete",
+              latestPostId: account.lastSeenPostId, newPosts: [] };
+          }
+        } else {
+          posts = mergeBacklogPosts(previousBacklog?.posts, posts);
+          difference = { status: "baseline_unresolved", latestPostId: account.lastSeenPostId, newPosts: [] };
+        }
+      }
+      if (difference.status === "verified") delete backlog.accounts[account.searchKey];
+      // Persist each account boundary immediately: an interrupted later account
+      // must not discard earlier scanning work from this run.
+      if (options.write) await atomicJson(backlogPath, { ...backlog, schemaVersion: 1, updatedAt: checkedAt });
       checks.push({ accountKey: account.searchKey, checkedAt, status: difference.status, latestPostId: difference.latestPostId,
-        ...(difference.status === "baseline_missing" ? { error: "主页首批帖子中未找到上次基线，已停止，避免误抓历史内容" } : {}) });
+        ...(["baseline_missing", "backlog_incomplete", "baseline_unresolved"].includes(difference.status)
+          ? { error: backlog.accounts[account.searchKey]?.reason || "补抓尚未完成；本轮不推进基线" } : {}) });
       for (const post of captureCandidates(posts, difference.newPosts, queue.tasks, account.searchKey)) {
         pendingTasks.push({ id: `note-${post.id}`, type: "note", status: "pending", accountKey: account.searchKey,
           title: post.title, slug: slugFor(account, post), sourceUrl: post.sourceUrl,
@@ -287,6 +354,7 @@ export async function discover(options = {}) {
     liveQueue.checkedAccounts = [...liveQueue.checkedAccounts.filter((check) => !selectedKeys.has(check.accountKey)), ...checks];
     liveQueue.tasks = mergeDiscoveredTasks(liveQueue.tasks, pendingTasks);
     await atomicJson(queuePath, liveQueue);
+    await atomicJson(backlogPath, { ...backlog, schemaVersion: 1, updatedAt: checkedAt });
   }
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",
     checked: checks.filter((check) => check.status !== "deferred_safety_stop").length, added: pendingTasks.length,

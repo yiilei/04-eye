@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountCapturePolicy, captureCandidates, diffPosts, isSafetyStopError, latestPostOnly, mergeDiscoveredTasks, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, captureCandidates, diffPosts, isSafetyStopError, latestPostOnly, mergeBacklogPosts, mergeDiscoveredTasks, nextBacklogScan, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -147,4 +147,25 @@ test("visible stranded posts are refreshed even when they are not newly publishe
   const posts = [{ id: "old-failed", sourceUrl: "https://fresh" }, { id: "baseline" }];
   const tasks = [{ id: "note-old-failed", accountKey: "account", status: "needs_browser_capture" }];
   assert.deepEqual(captureCandidates(posts, [], tasks, "account"), [posts[0]]);
+});
+
+test("missing baseline resumes in bounded batches and stops for explicit manual continuation", () => {
+  assert.deepEqual(nextBacklogScan(undefined, "old"), { scan: true, scanDepth: 6, state: "pending" });
+  assert.deepEqual(nextBacklogScan({ baselineId: "old", scanDepth: 6, state: "pending" }, "old"),
+    { scan: true, scanDepth: 12, state: "pending" });
+  assert.deepEqual(nextBacklogScan({ baselineId: "old", scanDepth: 18, state: "pending" }, "old"),
+    { scan: true, scanDepth: 24, state: "manual_required" });
+  assert.deepEqual(nextBacklogScan({ baselineId: "old", scanDepth: 24, state: "manual_required" }, "old"),
+    { scan: false, scanDepth: 24, state: "manual_required" });
+  assert.deepEqual(nextBacklogScan({ baselineId: "old", scanDepth: 24, state: "manual_required" }, "old", { manual: true }),
+    { scan: true, scanDepth: 30, state: "pending" });
+});
+
+test("saved backlog posts merge without duplicates after an interrupted run", () => {
+  const merged = mergeBacklogPosts(
+    [{ id: "new-2", sourceUrl: "old-token" }, { id: "new-1" }],
+    [{ id: "new-3" }, { id: "new-2", sourceUrl: "fresh-token" }],
+  );
+  assert.deepEqual(merged.map((post) => post.id), ["new-3", "new-2", "new-1"]);
+  assert.equal(merged[1].sourceUrl, "fresh-token");
 });

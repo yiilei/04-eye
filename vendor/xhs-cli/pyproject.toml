@@ -26,8 +26,11 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "camoufox[geoip]>=0.4",
-    "playwright>=1.40",
+    # Keep the Python driver and bundled browser on a tested pair. Unbounded
+    # upgrades caused Playwright 1.62 to reject the bundled beta.29 browser and
+    # Camoufox then tried to download beta.30 during a capture.
+    "camoufox[geoip]==0.5.6",
+    "playwright==1.60.0",
     "browser-cookie3>=0.19",
     "qrcode>=7.4",
     "click>=8.0",
