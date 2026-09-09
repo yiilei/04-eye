@@ -5,9 +5,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
+import { checkForUpdate } from "../desktop/runtime-status.mjs";
+import { readUpdateStatus, recordUpdateCheck } from "../desktop/update-status-store.mjs";
 import { captureIsDue, initialCaptureReady, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
 import { schedulerInstallationIsCurrent } from "./scheduler-install-policy.mjs";
+import { updateCheckIsDue } from "./update-check-policy.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
@@ -40,8 +43,20 @@ const clock = () => {
     timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
-  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`, timestamp: Date.now() };
 };
+
+async function checkNightlyUpdate(now) {
+  const cached = await readUpdateStatus(appData);
+  if (!updateCheckIsDue(cached, now)) return cached;
+  const packageInfo = await readJson(path.join(projectRoot, "package.json"), {});
+  const currentVersion = String(packageInfo.version || "0.0.0");
+  console.error("[scheduler] update-check:start");
+  const result = await checkForUpdate({ currentVersion });
+  const recorded = await recordUpdateCheck(appData, result, { source: "scheduler", localDate: now.date, timestamp: now.timestamp });
+  console.error(`[scheduler] update-check:${result.state}`);
+  return recorded;
+}
 
 async function notify(title, message) {
   await atomicJson(notificationRequestPath, {
@@ -197,12 +212,14 @@ async function tick() {
   const initialized = initializeCapturePreferences(await readJson(preferencesPath, {}));
   const preferences = initialized.preferences;
   if (initialized.changed) await atomicJson(preferencesPath, { ...preferences, schemaVersion: 1, updatedAt: new Date().toISOString() });
+  const now = clock();
+  try { await checkNightlyUpdate(now); }
+  catch (error) { console.error(`[scheduler] update-check:error ${error instanceof Error ? error.message : String(error)}`); }
   if (!schedulerEnabled(preferences)) {
     await stopWakeLock();
     console.error("[scheduler] tick:disabled");
     return;
   }
-  const now = clock();
   const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
   const state = await recoverInterruptedCapture(scheduled.state);
   if (scheduled.changed) await atomicJson(statePath, state);

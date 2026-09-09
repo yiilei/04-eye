@@ -437,6 +437,7 @@ aside { position: relative; display: flex; min-width: 0; padding: 0 22px 28px; f
 .runtime-wake-lock:focus-visible { outline: 2px solid #ffe600; outline-offset: -2px; }
 .runtime-status-row > div, .runtime-update-copy { display: grid; min-width: 0; gap: 3px; }
 .runtime-status-row strong, .runtime-update-copy strong { overflow: hidden; font-size: 9px; font-weight: 620; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-update-row.is-available .runtime-update-copy strong { color: #ff5a70; font-weight: 760; }
 .runtime-status-row small, .runtime-update-copy small { overflow: hidden; color: rgba(255,255,255,.38); font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-state-pill { min-width: 42px; padding: 5px 8px; color: rgba(255,255,255,.46); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.09); border-radius: 999px; font-size: 8px; font-weight: 700; text-align: center; }
 .runtime-state-pill.is-on { color: #70efb1; background: rgba(60,205,135,.11); border-color: rgba(60,205,135,.26); }

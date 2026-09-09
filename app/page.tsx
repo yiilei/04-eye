@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Mouse
 import { createPortal } from "react-dom";
 import generatedItemsData from "../data/generated-review-items.json";
 import accountPinsData from "../data/xhs-account-pins.json";
-import { indexAfterDecision } from "../scripts/review-navigation.mjs";
+import { indexAfterDecision, pendingReviewItems } from "../scripts/review-navigation.mjs";
 import { sortReviewItemsNewestFirst } from "../scripts/review-item-order.mjs";
 import { eagleItemValidity, findTaggedEagleItem, nextEagleImportAction } from "../scripts/eagle-import-policy.mjs";
 import { positionsForStableMedia, singleStateKey, stableMediaId, stableMediaIdsForPositions } from "../scripts/review-ui-state.mjs";
@@ -50,7 +50,17 @@ type ReviewItem = {
 };
 type DesktopBridge = {
   fitWindow?: (request: { mediaAspect: number; sidebarWidth: number }) => Promise<unknown>;
-  getRuntimeStatus?: () => Promise<{ version: string; wakeLock: { enabled: boolean; mode: "ac_only" } }>;
+  getRuntimeStatus?: () => Promise<{
+    version: string;
+    wakeLock: { enabled: boolean; mode: "ac_only" };
+    update?: {
+      state?: "available" | "latest" | "unavailable";
+      latestVersion?: string;
+      releaseUrl?: string | null;
+      downloadUrl?: string | null;
+      message?: string;
+    };
+  }>;
   checkForUpdate?: () => Promise<{ state: "available" | "latest" | "unavailable"; currentVersion?: string; latestVersion?: string; releaseUrl?: string | null; message?: string }>;
   installUpdate?: () => Promise<{ state: string; latestVersion?: string; message?: string }>;
   openRelease?: (url: string) => Promise<boolean>;
@@ -620,7 +630,17 @@ export default function Home() {
   const [appVisible, setAppVisible] = useState(true);
   const [desktopAppMode, setDesktopAppMode] = useState(false);
   const [desktopPreferencesReady, setDesktopPreferencesReady] = useState(false);
-  const [runtimeStatus, setRuntimeStatus] = useState<{ version: string; wakeLock: { enabled: boolean; mode: "ac_only" } }>();
+  const [runtimeStatus, setRuntimeStatus] = useState<{
+    version: string;
+    wakeLock: { enabled: boolean; mode: "ac_only" };
+    update?: {
+      state?: "available" | "latest" | "unavailable";
+      latestVersion?: string;
+      releaseUrl?: string | null;
+      downloadUrl?: string | null;
+      message?: string;
+    };
+  }>();
   const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable" | "downloading" | "installing"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string; percent?: number }>({ state: "idle" });
   const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string; firstCapture?: boolean; startedAt?: string | null; estimateMinutes?: CaptureEstimate | null }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
@@ -674,7 +694,13 @@ export default function Home() {
     const bridge = getDesktopBridge();
     if (!bridge?.getRuntimeStatus) return;
     try {
-      setRuntimeStatus(await bridge.getRuntimeStatus());
+      const next = await bridge.getRuntimeStatus();
+      setRuntimeStatus(next);
+      if (next.update?.state && ["available", "latest", "unavailable"].includes(next.update.state)) {
+        setUpdateStatus((current) => ["checking", "downloading", "installing"].includes(current.state)
+          ? current
+          : { ...next.update, state: next.update!.state as "available" | "latest" | "unavailable" });
+      }
     } catch {
       setRuntimeStatus(undefined);
     }
@@ -878,8 +904,8 @@ export default function Home() {
   }, [reviewTourStep, settingsOpen, windowSize]);
   const dismissalKey = useCallback((item: ReviewItem) => `${item.id}@${item.capturedAt || item.date || "unknown"}`, []);
   const reviewItems = useMemo(
-    () => sortReviewItemsNewestFirst(runtimeItems.filter((item) => !dismissedIds.includes(dismissalKey(item)))) as ReviewItem[],
-    [dismissalKey, dismissedIds, runtimeItems],
+    () => sortReviewItemsNewestFirst(pendingReviewItems(runtimeItems, decisions, dismissedIds, dismissalKey)) as ReviewItem[],
+    [decisions, dismissalKey, dismissedIds, runtimeItems],
   );
   const current = reviewItems[index] ?? emptyItem;
   const selectedReviewId = useRef("");
@@ -1241,6 +1267,8 @@ export default function Home() {
   useEffect(() => {
     if (!desktopAppMode || !settingsOpen) return;
     void refreshRuntimeStatus();
+    const timer = window.setInterval(() => void refreshRuntimeStatus(), 30_000);
+    return () => window.clearInterval(timer);
   }, [desktopAppMode, refreshRuntimeStatus, settingsOpen]);
 
   useEffect(() => {
@@ -1590,9 +1618,12 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
-    migrationStarted.current = true;
-    const pending = reviewItems.filter((item) => decisions[item.id] === "kept" && !eagleItems[item.id] && !item.previewOnly);
+    // Kept items are intentionally hidden from the pending review list. Use
+    // the complete runtime registry here so an older kept decision can still
+    // finish an interrupted Eagle import after an upgrade or restart.
+    const pending = runtimeItems.filter((item) => decisions[item.id] === "kept" && !eagleItems[item.id] && !item.previewOnly);
     if (!pending.length) return;
+    migrationStarted.current = true;
     void (async () => {
       for (const item of pending) {
         setSyncingId(item.id);
@@ -1608,7 +1639,7 @@ export default function Home() {
       }
       setSyncingId(undefined);
     })();
-  }, [decisions, eagleItems, hydrated, removedSingles, reviewItems]);
+  }, [decisions, eagleItems, hydrated, removedSingles, runtimeItems]);
 
   const openItem = useCallback((next: number) => {
     selectedReviewId.current = reviewItems[next]?.id || "";
@@ -2469,9 +2500,9 @@ export default function Home() {
                   <div><strong>防休眠</strong><small>{wakeLockMessage || (runtimeStatus?.wakeLock.enabled ? "已开启 · 请接通电源并保持屏幕打开，不要合上盖子" : "未开启 · 点击启用；使用时不要合上盖子")}</small></div>
                   <span className={`runtime-state-pill ${runtimeStatus?.wakeLock.enabled ? "is-on" : "is-off"}`}>{runtimeStatus?.wakeLock.enabled ? "已开启" : "未开启"}</span>
                 </button>
-                <div className="runtime-update-row">
+                <div className={`runtime-update-row ${updateStatus.state === "available" ? "is-available" : ""}`}>
                   <div className="runtime-update-copy">
-                    <strong>{updateStatus.state === "available" ? `发现 v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? updateStatus.message : updateStatus.state === "unavailable" ? updateStatus.message : "检查新版本"}</strong>
+                    <strong>{updateStatus.state === "available" ? `有新版本 · v${updateStatus.latestVersion}` : updateStatus.state === "latest" ? "已是最新版本" : updateStatus.state === "checking" ? "正在检查更新…" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? updateStatus.message : updateStatus.state === "unavailable" ? updateStatus.message : "检查新版本"}</strong>
                     <small>{updateStatus.state === "available" ? "下载、校验并自动重启完成更新" : updateStatus.state === "downloading" || updateStatus.state === "installing" ? `${Math.round(updateStatus.percent || 0)}%` : "连接 GitHub 检查公开版本"}</small>
                   </div>
                   {updateStatus.state === "available" ? (

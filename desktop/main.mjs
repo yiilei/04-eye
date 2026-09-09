@@ -6,8 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopServer } from "./server.mjs";
 import { migrateLegacyData } from "./data-migration.mjs";
-import { checkForUpdate } from "./runtime-status.mjs";
+import { checkForUpdate, compareVersions } from "./runtime-status.mjs";
 import { currentAppBundle, launchPreparedUpdate, prepareUpdate } from "./app-updater.mjs";
+import { readUpdateStatus, recordUpdateCheck } from "./update-status-store.mjs";
 
 // Embedded Python lives inside the signed app bundle. Never let any child
 // process create or update bytecode beside signed resources.
@@ -32,6 +33,12 @@ if (notificationOnlyLaunch && process.platform === "darwin") app.setActivationPo
 const notificationRequestFile = () => path.join(app.getPath("userData"), "data", "notification-request.json");
 const screenshotCleanupFile = () => path.join(app.getPath("userData"), "data", "screenshot-cleanup.json");
 const screenshotTimers = new Map();
+const shanghaiDate = () => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
 
 async function readScreenshotCleanup() {
   try { return JSON.parse(await readFile(screenshotCleanupFile(), "utf8")); }
@@ -343,12 +350,25 @@ ipcMain.handle("caiguang:runtime-status", async () => {
   if (Number.isInteger(pid) && pid > 1) {
     try { process.kill(pid, 0); wakeLockEnabled = true; } catch { /* stale pid */ }
   }
+  const cachedUpdate = await readUpdateStatus(app.getPath("userData"));
+  const update = cachedUpdate.state === "available"
+    && compareVersions(cachedUpdate.latestVersion, app.getVersion()) <= 0
+    ? { ...cachedUpdate, state: "latest", currentVersion: app.getVersion() }
+    : cachedUpdate;
   return {
     version: app.getVersion(),
     wakeLock: { enabled: wakeLockEnabled, mode: "ac_only" },
+    update,
   };
 });
-ipcMain.handle("caiguang:check-update", () => checkForUpdate({ currentVersion: app.getVersion() }));
+ipcMain.handle("caiguang:check-update", async () => {
+  const result = await checkForUpdate({ currentVersion: app.getVersion() });
+  await recordUpdateCheck(app.getPath("userData"), result, {
+    source: "manual",
+    localDate: shanghaiDate(),
+  }).catch(() => undefined);
+  return result;
+});
 ipcMain.handle("caiguang:install-update", async (event) => {
   try {
     const prepared = await prepareUpdate({
