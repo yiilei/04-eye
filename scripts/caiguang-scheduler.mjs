@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { currentDataHome, migrateLegacyData } from "../desktop/data-migration.mjs";
-import { captureIsDue, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
+import { captureIsDue, initialCaptureReady, pushIsDue, schedulerEnabled } from "./scheduler-policy.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
 import { schedulerInstallationIsCurrent } from "./scheduler-install-policy.mjs";
 
@@ -202,11 +202,22 @@ async function tick() {
     console.error("[scheduler] tick:disabled");
     return;
   }
-  await ensureWakeLock();
   const now = clock();
   const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
   const state = await recoverInterruptedCapture(scheduled.state);
   if (scheduled.changed) await atomicJson(statePath, state);
+  if (!initialCaptureReady(state)) {
+    await stopWakeLock();
+    console.error("[scheduler] tick:awaiting-first-capture");
+    return;
+  }
+  // Migrate existing installations that completed a capture before
+  // initialCaptureCompletedAt was introduced.
+  if (!state.initialCaptureCompletedAt && state.lastCaptureDate) {
+    state.initialCaptureCompletedAt = state.lastCaptureAt || `${state.lastCaptureDate}T00:00:00.000Z`;
+    await atomicJson(statePath, state);
+  }
+  await ensureWakeLock();
   console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time}`);
   if (captureIsDue(preferences, state, now)) {
     console.error("[scheduler] tick:capture-due");
