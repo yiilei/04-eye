@@ -76,7 +76,7 @@ const manifest = {
 await writeFile(path.join(stagingDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
 const prefix = `/media/${captureDate}/${slug}`;
-const caption = `活动正文获取失败，本条为兜底记录，不是完整素材，不能据此判断活动未上线。\n\n情况类型：${failureInfo.type}\n\n失败原因：${failure}\n\n当前保留：活动封面、失败原因、创作服务中心入口。\n\n后续处理：补抓成功前不会通过 YES 导入 Eagle；请查看抓取结果中的重试安排。\n\n处理建议：${failureInfo.advice}\n点击上方链接可进入小红书创作服务中心，在活动列表中查找「${title}」。`;
+const caption = `活动正文获取失败，本条为兜底记录，不是完整素材，不能据此判断活动未上线。\n\n情况类型：${failureInfo.type}\n\n失败原因：${failure}\n\n当前保留：活动封面、失败原因、创作服务中心入口。\n\n后续处理：补抓成功前不会通过 YES 导入 Eagle；当天不会每隔数小时反复访问，之后的正式任务每天最多检查一次，连续三天仍失败会停止自动重试。\n\n处理建议：${failureInfo.advice}\n点击上方链接可进入小红书创作服务中心，在活动列表中查找「${title}」。`;
 const item = {
   id: slug, postId: slug, title, caption, summary: "小红书创作服务中心 · 抓取失败 · 已保留封面和创作服务中心入口",
   date: displayDate, capturedAt: captureDate, width, height, fallback: true, previewOnly: true,

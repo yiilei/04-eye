@@ -81,8 +81,8 @@ const pipelineHardFailure = !pipelineSummary
   || pipelineSummary.ok === false
   || Number(pipelineSummary.failed || 0) > 0
   || pipelineSummary.validation === "failed";
-// Any unresolved retry/browser task keeps the day in needs_attention. The
-// scheduler applies a cooldown and retries after wake, relaunch, or a later tick.
+// Only hard/user-action failures keep the day in needs_attention. An H5 page
+// deferred to another day is a completed run with a visible warning.
 const discoveryFailed = results.some((item) => {
   if (item.name !== "discover_pinned_accounts") return false;
   try { return JSON.parse(item.summary).ok === false; } catch { return true; }
@@ -91,7 +91,8 @@ const ok = !failedStep && !pipelineHardFailure && !discoveryFailed;
 let fallbackCount = 0;
 try {
   const queue = JSON.parse(readFileSync(queuePath, "utf8"));
-  fallbackCount = queue.tasks.filter((task) => task.type === "h5_event" && task.status === "fallback_pending").length;
+  fallbackCount = queue.tasks.filter((task) => task.type === "h5_event"
+    && ["fallback_pending", "deferred_next_day", "content_not_published", "manual_only", "unavailable"].includes(task.status)).length;
 } catch {
   try { fallbackCount = Number(JSON.parse(results.find((item) => item.name === "capture_validate_report")?.summary || "{}").fallbacks || 0); } catch { /* status stays generic */ }
 }
@@ -99,8 +100,8 @@ writeProgress(ok
   ? { state: "completed", phase: "completed", label: Number(pipelineSummary?.browserCapture || 0)
       ? `已抓取 ${pipelineSummary.completed || 0} 项，${pipelineSummary.browserCapture} 项等待浏览器兜底`
       : Number(pipelineSummary?.retrying || 0)
-        ? `已抓取 ${pipelineSummary.completed || 0} 项，其余项目稍后自动重试`
-        : fallbackCount ? `本轮已结束，${fallbackCount} 项正文获取失败，等待补抓` : "抓取完成，批阅列表已刷新",
+        ? `已抓取 ${pipelineSummary.completed || 0} 项，其余项目将在下次正式任务中检查`
+        : fallbackCount ? `抓取完成，${fallbackCount} 项已保留兜底说明，不会在今天反复访问` : "抓取完成，批阅列表已刷新",
     percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
   : { state: "failed", phase: "failed", label: failedStep
       ? isTransientBrowserFailure(failedStep.output)

@@ -3,7 +3,7 @@ import { open, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promis
 import path from "node:path";
 import process from "node:process";
 import os from "node:os";
-import { clearH5Retry, h5FailureIsPermanent, h5TaskIsDue, scheduleH5PublicationRetry, scheduleH5Retry } from "./h5-retry-policy.mjs";
+import { classifyH5Failure, clearH5Retry, h5TaskIsDue, transitionH5Failure } from "./h5-retry-policy.mjs";
 import { clearNoteFailure, noteTaskIsDue, transitionNoteFailure } from "./note-capture-policy.mjs";
 
 const root = process.cwd();
@@ -23,6 +23,7 @@ const now = new Date();
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(now);
 const nowIso = now.toISOString();
 const creatorH5CaptureEnabled = process.env.CAIGUANG_CAPTURE_CREATOR_H5 === "1";
+const manualCapture = process.env.CAIGUANG_CAPTURE_REASON === "manual" || process.env.CAIGUANG_MANUAL_CONTINUE === "1";
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const atomicJson = async (file, value) => {
@@ -133,7 +134,7 @@ async function main() {
 
   if (!dryRun) {
     for (const task of queue.tasks.filter((item) => item.type === "h5_event"
-      ? creatorH5CaptureEnabled && h5TaskIsDue(item, now)
+      ? creatorH5CaptureEnabled && h5TaskIsDue(item, now, { manual: manualCapture })
       : noteTaskIsDue(item, now))) {
       try {
         if (task.type === "note") {
@@ -147,7 +148,16 @@ async function main() {
           if (task.detailResolution === "unresolved" || task.sourceUrl.startsWith("https://creator.xiaohongshu.com/")) {
             throw new Error(`detail_url_unresolved：${task.detailError || "未取得活动真实正文地址，保留入口等待重新解析"}`);
           }
-          const output = run(process.execPath, h5Arguments(task));
+          let output;
+          try {
+            output = run(process.execPath, h5Arguments(task));
+          } catch (firstError) {
+            const firstMessage = captureErrorMessage(firstError);
+            if (!classifyH5Failure(firstMessage).immediateRetry) throw firstError;
+            // A transient empty/timeout result receives one fresh attempt in
+            // this run. Further failure is deferred to another calendar day.
+            output = run(process.execPath, h5Arguments(task));
+          }
           const result = JSON.parse(output.split("\n").at(-1));
           if (!result.ok) throw new Error(result.error || "H5 登记失败");
           report.completed.push({ id: task.id, type: task.type, title: task.title, manifest: result.manifest, images: result.images, videos: result.videos });
@@ -162,36 +172,22 @@ async function main() {
         const diagnostics = captureDiagnostics(error);
         const diagnosticsPath = task.type === "note" ? await writeCaptureDiagnostics(task, error) : undefined;
         if (task.type === "h5_event") {
-          const permanentFailure = h5FailureIsPermanent(message);
-          if (permanentFailure) {
-            const retry = scheduleH5PublicationRetry(task, message, now);
-            try {
-              const output = run(process.execPath, h5FallbackArguments(task, message));
-              const fallback = JSON.parse(output.split("\n").at(-1));
-              report.fallbacks.push({ id: task.id, type: task.type, title: task.title, error: message,
-                fallback: fallback.ok ? fallback.manifest : null, attempts: retry.attempts, nextAttemptAt: retry.nextAttemptAt });
-            } catch (fallbackError) {
-              const fallbackMessage = captureErrorMessage(fallbackError);
-              report.failed.push({ id: task.id, type: task.type, title: task.title,
-                error: `${message}；生成失败兜底也失败：${fallbackMessage}` });
-            }
-            await atomicJson(queuePath, queue);
-            continue;
+          const transition = transitionH5Failure(task, message, now);
+          const entry = { id: task.id, type: task.type, title: task.title, error: message,
+            failureType: transition.category, status: task.status, failureDays: task.failureDays || 0,
+            nextEligibleDate: task.nextEligibleDate || null };
+          let fallbackManifest = null;
+          try {
+            const output = run(process.execPath, h5FallbackArguments(task, message));
+            const fallback = JSON.parse(output.split("\n").at(-1));
+            fallbackManifest = fallback.ok ? fallback.manifest : null;
+          } catch (fallbackError) {
+            entry.fallbackError = captureErrorMessage(fallbackError);
           }
-          const retry = scheduleH5Retry(task, message, now);
-          const entry = { id: task.id, type: task.type, title: task.title, error: message, attempts: retry.attempts };
-          if (retry.terminal) {
-            try {
-              const output = run(process.execPath, h5FallbackArguments(task, message));
-              const fallback = JSON.parse(output.split("\n").at(-1));
-              report.failed.push({ ...entry, fallback: fallback.ok ? fallback.manifest : null,
-                error: `${message}；已保留封面与原链接，可在批阅页打开体验` });
-            } catch (fallbackError) {
-              const fallbackMessage = fallbackError instanceof Error ? fallbackError.message.split("\n").at(-1) : String(fallbackError);
-              report.failed.push({ ...entry, error: `${message}；生成失败兜底也失败：${fallbackMessage}` });
-            }
-          }
-          else report.retrying.push({ ...entry, nextAttemptAt: retry.nextAttemptAt });
+          entry.fallback = fallbackManifest;
+          if (["login_required", "verification_required", "risk_paused"].includes(transition.category)) report.failed.push(entry);
+          else if (transition.category === "rule_changed") report.browserCapture.push(entry);
+          else report.fallbacks.push(entry);
         } else {
           const transition = transitionNoteFailure(task, diagnostics || message, now);
           task.diagnosticsPath = diagnosticsPath;
@@ -247,7 +243,9 @@ async function main() {
     report.build = skipBuild ? "skipped" : "not_required_runtime_refresh";
   }
 
-  report.pending = queue.tasks.filter((task) => ["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "needs_browser_capture", "user_action_required", "failed"].includes(task.status)).length;
+  report.pending = queue.tasks.filter((task) => ["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "deferred_next_day",
+    "content_not_published", "manual_only", "rule_changed", "auth_required", "verification_required", "risk_paused",
+    "needs_browser_capture", "user_action_required", "failed"].includes(task.status)).length;
   report.finishedAt = new Date().toISOString();
   report.registryItems = await readJson(registryPath).then((items) => items.length).catch(() => 0);
   const duplicateTitleCounts = report.completed.reduce((counts, item) => {
@@ -257,9 +255,6 @@ async function main() {
   const reportTitle = (item) => duplicateTitleCounts.get(item.title) > 1
     ? `${item.title}（活动 ${String(item.id).replace(/^h5-/, "").slice(-6)}）`
     : item.title;
-  const localTime = (value) => value
-    ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value))
-    : "下一次运行";
   const reportBase = path.join(reportsDir, `${today}-daily`);
   await atomicJson(`${reportBase}.json`, report);
   const markdown = [`# ${today} 小红书视觉采集日报`, "",
@@ -275,7 +270,7 @@ async function main() {
     "", ...(report.completed.length ? ["## 新增", "", ...report.completed.map((item) => `- ${reportTitle(item)}：${item.images || 0} 图 / ${item.videos || 0} 视频 / ${item.livePhotos || 0} Live Photo`)] : ["今日无新增"]),
     ...(report.pendingPinVerification ? ["", "## 今晚统一验证", "", `- ${report.pendingPinVerification} 个新账号等待身份核验；核验完成后才会进入日常抓取。`] : []),
     ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
-    ...(report.fallbacks.length ? ["", "## 活动正文获取失败（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。已尝试 ${item.attempts} 次，${localTime(item.nextAttemptAt)} 起具备重试资格，将在下一次定时抓取或手动抓取时继续尝试。`)] : []),
+    ...(report.fallbacks.length ? ["", "## 活动正文获取失败（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。${item.nextEligibleDate ? `将在 ${item.nextEligibleDate} 的正式任务中只检查一次。` : "自动重试已停止，可手动重试；活动入口变化时也会自动恢复。"}`)] : []),
     ...(report.browserCapture.length ? ["", "## 等待浏览器兜底", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}。自动解析未取得完整素材，需在已授权的小红书页面继续提取；完成前不会进入批阅或 Eagle。`)] : []),
     ...(report.failed.length ? ["", "## 需要用户处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);

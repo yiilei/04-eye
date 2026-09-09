@@ -14,7 +14,6 @@ const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
 const dataRoot = path.join(appData, "data");
 const preferencesPath = path.join(dataRoot, "user-preferences.json");
 const statePath = path.join(dataRoot, "scheduler-state.json");
-const queuePath = path.join(dataRoot, "xhs-capture-queue.json");
 const logRoot = path.join(appData, "logs");
 const launchAgent = path.join(os.homedir(), "Library", "LaunchAgents", "com.yilei.caiguang.scheduler.plist");
 const wrapper = path.join(projectRoot, "plugins", "caiguang", "scripts", "caiguang");
@@ -108,7 +107,12 @@ async function recoverInterruptedCapture(state) {
   });
   state.lastCaptureStatus = "needs_attention";
   state.lastCaptureIssue = "browser_interrupted";
-  state.nextCaptureAttemptAt = null;
+  const recoveredAt = clock();
+  state.captureFailuresToday = state.captureFailureDate === recoveredAt.date ? Number(state.captureFailuresToday || 0) + 1 : 1;
+  state.captureFailureDate = recoveredAt.date;
+  // Recover once after a short cooldown; if that fails, run again on the next
+  // calendar day rather than looping for the rest of today.
+  state.nextCaptureAttemptAt = new Date(Date.now() + 30 * 60_000).toISOString();
   await atomicJson(statePath, state);
   return state;
 }
@@ -123,14 +127,16 @@ async function runCapture(reason = "scheduled") {
   const firstCapture = process.env.CAIGUANG_FIRST_CAPTURE === "1" || !stateBeforeCapture.lastCaptureDate;
   const captureLog = path.join(logRoot, `${now.date}-capture.log`);
   const logHandle = await open(captureLog, "a");
-  await logHandle.write(`\n[capture-start] ${new Date().toISOString()} ${reason}\n`);
+  const runMarker = `\n[capture-start] ${new Date().toISOString()} ${reason} ${process.pid}\n`;
+  await logHandle.write(runMarker);
   // Keep an active job awake on battery too; never keep the display on.
   const awake = spawn("/usr/bin/caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore" });
   let status = 1;
   try {
     const child = spawn(wrapper, ["auto"], {
       cwd: projectRoot,
-      env: { ...process.env, SHARP_EYE_HOME: appData, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0" },
+      env: { ...process.env, SHARP_EYE_HOME: appData, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0",
+        CAIGUANG_CAPTURE_REASON: reason },
       stdio: ["ignore", logHandle.fd, logHandle.fd],
     });
     status = await new Promise((resolve) => {
@@ -145,7 +151,9 @@ async function runCapture(reason = "scheduled") {
     awake.kill();
     await logHandle.close();
   }
-  const output = await readFile(captureLog, "utf8").catch(() => "");
+  const completeLog = await readFile(captureLog, "utf8").catch(() => "");
+  const markerIndex = completeLog.lastIndexOf(runMarker);
+  const output = markerIndex >= 0 ? completeLog.slice(markerIndex) : completeLog;
   const ok = status === 0;
   const loginRequired = /login_required|creator_login_required|登录失效|未登录|需要重新登录|验证码/u.test(output);
   const state = await readJson(statePath, {});
@@ -153,12 +161,27 @@ async function runCapture(reason = "scheduled") {
   state.lastCaptureStatus = ok ? "completed" : "needs_attention";
   state.lastCaptureReason = reason;
   state.lastCaptureIssue = loginRequired ? "login_required" : null;
-  // Manual/first-run captures must be retryable immediately after a transient
-  // browser failure. Keep the cooldown only for unattended scheduled runs so
-  // a failed background job cannot repeatedly hit the platform.
-  state.nextCaptureAttemptAt = ok || reason === "manual"
-    ? null
-    : new Date(Date.now() + 30 * 60_000).toISOString();
+  const failureDate = now.date;
+  if (ok) {
+    state.nextCaptureAttemptAt = null;
+    delete state.captureFailureDate;
+    delete state.captureFailuresToday;
+  } else if (reason === "manual" || loginRequired) {
+    // A button click never starts a background retry loop. Authentication and
+    // verification failures wait for the user instead of hitting the service.
+    state.nextCaptureAttemptAt = null;
+    // Remember the date so tomorrow can catch up, but do not consume the one
+    // recovery attempt reserved for a later unattended scheduled run.
+    state.captureFailuresToday = 0;
+    state.captureFailureDate = failureDate;
+  } else {
+    const failuresToday = state.captureFailureDate === failureDate ? Number(state.captureFailuresToday || 0) + 1 : 1;
+    state.captureFailureDate = failureDate;
+    state.captureFailuresToday = failuresToday;
+    // One unattended recovery attempt is enough. If it also fails, wait for
+    // the next day's normal/catch-up run.
+    state.nextCaptureAttemptAt = failuresToday < 2 ? new Date(Date.now() + 30 * 60_000).toISOString() : null;
+  }
   if (ok) {
     state.lastCaptureDate = now.date;
     if (firstCapture && !state.initialCaptureCompletedAt) state.initialCaptureCompletedAt = state.lastCaptureAt;
@@ -184,11 +207,8 @@ async function tick() {
   const scheduled = ensureDailyCaptureSchedule(await readJson(statePath, {}), now.date);
   const state = await recoverInterruptedCapture(scheduled.state);
   if (scheduled.changed) await atomicJson(statePath, state);
-  const queue = await readJson(queuePath, { tasks: [] });
-  const retryDue = (queue.tasks || []).some((task) => ["retry_pending", "fallback_pending", "needs_browser_capture", "user_action_required", "failed"].includes(task.status)
-    && (!task.nextAttemptAt || new Date(task.nextAttemptAt).getTime() <= Date.now()));
-  console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time} retryDue=${retryDue}`);
-  if (captureIsDue(preferences, state, now, retryDue)) {
+  console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time}`);
+  if (captureIsDue(preferences, state, now)) {
     console.error("[scheduler] tick:capture-due");
     await runCapture("scheduled");
     console.error("[scheduler] tick:capture-finished");

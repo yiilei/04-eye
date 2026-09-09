@@ -107,3 +107,14 @@ test("migration rejects guessed, mismatched and untrusted URLs", () => {
     assert.equal(task.sourceUrl, "old");
   }
 });
+
+test("a changed activity fingerprint reopens a paused task even when the URL is stable", () => {
+  const event = { id: "ed55", title: "活动", description: "正文已更新", detailResolution: "resolved",
+    sourceUrl: "https://fe.xiaohongshu.com/ditto/vincent/ed55" };
+  const task = { id: "h5-ed55", status: "content_not_published", title: "活动", sourceUrl: event.sourceUrl,
+    detailResolution: "resolved", eventFingerprint: "old-fingerprint", failureDays: 3, lastFailureDate: "2026-09-08" };
+  migrateTaskUrls([task], [event]);
+  assert.equal(task.status, "needs_h5_capture");
+  assert.equal(task.failureDays, undefined);
+  assert.notEqual(task.eventFingerprint, "old-fingerprint");
+});

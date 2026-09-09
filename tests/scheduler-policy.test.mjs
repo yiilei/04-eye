@@ -45,7 +45,7 @@ test("today's displayed random schedule controls the normal run", () => {
   assert.equal(captureIsDue(preferences, state, { date: now.date, time: "06:37" }), true);
 });
 
-test("a failed first-ever or manual run retries after cooldown without waiting for today's random hour", () => {
+test("an explicitly scheduled recovery retries after cooldown without waiting for today's random hour", () => {
   const preferences = { automaticCaptureEnabled: true, captureTime: "08:00" };
   const state = { lastCaptureStatus: "needs_attention", captureScheduleTime: "08:00", nextCaptureAttemptAt: "2026-08-24T01:30:00Z" };
   assert.equal(captureIsDue(preferences, state, { ...now, time: "07:29", timestamp: Date.parse("2026-08-24T01:29:00Z") }), false);
@@ -60,10 +60,23 @@ test("failed runs catch up after cooldown, successful runs do not duplicate", ()
   assert.equal(captureIsDue(preferences, { lastCaptureDate: now.date, lastCaptureStatus: "completed" }, now), false);
 });
 
-test("a due retry runs even after the normal daily capture", () => {
+test("a queued item cannot wake the full pipeline after the normal daily capture", () => {
   const preferences = { automaticCaptureEnabled: true, captureTime: "02:00", pushTime: "11:00" };
   const state = { lastCaptureDate: now.date, captureScheduleTime: "02:00" };
-  assert.equal(captureIsDue(preferences, state, now, true), true);
+  assert.equal(captureIsDue(preferences, state, now, true), false);
+});
+
+test("manual failure without an explicit cooldown does not create a background loop", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "02:00" };
+  const state = { lastCaptureDate: now.date, lastCaptureStatus: "needs_attention", nextCaptureAttemptAt: null };
+  assert.equal(captureIsDue(preferences, state, { ...now, time: "23:48" }), false);
+});
+
+test("a failed run waits until the next date after its one recovery attempt is exhausted", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "08:00" };
+  const state = { lastCaptureStatus: "needs_attention", captureFailureDate: "2026-08-23", nextCaptureAttemptAt: null };
+  assert.equal(captureIsDue(preferences, state, { date: "2026-08-23", time: "23:59" }), false);
+  assert.equal(captureIsDue(preferences, state, { date: "2026-08-24", time: "00:01" }), true);
 });
 
 test("missed schedules run once after wake or a later boot", () => {

@@ -26,6 +26,11 @@ const atomicJson = async (file, value) => {
 };
 const eventId = (event) => event.activityId || createHash("sha256").update(event.sourceUrl).digest("hex").slice(0, 16);
 const slug = (event) => `xhs-event-${eventId(event)}`;
+export const eventFingerprint = (event) => createHash("sha256").update(JSON.stringify({
+  id: event.id || eventId(event), sourceUrl: event.sourceUrl || "", detailResolution: event.detailResolution || "",
+  detailEvidence: event.detailEvidence || "", title: event.title || "", description: event.description || "",
+  displayDate: event.displayDate || "",
+})).digest("hex").slice(0, 20);
 
 export function diffEvents(events, state, previousLatestEventId = "") {
   const known = new Set(state?.knownEventIds || []);
@@ -54,17 +59,29 @@ export function migrateTaskUrls(tasks, events) {
         && url.pathname.replace(/\/$/, "").endsWith(`/vincent/${event.id}`);
     } catch { return false; }
   }).map((event) => [event.id, event]));
+  const recoverableStatuses = new Set(["pending", "needs_h5_capture", "fallback_pending", "retry_pending", "failed", "deferred_next_day",
+    "content_not_published", "manual_only", "rule_changed", "unavailable"]);
   for (const task of tasks) {
-    if (!["pending", "needs_h5_capture", "fallback_pending", "retry_pending", "failed"].includes(task.status)) continue;
+    if (!recoverableStatuses.has(task.status)) continue;
     const eventId = String(task.id || "").replace(/^h5-/, "");
     const event = byId.get(eventId);
-    if (!event || task.sourceUrl === event.sourceUrl) continue;
+    if (!event) continue;
+    const fingerprint = eventFingerprint(event);
+    const changed = task.sourceUrl !== event.sourceUrl
+      || (task.eventFingerprint && task.eventFingerprint !== fingerprint)
+      || (task.detailResolution === "unresolved" && event.detailResolution === "resolved");
+    if (!changed) {
+      task.eventFingerprint ||= fingerprint;
+      continue;
+    }
     task.sourceUrl = event.sourceUrl;
     task.detailResolution = "resolved";
     task.detailEvidence = event.detailEvidence;
     task.coverUrl = event.coverUrl || task.coverUrl || "";
-    if (["fallback_pending", "failed"].includes(task.status)) task.status = "needs_h5_capture";
-    for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "failedAt", "error"]) delete task[key];
+    task.eventFingerprint = fingerprint;
+    task.status = "needs_h5_capture";
+    for (const key of ["attempts", "lastAttemptAt", "lastError", "nextAttemptAt", "nextEligibleDate", "failedAt", "error",
+      "failureType", "failureDays", "lastFailureDate"]) delete task[key];
   }
   return tasks;
 }
@@ -116,6 +133,7 @@ export async function discoverEvents(options = {}) {
     captureDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()),
     displayDate: event.displayDate || "",
     detailResolution: event.detailResolution || "unresolved", detailError: event.detailError || "",
+    eventFingerprint: eventFingerprint(event),
   }));
   if (options.write) {
     // Browser discovery can take close to a minute. Re-read immediately before
