@@ -557,26 +557,34 @@ export async function startDesktopServer(appRoot, userDataRoot) {
             const itemIndex = registry.findIndex((item) => item.id === payload.id);
             const item = registry[itemIndex];
             const existingTrash = trashIndex[payload.id];
-            if (item && !existingTrash) {
-              const originalFolder = itemFolder(item);
-              if (!originalFolder) throw new Error("素材目录不在应用资料库中，已阻止删除");
-              const safeId = String(payload.id).replace(/[^a-zA-Z0-9_-]+/g, "-");
-              const trashFolder = path.join(trashRoot, `${Date.now()}-${safeId}`);
-              await atomicJson(reviewOperationPath, { type: "reject", id: payload.id, item, itemIndex,
-                originalFolder, trashFolder, startedAt: new Date().toISOString() });
-              await recoverReviewOperationUnlocked(dataRoot);
-            } else if (!item && !existingTrash) {
+            if (item) {
+              // NO is a review decision, not an immediate file operation. Keep
+              // the item renderable at the bottom of the list for the rest of
+              // this review session; the next cleanup moves and purges it.
+              decisions[payload.id] = {
+                decision: "rejected",
+                recoverable: true,
+                cleanupState: "pending_cleanup",
+                updatedAt: new Date().toISOString(),
+              };
+              await atomicJson(decisionsPath, decisions);
+              return { ok: true, recoverable: true, cleanupState: "pending_cleanup" };
+            }
+            if (!existingTrash) {
               throw Object.assign(new Error("素材不存在，无法删除"), { status: 404 });
             }
-            const latestTrash = (await readJson(trashIndexPath, {}))[payload.id];
-            if (latestTrash?.recoverable === false) {
-              return { ok: true, recoverable: false, reason: latestTrash.reason || "文件已清理" };
+            if (existingTrash?.recoverable === false) {
+              return { ok: true, recoverable: false, reason: existingTrash.reason || "文件已清理" };
             }
             return { ok: true, recoverable: true };
           } else if (payload.decision === "pending") {
+            if (registry.some((item) => item.id === payload.id)) {
+              delete decisions[payload.id];
+              await atomicJson(decisionsPath, decisions);
+              return { ok: true, recoverable: true, alreadyRestored: true };
+            }
             const entry = trashIndex[payload.id];
             if (!entry) {
-              if (registry.some((item) => item.id === payload.id)) return { ok: true, recoverable: true, alreadyRestored: true };
               throw Object.assign(new Error("没有可撤回的素材记录"), { status: 404 });
             }
             if (entry.recoverable === false || ["purged", "missing"].includes(entry.state)) {

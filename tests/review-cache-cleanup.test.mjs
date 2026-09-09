@@ -11,7 +11,7 @@ test("cleanup permanently removes reviewed bridge media but keeps pending media"
   const dataHome = await mkdtemp(path.join(os.tmpdir(), "caiguang-review-cleanup-"));
   const keptFolder = path.join(dataHome, "review", "2026-09-01", "kept-item");
   const pendingFolder = path.join(dataHome, "review", "2026-09-01", "pending-item");
-  const rejectedFolder = path.join(dataHome, "trash", "rejected-item");
+  const rejectedFolder = path.join(dataHome, "review", "2026-09-01", "rejected-item");
   const dataDir = path.join(dataHome, "data");
   await Promise.all([mkdir(keptFolder, { recursive: true }), mkdir(pendingFolder, { recursive: true }), mkdir(rejectedFolder, { recursive: true }), mkdir(dataDir, { recursive: true })]);
   await Promise.all([
@@ -21,9 +21,10 @@ test("cleanup permanently removes reviewed bridge media but keeps pending media"
     writeFile(path.join(dataDir, "generated-review-items.json"), JSON.stringify([
       { id: "kept", localPath: path.join(keptFolder, "01.jpg") },
       { id: "pending", localPath: path.join(pendingFolder, "01.jpg") },
+      { id: "rejected", localPath: path.join(rejectedFolder, "01.jpg") },
     ])),
     writeFile(path.join(dataDir, "review-decisions.json"), JSON.stringify({ kept: { decision: "kept" }, rejected: { decision: "rejected" } })),
-    writeFile(path.join(dataDir, "review-trash.json"), JSON.stringify({ rejected: { trashFolder: rejectedFolder } })),
+    writeFile(path.join(dataDir, "review-trash.json"), JSON.stringify({})),
   ]);
 
   const result = await cleanupReviewedMedia(dataHome);

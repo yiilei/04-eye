@@ -213,7 +213,9 @@ test("reviewed media is treated as temporary bridge storage", async () => {
   ]);
   assert.match(server, /cleanupReviewedMedia\(dataRoot\)/);
   assert.match(auto, /cleanup_reviewed_media/);
-  assert.match(page, /下次抓取或重新打开采光时会永久删除本地文件/);
+  assert.match(page, /下次抓取或重新打开采光时才会清理本地临时文件/);
+  assert.match(page, /empty-capture-group/);
+  assert.match(page, /当前没有待批阅素材/);
   assert.match(cleanup, /decision === "kept"/);
   assert.match(cleanup, /purgedRejected/);
   assert.match(packager, /packagedApp, "scripts"/);

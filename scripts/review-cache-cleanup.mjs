@@ -19,9 +19,36 @@ export async function cleanupReviewedMedia(dataHome) {
     const registryPath = path.join(dataRoot, "data", "generated-review-items.json");
     const decisionsPath = path.join(dataRoot, "data", "review-decisions.json");
     const trashIndexPath = path.join(dataRoot, "data", "review-trash.json");
-    const registry = await readJson(registryPath, []);
-    const decisions = await readJson(decisionsPath, {});
-    const trashIndex = await readJson(trashIndexPath, {});
+    const operationPath = path.join(dataRoot, "data", "review-operation.json");
+    let registry = await readJson(registryPath, []);
+    let decisions = await readJson(decisionsPath, {});
+    let trashIndex = await readJson(trashIndexPath, {});
+
+    // Rejected items remain in the review registry during the session so the
+    // UI can move them to the bottom instead of making them disappear. The
+    // next cleanup closes that undo window with the existing crash-safe
+    // journal, then permanently removes the temporary copy below.
+    for (const [itemIndex, item] of registry.entries()) {
+      if (decisions[item.id]?.decision !== "rejected") continue;
+      const localFile = item.galleryLocalPaths?.[0] || item.localPath || item.videoLocalPath;
+      const originalFolder = localFile ? path.dirname(path.resolve(localFile)) : "";
+      const safeId = String(item.id).replace(/[^a-zA-Z0-9_-]+/g, "-");
+      const trashFolder = path.join(trashRoot, `${Date.now()}-${safeId}`);
+      await atomicJson(operationPath, {
+        type: "reject",
+        id: item.id,
+        item,
+        itemIndex,
+        originalFolder,
+        trashFolder,
+        startedAt: new Date().toISOString(),
+      });
+      await recoverReviewOperationUnlocked(dataRoot);
+    }
+
+    registry = await readJson(registryPath, []);
+    decisions = await readJson(decisionsPath, {});
+    trashIndex = await readJson(trashIndexPath, {});
     const keptIds = new Set(Object.entries(decisions)
       .filter(([, entry]) => entry?.decision === "kept")
       .map(([id]) => id));

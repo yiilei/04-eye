@@ -32,6 +32,8 @@ test("NO can be undone immediately, but cleanup produces an explicit non-recover
   const desktop = await startDesktopServer(projectRoot, root);
   try {
     assert.equal((await post(desktop.url, item.id, "rejected")).status, 200);
+    assert.equal(await exists(item.localPath), true);
+    assert.equal((await readJson(path.join(root, "data", "generated-review-items.json"), [])).some((value) => value.id === item.id), true);
     const restored = await post(desktop.url, item.id, "pending");
     assert.equal(restored.status, 200);
     assert.equal(await exists(item.localPath), true);
@@ -73,9 +75,11 @@ test("a later delete first recovers the previously interrupted journal", async (
     assert.equal(response.status, 200);
     const registry = await readJson(path.join(root, "data", "generated-review-items.json"), []);
     const trash = await readJson(path.join(root, "data", "review-trash.json"), {});
-    assert.equal(registry.some((item) => item.id === first.id || item.id === second.id), false);
+    assert.equal(registry.some((item) => item.id === first.id), false);
+    assert.equal(registry.some((item) => item.id === second.id), true);
     assert.equal(trash.first.recoverable, true);
-    assert.equal(trash.second.recoverable, true);
+    assert.equal(trash.second, undefined);
+    assert.equal((await readJson(path.join(root, "data", "review-decisions.json"), {})).second.cleanupState, "pending_cleanup");
     assert.equal(await exists(path.join(root, "data", "review-operation.json")), false);
   } finally {
     desktop.close();

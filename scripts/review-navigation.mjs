@@ -8,10 +8,19 @@ export function indexAfterDecision(currentIndex, totalBeforeDecision) {
   return index >= total - 1 ? 0 : index;
 }
 
-export function pendingReviewItems(items, decisions = {}, dismissedIds = [], dismissalKey = (item) => item.id) {
+export function reviewQueueItems(items, decisions = {}, dismissedIds = [], dismissalKey = (item) => item.id) {
   const dismissed = new Set(dismissedIds);
-  return items.filter((item) => {
-    if (dismissed.has(dismissalKey(item))) return false;
-    return decisions[item.id] !== "kept" && decisions[item.id] !== "rejected";
-  });
+  const visible = items.filter((item) => !dismissed.has(dismissalKey(item)));
+  const pending = visible.filter((item) => decisions[item.id] !== "kept" && decisions[item.id] !== "rejected");
+  const reviewed = visible.filter((item) => decisions[item.id] === "kept" || decisions[item.id] === "rejected");
+  return [...pending, ...reviewed];
+}
+
+export function nextPendingReviewId(items, decisions = {}, currentId = "") {
+  const pending = items.filter((item) => decisions[item.id] !== "kept" && decisions[item.id] !== "rejected");
+  if (!pending.length) return items[0]?.id || "";
+  const currentIndex = pending.findIndex((item) => item.id === currentId);
+  if (currentIndex < 0) return pending[0].id;
+  if (pending.length === 1) return currentId;
+  return pending[(currentIndex + 1) % pending.length].id;
 }

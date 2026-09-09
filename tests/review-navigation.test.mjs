@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { indexAfterDecision, pendingReviewItems } from "../scripts/review-navigation.mjs";
+import { indexAfterDecision, nextPendingReviewId, reviewQueueItems } from "../scripts/review-navigation.mjs";
 
 test("decision keeps the same slot so the next item slides into place", () => {
   assert.equal(indexAfterDecision(0, 17), 0);
@@ -13,29 +13,33 @@ test("decision on the last or only item wraps safely", () => {
   assert.equal(indexAfterDecision(4, 0), 0);
 });
 
-test("YES and NO immediately reveal the next pending item", () => {
+test("YES and NO move the reviewed item to the bottom and select the next pending item", () => {
   const items = [{ id: "first" }, { id: "second" }, { id: "third" }];
-  const before = pendingReviewItems(items);
-  const firstNextIndex = indexAfterDecision(0, before.length);
-  const afterYes = pendingReviewItems(items, { first: "kept" });
-  assert.equal(afterYes[firstNextIndex].id, "second");
+  const afterYesDecisions = { first: "kept" };
+  assert.equal(nextPendingReviewId(items, {}, "first"), "second");
+  assert.deepEqual(reviewQueueItems(items, afterYesDecisions).map((item) => item.id), ["second", "third", "first"]);
 
-  const secondNextIndex = indexAfterDecision(0, afterYes.length);
-  const afterNo = pendingReviewItems(items, { first: "kept", second: "rejected" });
-  assert.equal(afterNo[secondNextIndex].id, "third");
+  const afterNoDecisions = { first: "kept", second: "rejected" };
+  assert.equal(nextPendingReviewId(items, afterYesDecisions, "second"), "third");
+  assert.deepEqual(reviewQueueItems(items, afterNoDecisions).map((item) => item.id), ["third", "first", "second"]);
 });
 
-test("the former last item wraps to the first pending item", () => {
+test("the former last pending item wraps to the first pending item", () => {
   const items = [{ id: "first" }, { id: "second" }, { id: "third" }];
-  const nextIndex = indexAfterDecision(2, items.length);
-  const after = pendingReviewItems(items, { third: "kept" });
-  assert.equal(after[nextIndex].id, "first");
+  assert.equal(nextPendingReviewId(items, {}, "third"), "first");
+  assert.deepEqual(reviewQueueItems(items, { third: "kept" }).map((item) => item.id), ["first", "second", "third"]);
 });
 
-test("dismissed items and completed decisions stay out of the pending list", () => {
+test("dismissed items stay hidden while completed decisions remain at the bottom", () => {
   const items = [{ id: "first", key: "a" }, { id: "second", key: "b" }, { id: "third", key: "c" }];
   assert.deepEqual(
-    pendingReviewItems(items, { second: "kept" }, ["c"], (item) => item.key).map((item) => item.id),
-    ["first"],
+    reviewQueueItems(items, { second: "kept" }, ["c"], (item) => item.key).map((item) => item.id),
+    ["first", "second"],
   );
+});
+
+test("when the last pending item is reviewed it remains available at the bottom", () => {
+  const items = [{ id: "first" }];
+  assert.equal(nextPendingReviewId(items, {}, "first"), "first");
+  assert.deepEqual(reviewQueueItems(items, { first: "rejected" }).map((item) => item.id), ["first"]);
 });

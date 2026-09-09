@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Mouse
 import { createPortal } from "react-dom";
 import generatedItemsData from "../data/generated-review-items.json";
 import accountPinsData from "../data/xhs-account-pins.json";
-import { indexAfterDecision, pendingReviewItems } from "../scripts/review-navigation.mjs";
+import { indexAfterDecision, nextPendingReviewId, reviewQueueItems } from "../scripts/review-navigation.mjs";
 import { sortReviewItemsNewestFirst } from "../scripts/review-item-order.mjs";
 import { eagleItemValidity, findTaggedEagleItem, nextEagleImportAction } from "../scripts/eagle-import-policy.mjs";
 import { positionsForStableMedia, singleStateKey, stableMediaId, stableMediaIdsForPositions } from "../scripts/review-ui-state.mjs";
@@ -904,7 +904,7 @@ export default function Home() {
   }, [reviewTourStep, settingsOpen, windowSize]);
   const dismissalKey = useCallback((item: ReviewItem) => `${item.id}@${item.capturedAt || item.date || "unknown"}`, []);
   const reviewItems = useMemo(
-    () => sortReviewItemsNewestFirst(pendingReviewItems(runtimeItems, decisions, dismissedIds, dismissalKey)) as ReviewItem[],
+    () => reviewQueueItems(sortReviewItemsNewestFirst(runtimeItems), decisions, dismissedIds, dismissalKey) as ReviewItem[],
     [decisions, dismissalKey, dismissedIds, runtimeItems],
   );
   const current = reviewItems[index] ?? emptyItem;
@@ -1618,8 +1618,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
-    // Kept items are intentionally hidden from the pending review list. Use
-    // the complete runtime registry here so an older kept decision can still
+    // Use the complete runtime registry so an older kept decision can still
     // finish an interrupted Eagle import after an upgrade or restart.
     const pending = runtimeItems.filter((item) => decisions[item.id] === "kept" && !eagleItems[item.id] && !item.previewOnly);
     if (!pending.length) return;
@@ -1641,8 +1640,8 @@ export default function Home() {
     })();
   }, [decisions, eagleItems, hydrated, removedSingles, runtimeItems]);
 
-  const openItem = useCallback((next: number) => {
-    selectedReviewId.current = reviewItems[next]?.id || "";
+  const openItemById = useCallback((id: string, next: number) => {
+    selectedReviewId.current = id;
     setIndex(next);
     setGalleryIndex(0);
     zoomRef.current = 1;
@@ -1652,7 +1651,11 @@ export default function Home() {
     setEagleMessage("");
     setLinkCopied(false);
     viewer.current?.scrollTo({ top: 0, left: 0 });
-  }, [reviewItems]);
+  }, []);
+
+  const openItem = useCallback((next: number) => {
+    openItemById(reviewItems[next]?.id || "", next);
+  }, [openItemById, reviewItems]);
 
   const resetZoom = useCallback(() => {
     zoomRef.current = 1;
@@ -1820,7 +1823,9 @@ export default function Home() {
         const nextDecisions = { ...decisions, [current.id]: "kept" as Decision };
         setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision: "kept", index }]);
         setDecisions(nextDecisions);
-        openItem(indexAfterDecision(index, reviewItems.length));
+        const nextId = nextPendingReviewId(reviewItems, decisions, current.id);
+        const pendingCount = reviewItems.filter((item) => !decisions[item.id]).length;
+        openItemById(nextId, indexAfterDecision(index, pendingCount));
       } else {
         setEagleMessage(`第 ${galleryIndex + 1} 张${currentLivePhoto ? "及对应 Live Photo " : ""}已单独保存到 Eagle；之后删除整篇也不会删除该素材`);
       }
@@ -1830,15 +1835,17 @@ export default function Home() {
       recoverEagleIfUnavailable(error);
     }
     setSyncingId(undefined);
-  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItem, persistDecision, persistReviewUiState, recoverEagleIfUnavailable, remainingGalleryPositions.length, reviewItems, syncingId]);
+  }, [current, currentLivePhoto, decisions, galleryIndex, index, openItemById, persistDecision, persistReviewUiState, recoverEagleIfUnavailable, remainingGalleryPositions.length, reviewItems, syncingId]);
 
   const commitDecision = useCallback(async (decision: Decision) => {
+    const nextId = nextPendingReviewId(reviewItems, decisions, current.id);
+    const pendingCount = reviewItems.filter((item) => !decisions[item.id]).length;
     await persistDecision(current.id, decision);
     const next = { ...decisions, [current.id]: decision };
     setHistory((value) => [...value, { kind: "decision", id: current.id, previous: decisions[current.id], decision, index }]);
     setDecisions(next);
-    openItem(indexAfterDecision(index, reviewItems.length));
-  }, [current.id, decisions, index, openItem, persistDecision, reviewItems]);
+    openItemById(nextId, indexAfterDecision(index, pendingCount));
+  }, [current.id, decisions, index, openItemById, persistDecision, reviewItems]);
 
   const removeCurrentSingle = useCallback(async () => {
     if (!current.gallery?.length || syncingId) {
@@ -1869,7 +1876,9 @@ export default function Home() {
       setEagleMessage("全部图片都已移除，本篇已自动删除");
       const nextDecisions = { ...decisions, [current.id]: "rejected" as Decision };
       setDecisions(nextDecisions);
-      openItem(indexAfterDecision(index, reviewItems.length));
+      const nextId = nextPendingReviewId(reviewItems, decisions, current.id);
+      const pendingCount = reviewItems.filter((item) => !decisions[item.id]).length;
+      openItemById(nextId, indexAfterDecision(index, pendingCount));
       return;
     }
     setHistory((value) => [...value, { kind: "remove-single", id: current.id, previousRemoved: removedCurrent, removedPosition: galleryIndex, previousDecision: decisions[current.id], index }]);
@@ -1878,10 +1887,15 @@ export default function Home() {
     setGalleryIndex(nextPosition);
     setEagleError(false);
     setEagleMessage(`已移除第 ${galleryIndex + 1} 张；留下时只保存剩余 ${remaining.length} 张`);
-  }, [current, decisions, galleryIndex, index, openItem, persistDecision, persistReviewUiState, removedCurrent, reviewItems, syncingId]);
+  }, [current, decisions, galleryIndex, index, openItemById, persistDecision, persistReviewUiState, removedCurrent, reviewItems, syncingId]);
 
   const decide = useCallback(async (decision: Decision) => {
     if (syncingId) return;
+    if (decisions[current.id]) {
+      setEagleError(true);
+      setEagleMessage("这条已经批阅；如需修改，请先点击“重新选择”");
+      return;
+    }
     if (decision === "rejected") {
       if (eagleItems[current.id]) {
         setEagleError(true);
@@ -1889,7 +1903,7 @@ export default function Home() {
         return;
       }
       setEagleError(false);
-      setEagleMessage("已移入临时撤回区；下次抓取或重新打开采光时会永久删除本地文件");
+      setEagleMessage("已标记删除并移到列表底部；下次抓取或重新打开采光时才会清理本地临时文件");
       try { await commitDecision(decision); }
       catch (error) {
         setEagleError(true);
@@ -1924,7 +1938,7 @@ export default function Home() {
       setEagleError(true);
       setEagleMessage(error instanceof Error ? error.message : "无法保存批阅结果，请重试");
     }
-  }, [commitDecision, current, eagleItems, recoverEagleIfUnavailable, removedCurrent, syncingId]);
+  }, [commitDecision, current, decisions, eagleItems, recoverEagleIfUnavailable, removedCurrent, syncingId]);
 
   const removeCurrentItem = useCallback(async () => {
     if (!reviewItems.length || current.id === "empty") return;
@@ -2268,7 +2282,7 @@ export default function Home() {
                      <section><i>02</i><p><strong>内容权利</strong><span>图片、视频、文字、商标等权利归原作者或相关权利人所有。保存到 Eagle 不代表获得转载或商业授权；公开传播、出售或用于商业项目前，请自行取得必要授权。</span></p></section>
                      <section><i>03</i><p><strong>平台规则</strong><span>请仅处理你有权浏览的公开内容，不得绕过登录、验证码、访问控制或反自动化措施。自动访问可能受到平台限制，采光不承诺账号绝对不会被验证、限流或限制使用。</span></p></section>
                      <section><i>04</i><p><strong>结果边界</strong><span>受网络、页面变化、资源失效及第三方服务影响，抓取结果可能延迟、不完整或失败。出现验证码、登录失效或访问受限时，采光会停止或降低抓取频率。</span></p></section>
-                     <section><i>05</i><p><strong>本地处理</strong><span>素材和批阅决定保存在你的电脑。点击 YES 只会保存到你连接的 Eagle；点击 NO 会删除对应的本地临时素材。请自行备份重要内容。</span></p></section>
+                     <section><i>05</i><p><strong>本地处理</strong><span>素材和批阅决定保存在你的电脑。点击 YES 会保存到你连接的 Eagle；点击 NO 只会先标记待删除并移到列表底部，对应本地临时素材会在下次抓取或重新打开采光时清理。请自行备份重要内容。</span></p></section>
                      <section><i>06</i><p><strong>使用责任</strong><span>请遵守适用法律、平台规则及第三方权利，并对自己选择的账号、抓取范围及素材用途负责。上述说明不能排除法律规定不得排除的责任。</span></p></section>
                    </div>
                  </details>
@@ -2579,6 +2593,26 @@ export default function Home() {
             </div>
             <div className="review-info"><span>xxxxx</span></div>
             <div className="empty-review-lines" aria-hidden="true"><span>xxxxx</span><span>xxxxx</span><span>xxxxx</span></div>
+            <div className="gallery-position-group empty-capture-group">
+              <span className="gallery-position" aria-label="当前没有待批阅素材">0/0</span>
+              {desktopAppMode && (
+                <button type="button" className={`capture-now ${manualCapture.state}`} onClick={() => void startManualCapture()}
+                  disabled={manualCapture.state === "running"} aria-label="立即执行一次本地抓取"
+                  title="立即抓取（完全在本地执行）">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 11V6.7a1.45 1.45 0 0 1 2.9 0V10m0 0V4.8a1.45 1.45 0 0 1 2.9 0V10m0 0V6a1.45 1.45 0 0 1 2.9 0v5m0 0V8.3a1.45 1.45 0 0 1 2.9 0v5.2c0 4.1-2.7 7-6.8 7h-.8c-2.1 0-3.8-.8-5.1-2.4l-2.4-3a1.55 1.55 0 0 1 2.3-2.1l1.2 1.1V11Z" /></svg>
+                  {manualCapture.state === "running" && <span className="capture-now-ring" style={{ background: `conic-gradient(var(--accent) ${manualCapture.percent}%, rgba(255,255,255,.13) 0)` }} />}
+                </button>
+              )}
+              {manualCapture.message && <span className={`capture-now-message ${manualCapture.state}`} role="status" aria-live="polite">
+                <span className="capture-now-message-copy">
+                  <b>{manualCapture.message}</b>
+                  {manualCapture.state === "running" && manualCapture.firstCapture && <small>{captureEstimateLabel(manualCapture.startedAt, manualCapture.percent, manualCapture.estimateMinutes)} · 账号间有安全间隔</small>}
+                </span>
+                {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
+                {manualCapture.state === "completed" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
+                {manualCapture.state === "failed" && <button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>确定</button>}
+              </span>}
+            </div>
           </div> : <Fragment key={current.id}>
             <div className="review-heading">
               <h1>{current.title}</h1>
@@ -2603,8 +2637,8 @@ export default function Home() {
             )}
             {quality.state === "failed" && !current.previewOnly && <p className="quality-alert">{quality.message}</p>}
             <div className="actions">
-              <button className="reject" onClick={() => void decide("rejected")} disabled={Boolean(syncingId) || Boolean(eagleItems[current.id])}>NO</button>
-              <button className="keep" onClick={() => void decide("kept")} disabled={Boolean(syncingId) || quality.state !== "passed"}>YES</button>
+              <button className="reject" onClick={() => void decide("rejected")} disabled={Boolean(syncingId) || Boolean(eagleItems[current.id]) || Boolean(decisions[current.id])}>NO</button>
+              <button className="keep" onClick={() => void decide("kept")} disabled={Boolean(syncingId) || quality.state !== "passed" || Boolean(decisions[current.id])}>YES</button>
             </div>
             <div className={`post-caption ${formatPostCaption(current.caption) ? "" : "is-empty"}`} role="region" tabIndex={0} aria-label="帖子文案">
               <span className="post-caption-copy">{formatPostCaption(current.caption) || "暂无帖子文案"}</span>
@@ -2652,7 +2686,7 @@ export default function Home() {
             </>}
             {reviewTourStep === 1 && <>
               <h2>留下，或删除</h2>
-              <p>点击 NO 会删除当前素材；点击 YES 会把它保存进已连接的 Eagle。</p>
+              <p>点击 YES 会把素材保存进 Eagle，点击 NO 会标记待删除；处理后都会移到列表最下面，并自动进入下一条。</p>
             </>}
             {reviewTourStep === 2 && <>
               <h2>像 Figma 一样查看画板</h2>
