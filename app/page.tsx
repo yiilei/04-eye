@@ -1903,7 +1903,7 @@ export default function Home() {
         return;
       }
       setEagleError(false);
-      setEagleMessage("已标记删除并移到列表底部；下次抓取或重新打开采光时才会清理本地临时文件");
+      setEagleMessage("已标记删除并移到列表底部；明天开始下一轮抓取前才会清理本地临时文件");
       try { await commitDecision(decision); }
       catch (error) {
         setEagleError(true);
@@ -2282,7 +2282,7 @@ export default function Home() {
                      <section><i>02</i><p><strong>内容权利</strong><span>图片、视频、文字、商标等权利归原作者或相关权利人所有。保存到 Eagle 不代表获得转载或商业授权；公开传播、出售或用于商业项目前，请自行取得必要授权。</span></p></section>
                      <section><i>03</i><p><strong>平台规则</strong><span>请仅处理你有权浏览的公开内容，不得绕过登录、验证码、访问控制或反自动化措施。自动访问可能受到平台限制，采光不承诺账号绝对不会被验证、限流或限制使用。</span></p></section>
                      <section><i>04</i><p><strong>结果边界</strong><span>受网络、页面变化、资源失效及第三方服务影响，抓取结果可能延迟、不完整或失败。出现验证码、登录失效或访问受限时，采光会停止或降低抓取频率。</span></p></section>
-                     <section><i>05</i><p><strong>本地处理</strong><span>素材和批阅决定保存在你的电脑。点击 YES 会保存到你连接的 Eagle；点击 NO 只会先标记待删除并移到列表底部，对应本地临时素材会在下次抓取或重新打开采光时清理。请自行备份重要内容。</span></p></section>
+                     <section><i>05</i><p><strong>本地处理</strong><span>素材和批阅决定保存在你的电脑。点击 YES 会保存到你连接的 Eagle；点击 NO 只会先标记待删除并移到列表底部。当天重启或重新打开采光不会清理，只有明天真正开始下一轮抓取前才会清理昨天及更早的已处理临时素材。请自行备份重要内容。</span></p></section>
                      <section><i>06</i><p><strong>使用责任</strong><span>请遵守适用法律、平台规则及第三方权利，并对自己选择的账号、抓取范围及素材用途负责。上述说明不能排除法律规定不得排除的责任。</span></p></section>
                    </div>
                  </details>

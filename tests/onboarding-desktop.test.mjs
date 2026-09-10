@@ -203,7 +203,7 @@ test("failed H5 previews can never be imported into Eagle as complete material",
   assert.match(fallback, /已保留封面和创作服务中心入口/);
 });
 
-test("reviewed media is treated as temporary bridge storage", async () => {
+test("restart preserves reviewed media and the next-day capture cleans bridge storage", async () => {
   const [server, auto, page, cleanup, packager] = await Promise.all([
     readFile(new URL("../desktop/server.mjs", import.meta.url), "utf8"),
     readFile(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8"),
@@ -211,13 +211,16 @@ test("reviewed media is treated as temporary bridge storage", async () => {
     readFile(new URL("../scripts/review-cache-cleanup.mjs", import.meta.url), "utf8"),
     readFile(new URL("../scripts/package-macos-app.mjs", import.meta.url), "utf8"),
   ]);
-  assert.match(server, /cleanupReviewedMedia\(dataRoot\)/);
+  assert.doesNotMatch(server, /cleanupReviewedMedia\(dataRoot\)/);
   assert.match(auto, /cleanup_reviewed_media/);
-  assert.match(page, /下次抓取或重新打开采光时才会清理本地临时文件/);
+  assert.match(page, /当天重启或重新打开采光不会清理/);
+  assert.match(page, /明天真正开始下一轮抓取前才会清理/);
   assert.match(page, /empty-capture-group/);
   assert.match(page, /当前没有待批阅素材/);
   assert.match(cleanup, /decision === "kept"/);
   assert.match(cleanup, /purgedRejected/);
+  assert.match(cleanup, /Asia\/Shanghai/);
+  assert.match(cleanup, /beforeDate/);
   assert.match(packager, /packagedApp, "scripts"/);
   assert.match(packager, /review-cache-cleanup\.mjs/);
 });

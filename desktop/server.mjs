@@ -6,7 +6,6 @@ import { access, mkdir, readFile, readdir, rename, stat, writeFile } from "node:
 import path from "node:path";
 import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
-import { cleanupReviewedMedia } from "../scripts/review-cache-cleanup.mjs";
 import { recoverReviewOperationUnlocked, withReviewStateLock } from "../scripts/review-state-store.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
 
@@ -64,20 +63,9 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   await mkdir(path.dirname(registryPath), { recursive: true });
   await mkdir(reviewRoot, { recursive: true });
   await mkdir(trashRoot, { recursive: true });
-  // Review media is a bridge, not a permanent library. A restart closes the
-  // previous undo window and purges already rejected/imported local copies.
+  // Starting or restarting the app must never shorten the review/undo window.
+  // Reviewed bridge media is cleaned only by the next calendar day's capture.
   let reviewStartupState = { status: "ready", message: "" };
-  try {
-    await cleanupReviewedMedia(dataRoot);
-  } catch (error) {
-    // A second live process may briefly own the review state. The app must
-    // still open and expose a retryable state instead of crashing at startup.
-    reviewStartupState = {
-      status: "waiting",
-      message: error instanceof Error ? error.message : "批阅资料正在更新，请稍后重试",
-    };
-    console.warn("[desktop] review cleanup deferred:", reviewStartupState.message);
-  }
   try {
     await withReviewStateLock(dataRoot, async () => {
       await recoverReviewOperationUnlocked(dataRoot);
@@ -158,7 +146,6 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       if (pathname === "/api/desktop/review-items" && request.method === "GET") {
         if (reviewStartupState.status === "waiting") {
           try {
-            await cleanupReviewedMedia(dataRoot);
             await withReviewStateLock(dataRoot, async () => {
               await recoverReviewOperationUnlocked(dataRoot);
               await seedStarterData(appRoot, dataRoot, registryPath, reviewRoot);

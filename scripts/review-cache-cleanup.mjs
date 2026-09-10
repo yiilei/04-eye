@@ -10,7 +10,25 @@ const isInside = (parent, child) => {
   return relative && !relative.startsWith("..") && !path.isAbsolute(relative);
 };
 
-export async function cleanupReviewedMedia(dataHome) {
+export function dateKeyInTimeZone(value = new Date(), timeZone = "Asia/Shanghai") {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date);
+  const part = (type) => parts.find((entry) => entry.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function isBeforeCleanupDate(entry, beforeDate) {
+  if (!beforeDate) return true;
+  const decisionDate = dateKeyInTimeZone(entry?.updatedAt);
+  // Entries without a usable timestamp came from an older build and predate
+  // this daily-boundary policy, so the next real capture may retire them.
+  return !decisionDate || decisionDate < beforeDate;
+}
+
+export async function cleanupReviewedMedia(dataHome, { beforeDate } = {}) {
   const dataRoot = path.resolve(dataHome);
   return withReviewStateLock(dataRoot, async () => {
     await recoverReviewOperationUnlocked(dataRoot);
@@ -28,8 +46,11 @@ export async function cleanupReviewedMedia(dataHome) {
     // UI can move them to the bottom instead of making them disappear. The
     // next cleanup closes that undo window with the existing crash-safe
     // journal, then permanently removes the temporary copy below.
+    const rejectedToPurge = new Set();
     for (const [itemIndex, item] of registry.entries()) {
-      if (decisions[item.id]?.decision !== "rejected") continue;
+      const decision = decisions[item.id];
+      if (decision?.decision !== "rejected" || !isBeforeCleanupDate(decision, beforeDate)) continue;
+      rejectedToPurge.add(item.id);
       const localFile = item.galleryLocalPaths?.[0] || item.localPath || item.videoLocalPath;
       const originalFolder = localFile ? path.dirname(path.resolve(localFile)) : "";
       const safeId = String(item.id).replace(/[^a-zA-Z0-9_-]+/g, "-");
@@ -50,7 +71,7 @@ export async function cleanupReviewedMedia(dataHome) {
     decisions = await readJson(decisionsPath, {});
     trashIndex = await readJson(trashIndexPath, {});
     const keptIds = new Set(Object.entries(decisions)
-      .filter(([, entry]) => entry?.decision === "kept")
+      .filter(([, entry]) => entry?.decision === "kept" && isBeforeCleanupDate(entry, beforeDate))
       .map(([id]) => id));
     const removedIds = [];
 
@@ -59,6 +80,7 @@ export async function cleanupReviewedMedia(dataHome) {
     let purgedRejected = 0;
     for (const [id, entry] of Object.entries(trashIndex)) {
       if (entry?.recoverable === false || ["purged", "missing"].includes(entry?.state)) continue;
+      if (!rejectedToPurge.has(id) && !isBeforeCleanupDate(decisions[id], beforeDate)) continue;
       const folder = entry?.trashFolder;
       if (folder && isInside(trashRoot, folder)) await rm(folder, { recursive: true, force: true });
       purgedRejected += 1;
@@ -103,5 +125,8 @@ export async function cleanupReviewedMedia(dataHome) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
-  console.log(JSON.stringify(await cleanupReviewedMedia(dataHome)));
+  // This CLI is invoked as the first step of a real capture. Only decisions
+  // from earlier Shanghai calendar days are eligible for cleanup.
+  const beforeDate = dateKeyInTimeZone(new Date());
+  console.log(JSON.stringify(await cleanupReviewedMedia(dataHome, { beforeDate })));
 }

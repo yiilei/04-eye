@@ -54,6 +54,25 @@ test("NO can be undone immediately, but cleanup produces an explicit non-recover
   }
 });
 
+test("restarting the desktop app never cleans a same-day reviewed item", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "caiguang-decision-restart-"));
+  const item = await createItem(root, "restart-item");
+  await atomicJson(path.join(root, "data", "generated-review-items.json"), [item]);
+  await atomicJson(path.join(root, "data", "review-decisions.json"), {
+    [item.id]: { decision: "rejected", cleanupState: "pending_cleanup", updatedAt: new Date().toISOString() },
+  });
+  const desktop = await startDesktopServer(projectRoot, root);
+  try {
+    const response = await fetch(new URL("/api/desktop/review-items", desktop.url));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).items.some((value) => value.id === item.id), true);
+    assert.equal(await exists(item.localPath), true);
+  } finally {
+    desktop.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a later delete first recovers the previously interrupted journal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "caiguang-decision-recovery-http-"));
   await atomicJson(path.join(root, "data", "generated-review-items.json"), []);
