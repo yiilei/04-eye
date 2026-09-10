@@ -232,6 +232,7 @@ test("onboarding stays usable in compact windows and its public assets resolve",
 
   assert.match(css, /\.first-run-setup \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow-y: auto/);
   assert.match(css, /\.first-run-footer \{[^}]*position: sticky;[^}]*bottom: -1px/);
+  assert.match(css, /\.undo[^}]*z-index:\s*5/);
   assert.match(css, /width: min\(calc\(100vw - 64px\),calc\(\(100vh - 64px\) \* 4 \/ 3\)\)/);
   assert.doesNotMatch(page, /caiguang-icon\.svg/);
   assert.doesNotMatch(layout, /caiguang-icon\.svg/);

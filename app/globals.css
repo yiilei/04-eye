@@ -542,7 +542,7 @@ kbd { color: rgba(255,255,255,.7); background: rgba(255,255,255,.07); border-col
 .eagle-status.error { color: #ff8fa0; background: rgba(180,35,54,.13); }
 .eagle-status { flex-shrink: 0; overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; }
 .eagle-status button { margin: 6px 0 0 8px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
-.undo { position: absolute; right: 22px; bottom: 18px; display: block; width: auto; margin: 0; padding: 4px 0; color: rgba(255,255,255,.42); font-size: 10px; text-align: right; }
+.undo { position: absolute; right: 22px; bottom: 18px; z-index: 5; display: block; width: auto; margin: 0; padding: 4px 0; color: rgba(255,255,255,.42); font-size: 10px; text-align: right; }
 .gallery-position-group { position: relative; z-index: 3; display: flex; min-height: 42px; flex: 0 0 auto; align-items: center; gap: 9px; margin-top: auto; padding-top: 8px; background: var(--panel); }
 .gallery-position { display: block; padding: 4px 0; color: rgba(255,255,255,.42); font-family: "DIN Alternate", "DIN Condensed", "Arial Narrow", sans-serif; font-size: 10px; font-variant-numeric: tabular-nums; line-height: normal; }
 .capture-now { position: relative; display: grid; width: 28px; height: 28px; padding: 6px; place-items: center; color: rgba(255,255,255,.68); background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.13); border-radius: 50%; box-shadow: inset 0 1px rgba(255,255,255,.08); }
