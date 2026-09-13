@@ -6,6 +6,9 @@ export function isTransientBrowserFailure(output) {
 
 export function shouldRetryDiscovery(name, output, attempt = 1) {
   return attempt === 1
-    && (name === "discover_creator_events" || name === "discover_pinned_accounts")
+    // Account discovery saves each completed account and has its own bounded
+    // recovery list. Re-running the whole account batch duplicates work and
+    // can turn two timeouts into an hour-long task.
+    && name === "discover_creator_events"
     && isTransientBrowserFailure(output);
 }

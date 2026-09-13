@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountCapturePolicy, captureCandidates, diffPosts, isSafetyStopError, latestPostOnly, mergeBacklogPosts, mergeDiscoveredTasks, nextBacklogScan, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, captureCandidates, diffPosts, discoveryCommandTimeoutMs, isSafetyStopError, latestPostOnly, mergeBacklogPosts, mergeDiscoveredTasks, nextBacklogScan, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, retryableAccountKeys, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -114,6 +114,20 @@ test("recognizes login and anti-abuse responses as safety-stop signals", () => {
   assert.equal(isSafetyStopError("HTTP 429 Too Many Requests"), true);
   assert.equal(isSafetyStopError("需要验证码，登录失效"), true);
   assert.equal(isSafetyStopError("普通图片解析失败"), false);
+});
+
+test("account discovery commands have a short bounded timeout", () => {
+  assert.equal(discoveryCommandTimeoutMs(undefined), 45_000);
+  assert.equal(discoveryCommandTimeoutMs("100"), 5_000);
+  assert.equal(discoveryCommandTimeoutMs("999999"), 120_000);
+});
+
+test("same-day recovery selects only failed and deferred accounts", () => {
+  assert.deepEqual([...retryableAccountKeys([
+    { accountKey: "done", status: "verified" },
+    { accountKey: "failed", status: "discovery_failed" },
+    { accountKey: "deferred", status: "deferred_transient_timeout" },
+  ])], ["failed", "deferred"]);
 });
 
 test("rediscovery refreshes token and releases a stranded task", () => {

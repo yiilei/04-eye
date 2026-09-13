@@ -40,7 +40,8 @@ const steps = [
   ...(creatorH5CaptureEnabled
     ? [["discover_creator_events", "发现最新创作活动", 30, [path.join(root, "scripts", "xhs-events-discover.mjs"), "--write"]]]
     : []),
-  ["discover_pinned_accounts", "检查埋点账号的新帖子", 52, [path.join(root, "scripts", "xhs-discover.mjs"), "--write"]],
+  ["discover_pinned_accounts", "检查埋点账号的新帖子", 52, [path.join(root, "scripts", "xhs-discover.mjs"), "--write",
+    ...(process.env.CAIGUANG_RETRY_FAILED_ONLY === "1" ? ["--retry-failed-only"] : [])]],
   ["capture_validate_report", "抓取素材与文案并校验", 72, [path.join(root, "scripts", "daily-pipeline.mjs")]],
 ];
 
@@ -57,7 +58,8 @@ writeProgress({ state: "running", phase: "starting", label: "准备本地抓取"
 for (const [index, [name, label, percent, args]] of steps.entries()) {
   writeProgress({ state: "running", phase: name, label, percent, phaseIndex: index + 1, phaseCount: steps.length });
   const runStep = () => spawnSync(process.execPath, args, { cwd: root, encoding: "utf8", timeout: 60 * 60 * 1000,
-    env: { ...process.env, CAIGUANG_CAPTURE_CREATOR_H5: creatorH5CaptureEnabled ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
+    env: { ...process.env, CAIGUANG_CAPTURE_CREATOR_H5: creatorH5CaptureEnabled ? "1" : "0",
+      CAIGUANG_CAPTURE_PROGRESS_PATH: progressPath }, stdio: ["ignore", "pipe", "pipe"] });
   let child = runStep();
   let output = [child.stdout, child.stderr].filter(Boolean).join("\n").trim();
   let retried = false;
@@ -75,6 +77,10 @@ let pipelineSummary = null;
 try {
   pipelineSummary = JSON.parse(results.find((item) => item.name === "capture_validate_report")?.summary || "null");
 } catch { /* a genuinely malformed result remains a failure */ }
+let accountDiscoverySummary = null;
+try {
+  accountDiscoverySummary = JSON.parse(results.find((item) => item.name === "discover_pinned_accounts")?.summary || "null");
+} catch { /* malformed discovery output stays a generic failure */ }
 const failedStep = results.find((item) => !item.ok && item.name !== "capture_validate_report");
 const pipelineHardFailure = !pipelineSummary
   || Boolean(pipelineSummary.error)
@@ -107,11 +113,12 @@ writeProgress(ok
       ? isTransientBrowserFailure(failedStep.output)
         ? "浏览器连续两次未能启动，任务已保留，稍后自动补抓"
         : `${failedStep.label || "抓取步骤"}未完成，请查看日报`
+      : discoveryFailed
+        ? `本轮已检查 ${accountDiscoverySummary?.checked || 0}/${accountDiscoverySummary?.total || 0} 个账号，${Number(accountDiscoverySummary?.failed || 0) + Number(accountDiscoverySummary?.deferred || 0)} 个账号待补抓；已完成结果已保存`
       : Number(pipelineSummary?.failed || 0) > 0
         ? `${pipelineSummary.failed} 项抓取失败，请查看日报`
       : pipelineSummary?.error
         ? `抓取未完成：${pipelineSummary.error}。自动任务稍后补试`
-        : discoveryFailed ? "部分账号查询失败，未标记为完成；自动任务稍后补试，请查看日报"
         : "抓取未完成，请查看日报",
     percent: Math.max(6, steps.find((step) => !results.find((result) => result.name === step[0])?.ok)?.[2] || 6), phaseIndex: results.length, phaseCount: steps.length, failedAt: new Date().toISOString() });
 console.log(JSON.stringify({ ok, results }));

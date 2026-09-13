@@ -358,6 +358,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       }
       if (pathname === "/api/desktop/capture-now" && request.method === "POST") {
         const explicitFirstCapture = new URL(request.url).searchParams.get("initial") === "1";
+        const retryFailedOnly = new URL(request.url).searchParams.get("retry") === "1";
         // Auto-detect first capture only when no capture has ever succeeded.
         const schedulerState = await readJson(schedulerStatePath, {});
         const firstCapture = isFirstCaptureRequest(explicitFirstCapture, schedulerState);
@@ -388,7 +389,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         const child = spawn(process.execPath, [installedScheduler, "run"], {
           cwd: runtimeRoot,
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot,
-            CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0", CAIGUANG_MANUAL_CONTINUE: "1" },
+            CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0", CAIGUANG_MANUAL_CONTINUE: "1",
+            CAIGUANG_RETRY_FAILED_ONLY: retryFailedOnly ? "1" : "0" },
           stdio: "ignore",
         });
         captureProcess = child;

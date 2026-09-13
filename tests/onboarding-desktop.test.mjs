@@ -266,3 +266,22 @@ test("desktop app bundle includes every shared module imported by the server", a
   assert.match(packager, /capture-time-policy\.mjs/);
   assert.match(packager, /releaseExcluded = new Set\(\["install-local-recovery-fix\.mjs"\]\)/);
 });
+
+test("capture timeout recovery is explicit and retries only unfinished accounts", async () => {
+  const [page, server, scheduler, discovery, auto] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../desktop/server.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/caiguang-scheduler.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/xhs-discover.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/daily-auto.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /继续补抓/);
+  assert.match(page, /稍后/);
+  assert.match(server, /searchParams\.get\("retry"\) === "1"/);
+  assert.match(scheduler, /detached: true/);
+  assert.match(scheduler, /waitForManagedChild/);
+  assert.match(scheduler, /capture-already-running|capture-active/);
+  assert.match(discovery, /deferred_transient_timeout/);
+  assert.match(discovery, /45_000/);
+  assert.match(auto, /CAIGUANG_RETRY_FAILED_ONLY/);
+});

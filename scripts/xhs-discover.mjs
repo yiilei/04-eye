@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isTransientBrowserFailure } from "./browser-recovery-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -13,6 +14,7 @@ const xhsExecutable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs"
 const cliConfig = path.join(appData, "xhs-cli");
 const preferencesPath = path.join(appData, "data", "user-preferences.json");
 const backlogPath = path.join(appData, "data", "xhs-discovery-backlog.json");
+const captureProgressPath = process.env.CAIGUANG_CAPTURE_PROGRESS_PATH || path.join(appData, "data", "capture-progress.json");
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
 const atomicJson = async (file, value) => {
@@ -178,6 +180,16 @@ export function isSafetyStopError(message) {
   return /(429|验证码|访问频繁|操作频繁|风控|登录失效|login.required|unauthorized|forbidden|账号异常)/iu.test(String(message || ""));
 }
 
+export function discoveryCommandTimeoutMs(value = process.env.CAIGUANG_DISCOVERY_COMMAND_TIMEOUT_MS) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, parsed)) : 45_000;
+}
+
+export function retryableAccountKeys(checks = []) {
+  return new Set(checks.filter((check) => ["discovery_failed", "deferred_transient_timeout"].includes(check?.status))
+    .map((check) => String(check.accountKey || "")).filter(Boolean));
+}
+
 const randomDelay = ([minimum, maximum]) => minimum + Math.floor(Math.random() * (maximum - minimum + 1));
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -188,7 +200,8 @@ function slugFor(account, post) {
 
 function parseArguments(argv) {
   const result = { accountKeys: [], write: false, fixture: "", maxAccounts: Infinity,
-    firstLatest: process.env.CAIGUANG_FIRST_CAPTURE === "1", continueBacklog: process.env.CAIGUANG_MANUAL_CONTINUE === "1" };
+    firstLatest: process.env.CAIGUANG_FIRST_CAPTURE === "1", continueBacklog: process.env.CAIGUANG_MANUAL_CONTINUE === "1",
+    retryFailedOnly: process.env.CAIGUANG_RETRY_FAILED_ONLY === "1" };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--") continue;
@@ -198,6 +211,7 @@ function parseArguments(argv) {
     else if (value === "--max-accounts") result.maxAccounts = Number(argv[++index]);
     else if (value === "--first-latest") result.firstLatest = true;
     else if (value === "--continue-backlog") result.continueBacklog = true;
+    else if (value === "--retry-failed-only") result.retryFailedOnly = true;
     else throw new Error(`未知参数：${value}`);
   }
   return result;
@@ -207,7 +221,7 @@ function runXhs(args) {
   return execFileSync(xhsExecutable, args, {
     cwd: root,
     encoding: "utf8",
-    timeout: 120_000,
+    timeout: discoveryCommandTimeoutMs(),
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, XHS_CLI_CONFIG_DIR: cliConfig, XHS_CLI_DISABLE_BROWSER_COOKIE: process.env.XHS_CLI_DISABLE_BROWSER_COOKIE ?? "0", CAIGUANG_CHROME_FALLBACK: process.env.CAIGUANG_CHROME_FALLBACK ?? "1", NO_COLOR: "1" },
   }).trim();
@@ -236,8 +250,14 @@ export async function discover(options = {}) {
   const preferences = await readJson(preferencesPath).catch(() => null);
   const backlog = await readJson(backlogPath).catch(() => ({ schemaVersion: 1, accounts: {} }));
   backlog.accounts ||= {};
-  const selected = selectAccounts(pins.accounts, options.accountKeys, preferences?.pinnedAccountIds)
+  let selected = selectAccounts(pins.accounts, options.accountKeys, preferences?.pinnedAccountIds)
     .slice(0, Math.min(100, options.maxAccounts ?? 100));
+  if (options.retryFailedOnly) {
+    const retryKeys = retryableAccountKeys(queue.checkedAccounts);
+    // If an earlier phase failed before account discovery wrote its checkpoint,
+    // there is no reliable retry subset; fall back to the normal selected list.
+    if (retryKeys.size) selected = selected.filter((account) => retryKeys.has(account.searchKey));
+  }
   if (!selected.length) {
     if (options.accountKeys?.length) throw new Error("没有匹配的已验证账号埋点");
     return { ok: true, status: options.write ? "written" : "dry_run", checked: 0, added: 0, checks: [], tasks: [] };
@@ -246,20 +266,31 @@ export async function discover(options = {}) {
   if (!options.fixture && !chromeFallbackEnabled && !sessionAvailable()) return { ok: false, status: "login_required", checked: 0, added: 0, configDir: cliConfig };
 
   const fixture = options.fixture ? await readJson(path.resolve(root, options.fixture)) : null;
+  const invokeXhs = options.xhsRunner || runXhs;
   const checkedAt = new Date().toISOString();
   const checks = [];
   const pendingTasks = [];
   const ratePolicy = accountCapturePolicy(selected.length);
   const pacingEnabled = !options.fixture && process.env.CAIGUANG_DISABLE_ACCOUNT_PACING !== "1";
   let consecutiveSafetyErrors = 0;
+  let consecutiveTransientErrors = 0;
   let safetyStopped = false;
+  let transientStopped = false;
   for (const [accountIndex, account] of selected.entries()) {
+    if (options.write) {
+      const currentProgress = await readJson(captureProgressPath).catch(() => ({}));
+      const accountNumber = accountIndex + 1;
+      await atomicJson(captureProgressPath, { ...currentProgress, state: "running", phase: "discover_pinned_accounts",
+        label: `检查埋点账号 ${accountNumber}/${selected.length}：${account.displayName || account.searchKey}`,
+        percent: Math.min(70, 52 + Math.floor(accountIndex / Math.max(1, selected.length) * 18)),
+        accountNumber, accountCount: selected.length, updatedAt: new Date().toISOString() });
+    }
     try {
       const fixturePayload = fixture?.[account.searchKey];
-      const postsPayload = fixturePayload?.posts ?? fixturePayload?.notes ?? (fixturePayload ? fixturePayload : JSON.parse(runXhs(["user-posts", account.profileId, "--json"])));
+      const postsPayload = fixturePayload?.posts ?? fixturePayload?.notes ?? (fixturePayload ? fixturePayload : JSON.parse(invokeXhs(["user-posts", account.profileId, "--json"])));
       let identity = fixturePayload?.profile ? profileIdentity(fixturePayload.profile) : profileIdentityFromPosts(postsPayload);
       if (!fixturePayload && (!identity.displayName || !identity.profileId)) {
-        identity = profileIdentity(JSON.parse(runXhs(["user", account.profileId, "--json"])));
+        identity = profileIdentity(JSON.parse(invokeXhs(["user", account.profileId, "--json"])));
       }
       const identityError = assertIdentity(account, identity);
       if (identityError) {
@@ -277,7 +308,7 @@ export async function discover(options = {}) {
           // merge every discovered post until the saved baseline is proven.
           let deeperPosts = posts;
           if (!fixturePayload) {
-            const backlogPayload = JSON.parse(runXhs([
+            const backlogPayload = JSON.parse(invokeXhs([
               "user-posts", account.profileId, "--json",
               "--until-note", account.lastSeenPostId, "--max-pages", String(plan.scanDepth),
             ]));
@@ -322,17 +353,27 @@ export async function discover(options = {}) {
           captureDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) });
       }
       consecutiveSafetyErrors = 0;
+      consecutiveTransientErrors = 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const detail = message.split("\n").map((line) => line.trim()).filter(Boolean).at(-1) || "未知发现错误";
       checks.push({ accountKey: account.searchKey, checkedAt, status: "discovery_failed", latestPostId: account.lastSeenPostId,
         error: detail });
       consecutiveSafetyErrors = isSafetyStopError(detail) ? consecutiveSafetyErrors + 1 : 0;
+      consecutiveTransientErrors = isTransientBrowserFailure(detail) ? consecutiveTransientErrors + 1 : 0;
       if (consecutiveSafetyErrors >= 2) {
         safetyStopped = true;
         for (const deferred of selected.slice(accountIndex + 1)) {
           checks.push({ accountKey: deferred.searchKey, checkedAt, status: "deferred_safety_stop", latestPostId: deferred.lastSeenPostId,
             error: "连续出现登录或访问限制，已停止本轮检查以保护账号" });
+        }
+        break;
+      }
+      if (consecutiveTransientErrors >= 2) {
+        transientStopped = true;
+        for (const deferred of selected.slice(accountIndex + 1)) {
+          checks.push({ accountKey: deferred.searchKey, checkedAt, status: "deferred_transient_timeout", latestPostId: deferred.lastSeenPostId,
+            error: "连续两个账号响应超时，已停止本轮检查；已完成结果已保存，稍后只补抓未完成账号" });
         }
         break;
       }
@@ -356,9 +397,12 @@ export async function discover(options = {}) {
     await atomicJson(queuePath, liveQueue);
     await atomicJson(backlogPath, { ...backlog, schemaVersion: 1, updatedAt: checkedAt });
   }
+  const deferredStatuses = new Set(["deferred_safety_stop", "deferred_transient_timeout"]);
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",
-    checked: checks.filter((check) => check.status !== "deferred_safety_stop").length, added: pendingTasks.length,
-    ratePolicy, safetyStopped, checks, tasks: pendingTasks };
+    checked: checks.filter((check) => !deferredStatuses.has(check.status)).length, total: selected.length,
+    failed: checks.filter((check) => check.status === "discovery_failed").length,
+    deferred: checks.filter((check) => deferredStatuses.has(check.status)).length,
+    added: pendingTasks.length, ratePolicy, safetyStopped, transientStopped, checks, tasks: pendingTasks };
 }
 
 async function main() {

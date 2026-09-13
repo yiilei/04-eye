@@ -10,6 +10,9 @@ export function initialCaptureReady(state) {
 
 export function captureIsDue(preferences, state, now) {
   if (state.nextCaptureAttemptAt && Date.parse(state.nextCaptureAttemptAt) > (now.timestamp ?? Date.now())) return false;
+  // A failure that already exhausted today's bounded retry must wait for the
+  // next date. Otherwise an old lastCaptureDate makes launchd retry every minute.
+  if (state.lastCaptureStatus === "needs_attention" && state.captureFailureDate === now.date && !state.nextCaptureAttemptAt) return false;
   const yesterday = new Date(Date.parse(`${now.date}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
   const missedPreviousDay = state.lastCaptureDate && (state.lastCaptureDate < yesterday
     || (state.lastCaptureDate < now.date && state.lastCaptureStatus === "needs_attention"));

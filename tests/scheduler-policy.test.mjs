@@ -87,6 +87,13 @@ test("manual failure without an explicit cooldown does not create a background l
   assert.equal(captureIsDue(preferences, state, { ...now, time: "23:48" }), false);
 });
 
+test("a same-day exhausted failure does not retry every minute when yesterday was the last success", () => {
+  const preferences = { automaticCaptureEnabled: true, captureTime: "02:00" };
+  const state = { ...ready, lastCaptureDate: "2026-08-23", lastCaptureStatus: "needs_attention",
+    captureFailureDate: now.date, captureFailuresToday: 2, nextCaptureAttemptAt: null };
+  assert.equal(captureIsDue(preferences, state, { ...now, time: "17:29" }), false);
+});
+
 test("a failed run waits until the next date after its one recovery attempt is exhausted", () => {
   const preferences = { automaticCaptureEnabled: true, captureTime: "08:00" };
   const state = { ...ready, lastCaptureStatus: "needs_attention", captureFailureDate: "2026-08-23", nextCaptureAttemptAt: null };

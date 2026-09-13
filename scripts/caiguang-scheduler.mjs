@@ -11,6 +11,7 @@ import { captureIsDue, initialCaptureReady, pushIsDue, schedulerEnabled } from "
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "./capture-time-policy.mjs";
 import { schedulerInstallationIsCurrent } from "./scheduler-install-policy.mjs";
 import { updateCheckIsDue } from "./update-check-policy.mjs";
+import { terminateProcessTree, waitForManagedChild } from "./process-tree.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || currentDataHome);
@@ -123,13 +124,25 @@ async function recoverInterruptedCapture(state) {
   state.lastCaptureStatus = "needs_attention";
   state.lastCaptureIssue = "browser_interrupted";
   const recoveredAt = clock();
-  state.captureFailuresToday = state.captureFailureDate === recoveredAt.date ? Number(state.captureFailuresToday || 0) + 1 : 1;
+  state.captureFailuresToday = state.captureFailureDate === recoveredAt.date ? Math.min(2, Number(state.captureFailuresToday || 0) + 1) : 1;
   state.captureFailureDate = recoveredAt.date;
   // Recover once after a short cooldown; if that fails, run again on the next
   // calendar day rather than looping for the rest of today.
   state.nextCaptureAttemptAt = new Date(Date.now() + 30 * 60_000).toISOString();
   await atomicJson(statePath, state);
   return state;
+}
+
+async function activeCaptureOwner() {
+  const owner = Number((await readFile(runLockPath, "utf8").catch(() => "")).trim());
+  if (!Number.isInteger(owner) || owner <= 1) return null;
+  try {
+    process.kill(owner, 0);
+    const command = spawnSync("/bin/ps", ["-p", String(owner), "-o", "command="], { encoding: "utf8" }).stdout?.trim() || "";
+    return /(?:^|\s|\/)daily-auto\.mjs(?:\s|$)/.test(command) ? { owner, command } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function runCapture(reason = "scheduled") {
@@ -147,21 +160,32 @@ async function runCapture(reason = "scheduled") {
   // Keep an active job awake on battery too; never keep the display on.
   const awake = spawn("/usr/bin/caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore" });
   let status = 1;
+  let timedOut = false;
+  let interruptedSignal = null;
+  let externalTermination;
   try {
     const child = spawn(wrapper, ["auto"], {
       cwd: projectRoot,
       env: { ...process.env, SHARP_EYE_HOME: appData, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0",
-        CAIGUANG_CAPTURE_REASON: reason },
+        CAIGUANG_CAPTURE_REASON: reason,
+        CAIGUANG_RETRY_FAILED_ONLY: reason === "recovery" || process.env.CAIGUANG_RETRY_FAILED_ONLY === "1" ? "1" : "0" },
       stdio: ["ignore", logHandle.fd, logHandle.fd],
+      detached: true,
     });
-    status = await new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        child.kill("SIGTERM");
-        resolve(124);
-      }, 60 * 60 * 1000);
-      child.once("error", () => { clearTimeout(timeout); resolve(1); });
-      child.once("exit", (code) => { clearTimeout(timeout); resolve(code ?? 1); });
-    });
+    const forwardSignal = (signal) => {
+      interruptedSignal = signal;
+      externalTermination ||= terminateProcessTree(child.pid, { signal, graceMs: 5_000 }).catch(() => {});
+    };
+    const onTerm = () => forwardSignal("SIGTERM");
+    const onInt = () => forwardSignal("SIGINT");
+    process.once("SIGTERM", onTerm);
+    process.once("SIGINT", onInt);
+    const result = await waitForManagedChild(child, { timeoutMs: 45 * 60_000, graceMs: 5_000 });
+    if (externalTermination) await externalTermination;
+    process.off("SIGTERM", onTerm);
+    process.off("SIGINT", onInt);
+    timedOut = result.timedOut;
+    status = timedOut ? 124 : interruptedSignal ? 130 : result.error ? 1 : result.code ?? 1;
   } finally {
     awake.kill();
     await logHandle.close();
@@ -170,12 +194,23 @@ async function runCapture(reason = "scheduled") {
   const markerIndex = completeLog.lastIndexOf(runMarker);
   const output = markerIndex >= 0 ? completeLog.slice(markerIndex) : completeLog;
   const ok = status === 0;
+  const alreadyRunning = status === 2 && /"status":"already_running"|已有抓取任务正在运行/u.test(output);
   const loginRequired = /login_required|creator_login_required|登录失效|未登录|需要重新登录|验证码/u.test(output);
   const state = await readJson(statePath, {});
+  if (alreadyRunning) return { ok: false, skipped: true, reason: "already_running", output };
+  if (timedOut || interruptedSignal) {
+    const progress = await readJson(progressPath, {});
+    const failedAt = new Date().toISOString();
+    await atomicJson(progressPath, { ...progress, state: "failed", phase: timedOut ? "timeout" : "interrupted",
+      label: timedOut
+        ? "本轮抓取已到时间上限，后台进程已全部停止；已完成结果已保存，可稍后继续补抓"
+        : "抓取已停止；已完成结果已保存，可稍后继续补抓",
+      updatedAt: failedAt, failedAt });
+  }
   state.lastCaptureAt = new Date().toISOString();
   state.lastCaptureStatus = ok ? "completed" : "needs_attention";
   state.lastCaptureReason = reason;
-  state.lastCaptureIssue = loginRequired ? "login_required" : null;
+  state.lastCaptureIssue = loginRequired ? "login_required" : timedOut ? "capture_timeout" : interruptedSignal ? "capture_interrupted" : null;
   const failureDate = now.date;
   if (ok) {
     state.nextCaptureAttemptAt = null;
@@ -190,7 +225,7 @@ async function runCapture(reason = "scheduled") {
     state.captureFailuresToday = 0;
     state.captureFailureDate = failureDate;
   } else {
-    const failuresToday = state.captureFailureDate === failureDate ? Number(state.captureFailuresToday || 0) + 1 : 1;
+    const failuresToday = state.captureFailureDate === failureDate ? Math.min(2, Number(state.captureFailuresToday || 0) + 1) : 1;
     state.captureFailureDate = failureDate;
     state.captureFailuresToday = failuresToday;
     // One unattended recovery attempt is enough. If it also fails, wait for
@@ -237,8 +272,14 @@ async function tick() {
   await ensureWakeLock();
   console.error(`[scheduler] tick:clock ${now.date} ${now.time} schedule=${scheduled.time}`);
   if (captureIsDue(preferences, state, now)) {
+    const active = await activeCaptureOwner();
+    if (active) {
+      console.error(`[scheduler] tick:capture-active pid=${active.owner}`);
+      return;
+    }
     console.error("[scheduler] tick:capture-due");
-    await runCapture("scheduled");
+    const sameDayRecovery = state.captureFailureDate === now.date && Boolean(state.nextCaptureAttemptAt);
+    await runCapture(sameDayRecovery ? "recovery" : "scheduled");
     console.error("[scheduler] tick:capture-finished");
   }
   const latest = await readJson(statePath, state);

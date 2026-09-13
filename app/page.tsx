@@ -799,11 +799,14 @@ export default function Home() {
     const timer = window.setInterval(() => void checkCaptureIssue(), 10_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [desktopAppMode, onboardingPreview, openRecoveryOnboarding]);
-  const startManualCapture = useCallback(async (firstCapture = false) => {
+  const startManualCapture = useCallback(async (firstCapture = false, retryFailedOnly = false) => {
     if (!desktopAppMode || manualCapture.state === "running") return;
     setManualCapture({ state: "running", message: "准备本地抓取", percent: 3, phase: "starting" });
     try {
-      const response = await fetch(`/api/desktop/capture-now${firstCapture ? "?initial=1" : ""}`, { method: "POST" });
+      const parameters = new URLSearchParams();
+      if (firstCapture) parameters.set("initial", "1");
+      if (retryFailedOnly) parameters.set("retry", "1");
+      const response = await fetch(`/api/desktop/capture-now${parameters.size ? `?${parameters}` : ""}`, { method: "POST" });
       const payload = await response.json() as { error?: string; firstCapture?: boolean; startedAt?: string | null; estimateMinutes?: CaptureEstimate | null };
       if (!response.ok) throw new Error(payload.error || "无法启动本地抓取");
       setManualCapture((current) => ({ ...current, firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes }));
@@ -2610,7 +2613,7 @@ export default function Home() {
                 </span>
                 {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
                 {manualCapture.state === "completed" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
-                {manualCapture.state === "failed" && <button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>确定</button>}
+                {manualCapture.state === "failed" && <span className="capture-now-message-actions"><button type="button" className="capture-now-message-retry" onClick={() => void startManualCapture(false, true)}>继续补抓</button><button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>稍后</button></span>}
               </span>}
             </div>
           </div> : <Fragment key={current.id}>
@@ -2664,7 +2667,7 @@ export default function Home() {
                 </span>
                 {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
                 {manualCapture.state === "completed" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
-                {manualCapture.state === "failed" && <button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>确定</button>}
+                {manualCapture.state === "failed" && <span className="capture-now-message-actions"><button type="button" className="capture-now-message-retry" onClick={() => void startManualCapture(false, true)}>继续补抓</button><button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>稍后</button></span>}
               </span>}
             </div>
             <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo}
