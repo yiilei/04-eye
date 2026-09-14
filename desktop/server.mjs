@@ -44,6 +44,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
   const trashIndexPath = path.join(dataRoot, "data", "review-trash.json");
   const reviewOperationPath = path.join(dataRoot, "data", "review-operation.json");
   const preferencesPath = path.join(dataRoot, "data", "user-preferences.json");
+  const accountPinsPath = path.join(dataRoot, "data", "xhs-account-pins.json");
   const pendingPinsPath = path.join(dataRoot, "data", "xhs-pending-pins.json");
   const schedulerStatePath = path.join(dataRoot, "data", "scheduler-state.json");
   const captureProgressPath = path.join(dataRoot, "data", "capture-progress.json");
@@ -430,10 +431,14 @@ export async function startDesktopServer(appRoot, userDataRoot) {
       }
       if (pathname === "/api/pending-pins" && request.method === "POST") {
         const payload = await request.json();
+        const verifiedPins = await readJson(accountPinsPath, { accounts: [] });
+        const verifiedProfileIds = new Set((verifiedPins.accounts || [])
+          .filter((account) => account.status === "verified").map((account) => String(account.profileId || "")));
         const accounts = Array.isArray(payload?.accounts) ? payload.accounts.filter((account) =>
           account && typeof account.profileId === "string"
           && typeof account.profileUrl === "string"
-          && account.status === "pending_verification") : undefined;
+          && account.status === "pending_verification"
+          && !verifiedProfileIds.has(account.profileId)) : undefined;
         if (!accounts) {
           const response = json({ ok: false, error: "invalid accounts" }, 400);
           outgoing.statusCode = response.status;

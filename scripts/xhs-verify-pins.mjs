@@ -4,13 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts } from "./xhs-discover.mjs";
+import { latestPostOnly, mergeDiscoveredTasks, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts } from "./xhs-discover.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appData = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
 const pinsPath = path.join(appData, "data", "xhs-account-pins.json");
 const appPendingPath = path.join(appData, "data", "xhs-pending-pins.json");
 const preferencesPath = path.join(appData, "data", "user-preferences.json");
+const queuePath = path.join(appData, "data", "xhs-capture-queue.json");
+const starterPinsPath = path.join(root, "data", "xhs-account-pins.json");
 const xhsExecutable = path.join(root, "vendor", "xhs-cli", ".venv", "bin", "xhs");
 const cliConfig = path.join(appData, "xhs-cli");
 
@@ -45,6 +47,36 @@ function newestPostId(posts) {
   return [...posts].sort((left, right) => postIdTimestamp(right.id) - postIdTimestamp(left.id))[0]?.id || posts[0]?.id || "";
 }
 
+function firstCapturePost(posts) {
+  return latestPostOnly(posts).newPosts[0]
+    || [...posts].sort((left, right) => postIdTimestamp(right.id) - postIdTimestamp(left.id))[0];
+}
+
+function slugFor(account, post) {
+  const safeAccount = account.xiaohongshuId.replace(/[^a-zA-Z0-9_-]+/g, "-");
+  return `xhs-${safeAccount}-${post.id}`;
+}
+
+async function persistVerifiedManualAccounts(pins, verifiedRecords, now) {
+  const preferences = await readJson(preferencesPath, null);
+  if (!preferences) return;
+  const starterPins = await readJson(starterPinsPath, { accounts: [] });
+  const starterProfileIds = new Set((starterPins.accounts || []).map((account) => profileIdFrom(account)).filter(Boolean));
+  const manualAccounts = new Map((preferences.manualPinAccounts || [])
+    .map((account) => [profileIdFrom(account), account]).filter(([profileId]) => profileId));
+  for (const record of pins.accounts || []) {
+    const profileId = profileIdFrom(record);
+    if (record.status === "verified" && profileId && !starterProfileIds.has(profileId)) {
+      manualAccounts.set(profileId, { ...manualAccounts.get(profileId), ...record });
+    }
+  }
+  for (const [profileId, record] of verifiedRecords) manualAccounts.set(profileId, { ...manualAccounts.get(profileId), ...record });
+  preferences.pinnedAccountIds = [...new Set([...(preferences.pinnedAccountIds || []), ...verifiedRecords.keys()])];
+  preferences.manualPinAccounts = [...manualAccounts.values()];
+  preferences.updatedAt = now;
+  await atomicJson(preferencesPath, preferences);
+}
+
 function mergeIdentity(primary, fallback, profileId) {
   return {
     displayName: primary.displayName || fallback.displayName,
@@ -72,25 +104,31 @@ export async function verifyPendingPins(options = {}) {
     const profileId = profileIdFrom(account);
     if (profileId && account.status === "pending_verification") pendingById.set(profileId, { ...account, profileId });
   }
-  if (!pendingById.size) return { ok: true, checked: 0, verified: 0, failed: 0, results: [] };
+  if (!pendingById.size) {
+    if (options.write) await persistVerifiedManualAccounts(pins, new Map(), new Date().toISOString());
+    return { ok: true, checked: 0, verified: 0, failed: 0, queued: 0, results: [] };
+  }
 
-  try { runXhs(["status"]); } catch {
+  const invokeXhs = options.xhsRunner || runXhs;
+  try { invokeXhs(["status"]); } catch {
     return { ok: false, status: "login_required", checked: 0, verified: 0, failed: pendingById.size, results: [] };
   }
 
   const now = new Date().toISOString();
   const results = [];
   const verifiedIds = new Set();
+  const verifiedRecords = new Map();
+  const firstCaptureTasks = [];
   for (const [profileId, pending] of pendingById) {
     try {
-      const postsPayload = JSON.parse(runXhs(["user-posts", profileId, "--json"]));
+      const postsPayload = JSON.parse(invokeXhs(["user-posts", profileId, "--json"]));
       const postsIdentity = profileIdentityFromPosts(postsPayload);
       let profilePayload = {};
       const postsAreEnough = postsIdentity.displayName
         && postsIdentity.profileId === profileId
         && usableExpected(pending.xiaohongshuId);
       if (!postsAreEnough) {
-        try { profilePayload = JSON.parse(runXhs(["user", profileId, "--json"])); } catch { /* posts provide a fixed-profile fallback */ }
+        try { profilePayload = JSON.parse(invokeXhs(["user", profileId, "--json"])); } catch { /* posts provide a fixed-profile fallback */ }
       }
       const pendingIdentity = {
         displayName: usableExpected(pending.displayName),
@@ -101,7 +139,8 @@ export async function verifyPendingPins(options = {}) {
       const identityError = validateIdentity(pending, identity, profileId);
       if (identityError) throw new Error(identityError);
       const posts = normalizePosts(postsPayload, { searchKey: identity.xiaohongshuId });
-      const lastSeenPostId = newestPostId(posts);
+      const firstPost = firstCapturePost(posts);
+      const lastSeenPostId = firstPost?.id || newestPostId(posts);
       if (!lastSeenPostId) throw new Error("账号暂无可作为基线的公开帖子");
 
       const record = {
@@ -119,8 +158,14 @@ export async function verifyPendingPins(options = {}) {
       const existingIndex = pins.accounts.findIndex((account) => account.profileId === profileId);
       if (existingIndex >= 0) pins.accounts[existingIndex] = { ...pins.accounts[existingIndex], ...record };
       else pins.accounts.push(record);
+      verifiedRecords.set(profileId, record);
+      firstCaptureTasks.push({ id: `note-${firstPost.id}`, type: "note", status: "pending", accountKey: record.searchKey,
+        title: firstPost.title || `${record.displayName} 最新帖子`, slug: slugFor(record, firstPost), sourceUrl: firstPost.sourceUrl,
+        captureDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()),
+        firstCaptureForPin: true });
       verifiedIds.add(profileId);
-      results.push({ profileId, status: "verified", displayName: identity.displayName, xiaohongshuId: identity.xiaohongshuId, lastSeenPostId });
+      results.push({ profileId, status: "verified", displayName: identity.displayName, xiaohongshuId: identity.xiaohongshuId,
+        lastSeenPostId, queuedPostId: firstPost.id });
     } catch (error) {
       const message = error instanceof Error ? error.message.split("\n").filter(Boolean).at(-1) : String(error);
       pendingById.set(profileId, { ...pending, lastVerificationAttemptAt: now, verificationError: message });
@@ -132,20 +177,16 @@ export async function verifyPendingPins(options = {}) {
   if (options.write) {
     pins.updatedAt = now;
     await atomicJson(pinsPath, pins);
+    const queue = await readJson(queuePath, { version: 1, checkedAccounts: [], tasks: [] });
+    queue.tasks = mergeDiscoveredTasks(queue.tasks || [], firstCaptureTasks);
+    await atomicJson(queuePath, queue);
     const pendingDocument = { schemaVersion: 1, updatedAt: now, accounts: remaining };
     await atomicJson(appPendingPath, pendingDocument);
-    const preferences = await readJson(preferencesPath, null);
-    if (preferences) {
-      preferences.pinnedAccountIds = [...new Set([...(preferences.pinnedAccountIds || []), ...verifiedIds])];
-      preferences.manualPinAccounts = (preferences.manualPinAccounts || [])
-        .filter((account) => !verifiedIds.has(profileIdFrom(account)));
-      preferences.updatedAt = now;
-      await atomicJson(preferencesPath, preferences);
-    }
+    await persistVerifiedManualAccounts(pins, verifiedRecords, now);
   }
   const failed = results.filter((item) => item.status !== "verified").length;
   return { ok: failed === 0, status: options.write ? "written" : "dry_run", checked: results.length,
-    verified: results.length - failed, failed, results };
+    verified: results.length - failed, failed, queued: firstCaptureTasks.length, results };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

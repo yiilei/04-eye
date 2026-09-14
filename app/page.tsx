@@ -775,6 +775,14 @@ export default function Home() {
         setManualCapture({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting", firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes });
       } else if (manualCapture.state === "running") {
         const completed = payload.exitCode === 0 || payload.state?.lastCaptureStatus === "completed";
+        if (completed) {
+          void fetch("/api/desktop/preferences", { cache: "no-store" }).then(async (preferenceResponse) => {
+            if (!preferenceResponse.ok) return;
+            const preferences = await preferenceResponse.json() as { pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[] };
+            if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
+            if (Array.isArray(preferences.manualPinAccounts)) setManualPinAccounts(preferences.manualPinAccounts);
+          }).catch(() => undefined);
+        }
         setManualCapture(completed
           ? { state: "completed", message: "抓取完成，批阅列表已刷新", percent: 100, phase: "completed" }
           : { state: "failed", message: payload.progress?.label || "抓取需要处理登录或页面异常", percent: payload.progress?.percent ?? 0, phase: "failed" });
@@ -2111,7 +2119,7 @@ export default function Home() {
       }
       setPinnedAccountIds((ids) => ids.includes(profileId) ? ids : [...ids, profileId]);
       setPinProfileUrl("");
-      setPinLinkMessage(existing ? `已埋点：${existing.displayName}` : "已加入待验证，今晚统一核验");
+      setPinLinkMessage(existing ? `已埋点：${existing.displayName}` : "已加入待验证，验证后会自动抓取最新一篇");
     } catch (error) {
       setPinLinkMessage(error instanceof Error && error.message !== "host" && error.message !== "profile"
         ? "暂时无法读取账号名称和头像，请稍后重试"

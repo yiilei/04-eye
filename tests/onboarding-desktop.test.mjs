@@ -226,11 +226,12 @@ test("restart preserves reviewed media and the next-day capture cleans bridge st
 });
 
 test("onboarding stays usable in compact windows and its public assets resolve", async () => {
-  const [css, page, layout, pendingRoute] = await Promise.all([
+  const [css, page, layout, pendingRoute, desktopServer] = await Promise.all([
     readFile(new URL("app/globals.css", root), "utf8"),
     readFile(new URL("app/page.tsx", root), "utf8"),
     readFile(new URL("app/layout.tsx", root), "utf8"),
     readFile(new URL("app/api/pending-pins/route.ts", root), "utf8"),
+    readFile(new URL("desktop/server.mjs", root), "utf8"),
   ]);
 
   assert.match(css, /\.first-run-setup \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow-y: auto/);
@@ -243,6 +244,8 @@ test("onboarding stays usable in compact windows and its public assets resolve",
   assert.match(pendingRoute, /process\.env\.INIT_CWD \|\| process\.env\.PWD/);
   assert.match(pendingRoute, /mkdir\(path\.dirname\(pendingPath\), \{ recursive: true \}\)/);
   assert.match(page, /if \(!hydrated \|\| !desktopAppMode\) return;[\s\S]*fetch\("\/api\/pending-pins"/);
+  assert.match(desktopServer, /verifiedProfileIds[\s\S]*!verifiedProfileIds\.has\(account\.profileId\)/);
+  assert.match(page, /\u9a8c\u8bc1\u540e\u4f1a\u81ea\u52a8\u6293\u53d6\u6700\u65b0\u4e00\u7bc7/);
 });
 
 test("desktop packager replaces rather than merges the previous app payload", async () => {
