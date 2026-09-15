@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { estimateFirstCaptureMinutes, isFirstCaptureRequest } from "../desktop/server.mjs";
+import { captureRetryState, estimateFirstCaptureMinutes, isFirstCaptureRequest } from "../desktop/server.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -287,4 +287,18 @@ test("capture timeout recovery is explicit and retries only unfinished accounts"
   assert.match(discovery, /deferred_transient_timeout/);
   assert.match(discovery, /45_000/);
   assert.match(auto, /CAIGUANG_RETRY_FAILED_ONLY/);
+  assert.match(auto, /failedPhase/);
+  assert.match(page, /retryAvailable/);
+  assert.match(server, /lastManualRetryFailureKey/);
+});
+
+test("the same failed capture offers at most one continuation", () => {
+  const progress = { state: "failed", failedAt: "2026-09-15T01:00:00.000Z", failedPhase: "discover_pinned_accounts" };
+  const first = captureRetryState(progress, {});
+  assert.equal(first.retryAvailable, true);
+  assert.equal(first.retryPhase, "discover_pinned_accounts");
+  assert.deepEqual(first.retryPhases, ["discover_pinned_accounts"]);
+  assert.equal(captureRetryState(progress, { lastManualRetryFailureKey: first.retryFailureKey }).retryAvailable, false);
+  assert.equal(captureRetryState({ ...progress, failedAt: "2026-09-15T02:00:00.000Z" }, { lastManualRetryFailureKey: first.retryFailureKey }).retryAvailable, true);
+  assert.equal(captureRetryState({ state: "completed" }, {}).retryAvailable, false);
 });

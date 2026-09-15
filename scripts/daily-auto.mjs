@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { acquireProcessLock } from "./process-lock.mjs";
 import { isTransientBrowserFailure, shouldRetryDiscovery } from "./browser-recovery-policy.mjs";
+import { selectDailyRetrySteps } from "./daily-retry-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -34,7 +35,7 @@ let creatorH5CaptureEnabled = true;
 try {
   creatorH5CaptureEnabled = JSON.parse(readFileSync(preferencesPath, "utf8")).creatorH5CaptureEnabled === true;
 } catch { /* fresh installs capture creator-center H5 by default */ }
-const steps = [
+const allSteps = [
   ["cleanup_reviewed_media", "清理已处理的本地中转素材", 6, [path.join(root, "scripts", "review-cache-cleanup.mjs")]],
   ["verify_pending_pins", "验证待验证账号", 12, [path.join(root, "scripts", "xhs-verify-pins.mjs"), "--write"]],
   ...(creatorH5CaptureEnabled
@@ -44,12 +45,18 @@ const steps = [
     ...(process.env.CAIGUANG_RETRY_FAILED_ONLY === "1" ? ["--retry-failed-only"] : [])]],
   ["capture_validate_report", "抓取素材与文案并校验", 72, [path.join(root, "scripts", "daily-pipeline.mjs")]],
 ];
+const retryRequested = process.env.CAIGUANG_RETRY_FAILED_ONLY === "1";
+const retryPhases = String(process.env.CAIGUANG_RETRY_PHASES || process.env.CAIGUANG_RETRY_PHASE || "")
+  .split(",").map((name) => name.trim()).filter(Boolean);
+const retryOfFailureKey = String(process.env.CAIGUANG_RETRY_FAILURE_KEY || "");
+const steps = selectDailyRetrySteps(allSteps, retryRequested, retryPhases);
 
 const startedAt = new Date().toISOString();
 const writeProgress = (value) => {
   mkdirSync(path.dirname(progressPath), { recursive: true });
   const temporary = `${progressPath}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ startedAt, updatedAt: new Date().toISOString(), ...value }, null, 2)}\n`);
+  writeFileSync(temporary, `${JSON.stringify({ startedAt, updatedAt: new Date().toISOString(),
+    ...(retryOfFailureKey ? { retryOfFailureKey } : {}), ...value }, null, 2)}\n`);
   renameSync(temporary, progressPath);
 };
 
@@ -94,6 +101,12 @@ const discoveryFailed = results.some((item) => {
   try { return JSON.parse(item.summary).ok === false; } catch { return true; }
 });
 const ok = !failedStep && !pipelineHardFailure && !discoveryFailed;
+const failedPhases = [...new Set([
+  ...results.filter((item) => !item.ok).map((item) => item.name),
+  ...(discoveryFailed ? ["discover_pinned_accounts"] : []),
+  ...(pipelineHardFailure ? ["capture_validate_report"] : []),
+])];
+const failedPhase = failedPhases[0] || "capture_validate_report";
 let fallbackCount = 0;
 try {
   const queue = JSON.parse(readFileSync(queuePath, "utf8"));
@@ -109,7 +122,7 @@ writeProgress(ok
         ? `已抓取 ${pipelineSummary.completed || 0} 项，其余项目将在下次正式任务中检查`
         : fallbackCount ? `抓取完成，${fallbackCount} 项已保留兜底说明，不会在今天反复访问` : "抓取完成，批阅列表已刷新",
     percent: 100, phaseIndex: steps.length, phaseCount: steps.length, completedAt: new Date().toISOString() }
-  : { state: "failed", phase: "failed", label: failedStep
+  : { state: "failed", phase: "failed", failedPhase, failedPhases, label: failedStep
       ? isTransientBrowserFailure(failedStep.output)
         ? "浏览器连续两次未能启动，任务已保留，稍后自动补抓"
         : `${failedStep.label || "抓取步骤"}未完成，请查看日报`

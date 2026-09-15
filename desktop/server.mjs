@@ -32,6 +32,22 @@ export function estimateFirstCaptureMinutes(accountCount, creatorH5Enabled = tru
   return { minimum, maximum: Math.max(minimum + 2, Math.ceil(accounts * 0.35) + 1 + creatorMaximum) };
 }
 
+export function captureRetryState(progress = {}, schedulerState = {}) {
+  if (progress.state !== "failed") return { retryAvailable: false, retryFailureKey: null, retryPhase: "", retryPhases: [] };
+  const retryPhases = (Array.isArray(progress.failedPhases) ? progress.failedPhases : [progress.failedPhase])
+    .map((phase) => String(phase || "")).filter(Boolean);
+  const retryFailureKey = String(progress.retryOfFailureKey || [
+    progress.failedAt || progress.updatedAt || progress.startedAt || "unknown",
+    progress.failedPhase || progress.phase || "failed",
+  ].join("|"));
+  return {
+    retryAvailable: schedulerState.lastManualRetryFailureKey !== retryFailureKey,
+    retryFailureKey,
+    retryPhase: retryPhases[0] || "",
+    retryPhases,
+  };
+}
+
 export async function startDesktopServer(appRoot, userDataRoot) {
   const clientRoot = path.join(appRoot, "dist", "client");
   const cssRoot = path.join(clientRoot, "_next", "static", "css");
@@ -343,6 +359,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
      if (pathname === "/api/desktop/capture-now" && request.method === "GET") {
        const state = await readJson(schedulerStatePath, {});
        const progress = await readJson(captureProgressPath, {});
+       const retry = captureRetryState(progress, state);
        const response = json({
           ok: true,
           running: Boolean(captureProcess),
@@ -352,6 +369,7 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           estimateMinutes: captureEstimateMinutes,
           state,
           progress,
+          ...retry,
         });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
@@ -368,6 +386,19 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           outgoing.statusCode = response.status;
           response.headers.forEach((value, key) => outgoing.setHeader(key, value));
           return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        const progress = await readJson(captureProgressPath, {});
+        const retry = captureRetryState(progress, schedulerState);
+        if (retryFailedOnly && !retry.retryAvailable) {
+          const response = json({ ok: false, error: "本次补抓已经尝试过。请先处理提示的问题，再点击手动抓取开始新任务。", retryAvailable: false }, 409);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        if (retryFailedOnly) {
+          await atomicJson(schedulerStatePath, { ...schedulerState,
+            lastManualRetryFailureKey: retry.retryFailureKey,
+            lastManualRetryAt: new Date().toISOString() });
         }
         try {
           await access(installedScheduler);
@@ -391,7 +422,10 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           cwd: runtimeRoot,
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SHARP_EYE_HOME: dataRoot,
             CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0", CAIGUANG_MANUAL_CONTINUE: "1",
-            CAIGUANG_RETRY_FAILED_ONLY: retryFailedOnly ? "1" : "0" },
+            CAIGUANG_RETRY_FAILED_ONLY: retryFailedOnly ? "1" : "0",
+            CAIGUANG_RETRY_PHASE: retryFailedOnly ? retry.retryPhase : "",
+            CAIGUANG_RETRY_PHASES: retryFailedOnly ? retry.retryPhases.join(",") : "",
+            CAIGUANG_RETRY_FAILURE_KEY: retryFailedOnly ? retry.retryFailureKey || "" : "" },
           stdio: "ignore",
         });
         captureProcess = child;

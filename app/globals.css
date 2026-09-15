@@ -564,9 +564,9 @@ kbd { color: rgba(255,255,255,.7); background: rgba(255,255,255,.07); border-col
 .capture-now-message-dismiss:hover { background: rgba(255,255,255,.14); opacity: 1; }
 .capture-now-message-confirm { flex: 0 0 auto; padding: 2px 12px; color: #fff; background: rgba(255,80,80,.32); border: 1px solid rgba(255,80,80,.5); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
 .capture-now-message-confirm:hover { background: rgba(255,80,80,.5); }
-.capture-now-message.failed { width: min(360px, calc(100cqw - 22px)); background: rgba(255,80,80,.12); border-color: rgba(255,80,80,.3); }
+.capture-now-message.failed { grid-template-columns: minmax(0, 1fr); width: min(360px, calc(100cqw - 22px)); background: rgba(255,80,80,.12); border-color: rgba(255,80,80,.3); }
 .capture-now-message.failed .capture-now-message-copy b { display: -webkit-box; overflow: hidden; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.capture-now-message-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+.capture-now-message-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; }
 .capture-now-message-retry { padding: 3px 8px; color: #241f00; background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; font-size: 9px; font-weight: 700; cursor: pointer; }
 .capture-now-message-retry:hover { filter: brightness(1.08); }
 @keyframes capture-hand-grab { 0%,100% { transform: translateY(0) scale(1); } 38% { transform: translateY(1px) rotate(-5deg) scaleX(.73) scaleY(.88); } 62% { transform: translateY(-1px) rotate(3deg) scaleX(.9) scaleY(.95); } }

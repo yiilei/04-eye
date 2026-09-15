@@ -168,7 +168,10 @@ async function runCapture(reason = "scheduled") {
       cwd: projectRoot,
       env: { ...process.env, SHARP_EYE_HOME: appData, CAIGUANG_FIRST_CAPTURE: firstCapture ? "1" : "0",
         CAIGUANG_CAPTURE_REASON: reason,
-        CAIGUANG_RETRY_FAILED_ONLY: reason === "recovery" || process.env.CAIGUANG_RETRY_FAILED_ONLY === "1" ? "1" : "0" },
+        CAIGUANG_RETRY_FAILED_ONLY: reason === "recovery" || process.env.CAIGUANG_RETRY_FAILED_ONLY === "1" ? "1" : "0",
+        CAIGUANG_RETRY_PHASE: process.env.CAIGUANG_RETRY_PHASE || "",
+        CAIGUANG_RETRY_PHASES: process.env.CAIGUANG_RETRY_PHASES || "",
+        CAIGUANG_RETRY_FAILURE_KEY: process.env.CAIGUANG_RETRY_FAILURE_KEY || "" },
       stdio: ["ignore", logHandle.fd, logHandle.fd],
       detached: true,
     });

@@ -12,7 +12,7 @@ import { positionsForStableMedia, singleStateKey, stableMediaId, stableMediaIdsF
 type Decision = "kept" | "rejected";
 type QualityState = "checking" | "passed" | "failed";
 type ColorTheme = "dark" | "light";
-type CaptureProgress = { state?: string; phase?: string; label?: string; percent?: number; phaseIndex?: number; phaseCount?: number };
+type CaptureProgress = { state?: string; phase?: string; failedPhase?: string; label?: string; percent?: number; phaseIndex?: number; phaseCount?: number };
 type CaptureEstimate = { minimum?: number; maximum?: number };
 type HistoryEntry =
   | { kind: "decision"; id: string; previous?: Decision; decision: Decision; index: number }
@@ -642,7 +642,7 @@ export default function Home() {
     };
   }>();
   const [updateStatus, setUpdateStatus] = useState<{ state: "idle" | "checking" | "available" | "latest" | "unavailable" | "downloading" | "installing"; latestVersion?: string; releaseUrl?: string | null; downloadUrl?: string | null; message?: string; percent?: number }>({ state: "idle" });
-  const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string; firstCapture?: boolean; startedAt?: string | null; estimateMinutes?: CaptureEstimate | null }>({ state: "idle", message: "", percent: 0, phase: "" });
+  const [manualCapture, setManualCapture] = useState<{ state: "idle" | "running" | "completed" | "failed"; message: string; percent: number; phase: string; firstCapture?: boolean; startedAt?: string | null; estimateMinutes?: CaptureEstimate | null; retryAvailable?: boolean }>({ state: "idle", message: "", percent: 0, phase: "" });
   const [desktopTime, setDesktopTime] = useState("");
   const [windowOffset, setWindowOffset] = useState({ x: 0, y: 0 });
   const [windowSize, setWindowSize] = useState<{ width: number; height: number }>();
@@ -767,12 +767,13 @@ export default function Home() {
         exitCode?: number | null;
         state?: { lastCaptureStatus?: string; lastCaptureIssue?: string | null };
         progress?: CaptureProgress;
+        retryAvailable?: boolean;
       };
       if (payload.state?.lastCaptureIssue === "login_required") {
         openRecoveryOnboarding("xhs");
       }
       if (payload.running) {
-        setManualCapture({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting", firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes });
+        setManualCapture((current) => ({ state: "running", message: payload.progress?.label || "正在本地抓取…", percent: payload.progress?.percent ?? 3, phase: payload.progress?.phase || "starting", firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes, retryAvailable: current.retryAvailable }));
       } else if (manualCapture.state === "running") {
         const completed = payload.exitCode === 0 || payload.state?.lastCaptureStatus === "completed";
         if (completed) {
@@ -785,10 +786,10 @@ export default function Home() {
         }
         setManualCapture(completed
           ? { state: "completed", message: "抓取完成，批阅列表已刷新", percent: 100, phase: "completed" }
-          : { state: "failed", message: payload.progress?.label || "抓取需要处理登录或页面异常", percent: payload.progress?.percent ?? 0, phase: "failed" });
+          : { state: "failed", message: payload.progress?.label || "抓取需要处理登录或页面异常", percent: payload.progress?.percent ?? 0, phase: "failed", retryAvailable: payload.retryAvailable });
       }
     } catch (error) {
-      if (manualCapture.state === "running") setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "本地抓取失败", percent: manualCapture.percent, phase: "failed" });
+      if (manualCapture.state === "running") setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "本地抓取失败", percent: manualCapture.percent, phase: "failed", retryAvailable: false });
     }
   }, [desktopAppMode, manualCapture.percent, manualCapture.state, openRecoveryOnboarding]);
 
@@ -809,7 +810,7 @@ export default function Home() {
   }, [desktopAppMode, onboardingPreview, openRecoveryOnboarding]);
   const startManualCapture = useCallback(async (firstCapture = false, retryFailedOnly = false) => {
     if (!desktopAppMode || manualCapture.state === "running") return;
-    setManualCapture({ state: "running", message: "准备本地抓取", percent: 3, phase: "starting" });
+    setManualCapture({ state: "running", message: retryFailedOnly ? "正在继续未完成的步骤" : "准备本地抓取", percent: 3, phase: "starting", retryAvailable: retryFailedOnly ? false : undefined });
     try {
       const parameters = new URLSearchParams();
       if (firstCapture) parameters.set("initial", "1");
@@ -819,7 +820,7 @@ export default function Home() {
       if (!response.ok) throw new Error(payload.error || "无法启动本地抓取");
       setManualCapture((current) => ({ ...current, firstCapture: payload.firstCapture, startedAt: payload.startedAt, estimateMinutes: payload.estimateMinutes }));
     } catch (error) {
-      setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "无法启动本地抓取", percent: 0, phase: "failed" });
+      setManualCapture({ state: "failed", message: error instanceof Error ? error.message : "无法启动本地抓取", percent: 0, phase: "failed", retryAvailable: false });
     }
   }, [desktopAppMode, manualCapture.state]);
 
@@ -2621,7 +2622,7 @@ export default function Home() {
                 </span>
                 {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
                 {manualCapture.state === "completed" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
-                {manualCapture.state === "failed" && <span className="capture-now-message-actions"><button type="button" className="capture-now-message-retry" onClick={() => void startManualCapture(false, true)}>继续补抓</button><button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>稍后</button></span>}
+                {manualCapture.state === "failed" && <span className="capture-now-message-actions">{manualCapture.retryAvailable !== false && <button type="button" className="capture-now-message-retry" onClick={() => void startManualCapture(false, true)}>继续补抓</button>}<button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>{manualCapture.retryAvailable === false ? "知道了" : "稍后"}</button></span>}
               </span>}
             </div>
           </div> : <Fragment key={current.id}>
@@ -2675,7 +2676,7 @@ export default function Home() {
                 </span>
                 {manualCapture.state === "running" && <strong>{Math.round(manualCapture.percent)}%</strong>}
                 {manualCapture.state === "completed" && <button type="button" className="capture-now-message-dismiss" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })} aria-label="关闭抓取提示">×</button>}
-                {manualCapture.state === "failed" && <span className="capture-now-message-actions"><button type="button" className="capture-now-message-retry" onClick={() => void startManualCapture(false, true)}>继续补抓</button><button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>稍后</button></span>}
+                {manualCapture.state === "failed" && <span className="capture-now-message-actions">{manualCapture.retryAvailable !== false && <button type="button" className="capture-now-message-retry" onClick={() => void startManualCapture(false, true)}>继续补抓</button>}<button type="button" className="capture-now-message-confirm" onClick={() => setManualCapture({ state: "idle", message: "", percent: 0, phase: "" })}>{manualCapture.retryAvailable === false ? "知道了" : "稍后"}</button></span>}
               </span>}
             </div>
             <button className="undo" onClick={decisions[current.id] ? undoCurrent : undo}
