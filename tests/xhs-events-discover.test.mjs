@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { diffEvents, firstCaptureEvents, migrateTaskUrls } from "../scripts/xhs-events-discover.mjs";
+import { browserDiscoveryFailure, diffEvents, firstCaptureEvents, migrateTaskUrls } from "../scripts/xhs-events-discover.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const discoveryScript = path.join(root, "scripts", "xhs-events-discover.mjs");
@@ -19,6 +19,21 @@ test("first creator-center check establishes a baseline without backfilling", ()
   const result = diffEvents(events, { initializedAt: null, knownEventIds: [] });
   assert.equal(result.current.length, 2);
   assert.equal(result.newEvents.length, 0);
+});
+
+test("browser failure prefers structured stdout over harmless Chrome fallback warning", () => {
+  const result = browserDiscoveryFailure({
+    stdout: '{"ok":false,"status":"login_required","error":"小红书登录已过期"}\n',
+    stderr: "Using the temporary read-only Chrome fallback for this run\n",
+    message: "Command failed",
+  });
+  assert.deepEqual(result, { status: "login_required", error: "小红书登录已过期" });
+});
+
+test("browser timeout has a stable actionable explanation", () => {
+  const result = browserDiscoveryFailure({ code: "ETIMEDOUT", message: "spawnSync python ETIMEDOUT" });
+  assert.equal(result.status, "discovery_timeout");
+  assert.match(result.error, /超时.*保留原基线/);
 });
 
 test("later creator-center checks return only unseen activities", () => {

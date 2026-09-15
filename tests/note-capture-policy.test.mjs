@@ -5,6 +5,7 @@ import {
   clearNoteFailure,
   MAX_NOTE_ATTEMPTS,
   noteTaskIsDue,
+  reconcileNoteTaskAccount,
   transitionNoteFailure,
 } from "../scripts/note-capture-policy.mjs";
 
@@ -43,11 +44,40 @@ test("login and verification failures require user action", () => {
   assert.equal(classifyNoteCaptureFailure("需要验证码").action, "user_action_required");
 });
 
-test("previous browser, login and legacy failures remain eligible for a later recovery run", () => {
+test("browser and login failures require an explicit manual recovery instead of looping nightly", () => {
   const now = new Date("2026-09-07T01:00:00Z");
   for (const status of ["needs_browser_capture", "user_action_required", "failed"]) {
-    assert.equal(noteTaskIsDue({ status }, now), true);
+    assert.equal(noteTaskIsDue({ status }, now), false);
+    assert.equal(noteTaskIsDue({ status }, now, { manual: true }), true);
   }
+});
+
+test("pausing an account pauses unfinished work and re-enabling reopens it", () => {
+  const task = { type: "note", status: "retry_pending", accountKey: "red-id", attempts: 2, nextAttemptAt: "later" };
+  const account = { profileId: "profile", status: "verified" };
+  const paused = reconcileNoteTaskAccount(task, account, null, new Date("2026-09-15T01:00:00Z"), { enabled: false });
+  assert.equal(paused.action, "pause");
+  assert.equal(task.status, "account_paused");
+  assert.equal(noteTaskIsDue(task, new Date(), { manual: true }), false);
+  const resumed = reconcileNoteTaskAccount(task, account, null, new Date("2026-09-15T02:00:00Z"), { enabled: true });
+  assert.equal(resumed.action, "reopened");
+  assert.equal(task.status, "pending");
+  assert.equal(task.attempts, undefined);
+});
+
+test("missing and pending accounts stop retry loops and recover without inflating attempts", () => {
+  const task = { type: "note", status: "needs_browser_capture", accountKey: "orphan", attempts: 1527 };
+  const first = reconcileNoteTaskAccount(task, null, null, new Date("2026-09-15T01:00:00Z"));
+  assert.equal(first.action, "stop");
+  assert.equal(task.status, "account_unavailable");
+  assert.equal(task.attempts, MAX_NOTE_ATTEMPTS);
+  const timestamp = task.lastAttemptAt;
+  const second = reconcileNoteTaskAccount(task, null, null, new Date("2026-09-16T01:00:00Z"));
+  assert.equal(second.changed, false);
+  assert.equal(task.lastAttemptAt, timestamp);
+  const waiting = reconcileNoteTaskAccount(task, null, { status: "pending_verification" }, new Date("2026-09-16T02:00:00Z"));
+  assert.equal(waiting.action, "wait");
+  assert.equal(task.status, "waiting_for_account_verification");
 });
 
 test("successful capture clears retry metadata", () => {

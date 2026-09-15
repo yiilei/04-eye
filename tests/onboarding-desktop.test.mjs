@@ -189,6 +189,11 @@ test("pin footer exposes export action and account-count risk guidance", async (
   assert.match(css, /\.export-pins:hover, \.import-pins:hover \{[^}]*color: #ffe600;[^}]*background: transparent;/);
   assert.match(css, /\.pin-risk-dot\.risk-medium/);
   assert.match(css, /\.pin-risk-dot\.risk-high/);
+  assert.match(page, /onContextMenu=.*setPinContextAccountId/);
+  assert.match(page, /删除账号/);
+  assert.match(page, /api\/desktop\/pin-account\/delete/);
+  assert.match(page, /已暂停该账号；重新埋点后会继续未完成任务/);
+  assert.match(css, /\.pin-account-menu/);
 });
 
 test("failed H5 previews can never be imported into Eagle as complete material", async () => {

@@ -8,6 +8,7 @@ import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
 import { recoverReviewOperationUnlocked, withReviewStateLock } from "../scripts/review-state-store.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
+import { deletePinAccountState } from "../scripts/pin-account-lifecycle.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -523,7 +524,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
         if (typeof payload?.automaticCaptureEnabled !== "boolean"
           || typeof payload?.creatorH5CaptureEnabled !== "boolean"
           || !validTime(payload?.captureTime) || !validTime(payload?.pushTime)
-          || !Array.isArray(payload?.pinnedAccountIds) || !Array.isArray(payload?.manualPinAccounts)) {
+          || !Array.isArray(payload?.pinnedAccountIds) || !Array.isArray(payload?.manualPinAccounts)
+          || !Array.isArray(payload?.deletedPinAccountIds)) {
           const response = json({ ok: false, error: "invalid preferences" }, 400);
           outgoing.statusCode = response.status;
           response.headers.forEach((value, key) => outgoing.setHeader(key, value));
@@ -539,9 +541,41 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           pushTime: payload.pushTime,
           pinnedAccountIds: payload.pinnedAccountIds.map(String),
           manualPinAccounts: payload.manualPinAccounts,
+          deletedPinAccountIds: payload.deletedPinAccountIds.map(String),
           updatedAt: new Date().toISOString(),
         });
         const response = json({ ok: true });
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+        return Readable.fromWeb(response.body).pipe(outgoing);
+      }
+      if (pathname === "/api/desktop/pin-account/delete" && request.method === "POST") {
+        if (captureProcess) {
+          const response = json({ ok: false, error: "抓取正在运行，请结束后再删除账号" }, 409);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        const payload = await request.json();
+        const profileId = String(payload?.profileId || "");
+        if (!/^[a-zA-Z0-9_-]+$/.test(profileId)) {
+          const response = json({ ok: false, error: "账号标识无效" }, 400);
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, key) => outgoing.setHeader(key, value));
+          return Readable.fromWeb(response.body).pipe(outgoing);
+        }
+        const state = deletePinAccountState({
+          preferences: await readJson(preferencesPath, {}),
+          pins: await readJson(accountPinsPath, { version: 1, accounts: [] }),
+          pending: await readJson(pendingPinsPath, { schemaVersion: 1, accounts: [] }),
+          queue: await readJson(path.join(dataRoot, "data", "xhs-capture-queue.json"), { version: 1, checkedAccounts: [], tasks: [] }),
+        }, profileId);
+        const updatedAt = new Date().toISOString();
+        await atomicJson(preferencesPath, { ...state.preferences, updatedAt });
+        await atomicJson(accountPinsPath, { ...state.pins, updatedAt });
+        await atomicJson(pendingPinsPath, { ...state.pending, updatedAt });
+        await atomicJson(path.join(dataRoot, "data", "xhs-capture-queue.json"), state.queue);
+        const response = json({ ok: true, removedTaskCount: state.removedTaskCount });
         outgoing.statusCode = response.status;
         response.headers.forEach((value, key) => outgoing.setHeader(key, value));
         return Readable.fromWeb(response.body).pipe(outgoing);

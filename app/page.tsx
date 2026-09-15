@@ -286,6 +286,7 @@ const scheduleStorageKey = "sharp-eye-schedule-v1";
 const dismissedItemsStorageKey = "sharp-eye-dismissed-review-items-v1";
 const pinnedAccountsStorageKey = "sharp-eye-pinned-accounts-v1";
 const manualPinAccountsStorageKey = "sharp-eye-manual-pin-accounts-v1";
+const deletedPinAccountsStorageKey = "sharp-eye-deleted-pin-accounts-v1";
 const colorThemeStorageKey = "sharp-eye-color-theme-v1";
 const onboardingCompleteStorageKey = "caiguang-onboarding-complete-v1";
 const reviewTourCompleteStorageKey = "caiguang-review-tour-complete-v1";
@@ -623,6 +624,8 @@ export default function Home() {
   const [pinLinkMessage, setPinLinkMessage] = useState("");
   const [manualPinAccounts, setManualPinAccounts] = useState<PinAccount[]>([]);
   const [pinnedAccountIds, setPinnedAccountIds] = useState<string[]>(() => defaultPinnedAccountIds);
+  const [deletedPinAccountIds, setDeletedPinAccountIds] = useState<string[]>([]);
+  const [pinContextAccountId, setPinContextAccountId] = useState<string | null>(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [shortcutHelpPinned, setShortcutHelpPinned] = useState(false);
@@ -779,9 +782,10 @@ export default function Home() {
         if (completed) {
           void fetch("/api/desktop/preferences", { cache: "no-store" }).then(async (preferenceResponse) => {
             if (!preferenceResponse.ok) return;
-            const preferences = await preferenceResponse.json() as { pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[] };
+            const preferences = await preferenceResponse.json() as { pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[]; deletedPinAccountIds?: string[] };
             if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
             if (Array.isArray(preferences.manualPinAccounts)) setManualPinAccounts(preferences.manualPinAccounts);
+            if (Array.isArray(preferences.deletedPinAccountIds)) setDeletedPinAccountIds(preferences.deletedPinAccountIds);
           }).catch(() => undefined);
         }
         setManualCapture(completed
@@ -934,9 +938,10 @@ export default function Home() {
   // Stable across polling, but changes when a fallback is replaced in place.
   const currentQualityKey = JSON.stringify(current);
   const allPinAccounts = useMemo(() => [
-    ...seededPinAccounts,
-    ...manualPinAccounts.filter((manual) => !seededPinAccounts.some((account) => account.profileId === manual.profileId)),
-  ], [manualPinAccounts]);
+    ...seededPinAccounts.filter((account) => !deletedPinAccountIds.includes(account.profileId)),
+    ...manualPinAccounts.filter((manual) => !deletedPinAccountIds.includes(manual.profileId)
+      && !seededPinAccounts.some((account) => account.profileId === manual.profileId)),
+  ], [deletedPinAccountIds, manualPinAccounts]);
   const visiblePinAccounts = useMemo(() => {
     const query = pinSearch.trim().toLocaleLowerCase("zh-CN");
     const filtered = !query ? allPinAccounts : allPinAccounts.filter((account) =>
@@ -1290,7 +1295,7 @@ export default function Home() {
       .then(async (response) => {
         if (!response.ok) throw new Error("preferences unavailable");
         return response.json() as Promise<{
-          automaticCaptureEnabled?: boolean; creatorH5CaptureEnabled?: boolean; captureTime?: string; todayCaptureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[];
+          automaticCaptureEnabled?: boolean; creatorH5CaptureEnabled?: boolean; captureTime?: string; todayCaptureTime?: string; pushTime?: string; pinnedAccountIds?: string[]; manualPinAccounts?: PinAccount[]; deletedPinAccountIds?: string[];
         }>;
       })
       .then((preferences) => {
@@ -1303,6 +1308,7 @@ export default function Home() {
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferences.pushTime ?? "")) setPushTime(preferences.pushTime!);
         if (Array.isArray(preferences.pinnedAccountIds)) setPinnedAccountIds(preferences.pinnedAccountIds);
         if (Array.isArray(preferences.manualPinAccounts)) setManualPinAccounts(preferences.manualPinAccounts);
+        if (Array.isArray(preferences.deletedPinAccountIds)) setDeletedPinAccountIds(preferences.deletedPinAccountIds);
       })
       .catch(() => undefined)
       .finally(() => { if (active) setDesktopPreferencesReady(true); });
@@ -1334,6 +1340,10 @@ export default function Home() {
     try {
       const savedManualPins = JSON.parse(localStorage.getItem(manualPinAccountsStorageKey) || "[]");
       if (Array.isArray(savedManualPins)) setManualPinAccounts(savedManualPins);
+    } catch { /* ignore invalid local data */ }
+    try {
+      const deletedPins = JSON.parse(localStorage.getItem(deletedPinAccountsStorageKey) || "[]");
+      if (Array.isArray(deletedPins)) setDeletedPinAccountIds(deletedPins);
     } catch { /* ignore invalid local data */ }
     try {
       const schedule = JSON.parse(localStorage.getItem(scheduleStorageKey) || "{}");
@@ -1581,6 +1591,15 @@ export default function Home() {
   useEffect(() => { if (hydrated) localStorage.setItem(dismissedItemsStorageKey, JSON.stringify(dismissedIds)); }, [dismissedIds, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem(pinnedAccountsStorageKey, JSON.stringify(pinnedAccountIds)); }, [pinnedAccountIds, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem(manualPinAccountsStorageKey, JSON.stringify(manualPinAccounts)); }, [manualPinAccounts, hydrated]);
+  useEffect(() => { if (hydrated) localStorage.setItem(deletedPinAccountsStorageKey, JSON.stringify(deletedPinAccountIds)); }, [deletedPinAccountIds, hydrated]);
+  useEffect(() => {
+    if (!pinContextAccountId) return;
+    const close = () => setPinContextAccountId(null);
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => { window.removeEventListener("click", close); window.removeEventListener("keydown", closeOnEscape); };
+  }, [pinContextAccountId]);
   useEffect(() => {
     if (!hydrated || !desktopAppMode) return;
     const pending = manualPinAccounts.filter((account) => account.status === "pending_verification" && pinnedAccountIds.includes(account.profileId));
@@ -1622,11 +1641,11 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       void fetch("/api/desktop/preferences", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, pushTime, pinnedAccountIds, manualPinAccounts }),
+        body: JSON.stringify({ automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, pushTime, pinnedAccountIds, manualPinAccounts, deletedPinAccountIds }),
       }).catch(() => undefined);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
+  }, [automaticCaptureEnabled, creatorH5CaptureEnabled, captureTime, deletedPinAccountIds, desktopAppMode, desktopPreferencesReady, manualPinAccounts, pinnedAccountIds, pushTime]);
 
   useEffect(() => {
     if (!hydrated || migrationStarted.current) return;
@@ -2075,10 +2094,10 @@ export default function Home() {
   }, [current.id, decisions, eagleItems, persistDecision]);
 
   const toggleAccountPin = useCallback((profileId: string) => {
-    setPinnedAccountIds((value) => value.includes(profileId)
-      ? value.filter((id) => id !== profileId)
-      : [...value, profileId]);
-  }, []);
+    const pausing = pinnedAccountIds.includes(profileId);
+    setPinnedAccountIds((value) => pausing ? value.filter((id) => id !== profileId) : [...value, profileId]);
+    setPinLinkMessage(pausing ? "已暂停该账号；重新埋点后会继续未完成任务" : "已恢复该账号的抓取任务");
+  }, [pinnedAccountIds]);
 
   const openXiaohongshuUserSearch = useCallback(() => {
     const query = pinSearch.trim();
@@ -2095,6 +2114,7 @@ export default function Home() {
       if (!/(^|\.)xiaohongshu\.com$/i.test(url.hostname)) throw new Error("host");
       const profileId = url.pathname.match(/^\/user\/profile\/([a-zA-Z0-9_-]+)/)?.[1];
       if (!profileId) throw new Error("profile");
+      setDeletedPinAccountIds((ids) => ids.filter((id) => id !== profileId));
       const existing = allPinAccounts.find((account) => account.profileId === profileId);
       if (!existing) {
         setPinLinkMessage("正在读取账号名称和头像…");
@@ -2130,7 +2150,26 @@ export default function Home() {
 
   const removePendingPin = useCallback((profileId: string) => {
     setPinnedAccountIds((ids) => ids.filter((id) => id !== profileId));
-    setPinLinkMessage("已取消埋点，账号已移到列表底部");
+    setPinLinkMessage("已暂停该账号；账号仍保留在列表中");
+  }, []);
+
+  const deletePinAccount = useCallback(async (account: PinAccount) => {
+    setPinContextAccountId(null);
+    if (!window.confirm(`确定删除“${account.displayName}”吗？\n\n账号会从列表移除，未完成任务会删除；已经批阅过的历史素材会保留。`)) return;
+    try {
+      const response = await fetch("/api/desktop/pin-account/delete", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId: account.profileId }),
+      });
+      const result = await response.json() as { ok?: boolean; error?: string; removedTaskCount?: number };
+      if (!response.ok || !result.ok) throw new Error(result.error || "删除失败");
+      setPinnedAccountIds((ids) => ids.filter((id) => id !== account.profileId));
+      setManualPinAccounts((accounts) => accounts.filter((item) => item.profileId !== account.profileId));
+      setDeletedPinAccountIds((ids) => [...new Set([...ids, account.profileId])]);
+      setPinLinkMessage(`已删除 ${account.displayName}，并移除 ${result.removedTaskCount || 0} 个未完成任务`);
+    } catch (error) {
+      setPinLinkMessage(error instanceof Error ? error.message : "删除账号失败，请重试");
+    }
   }, []);
 
   const importPinData = useCallback(async (file?: File) => {
@@ -2159,6 +2198,7 @@ export default function Home() {
         } as PinAccount;
       });
       const unique = [...new Map(imported.map((account) => [account.profileId, account])).values()];
+      setDeletedPinAccountIds((ids) => ids.filter((id) => !unique.some((account) => account.profileId === id)));
       const mergedIds = [...new Set([...pinnedAccountIds, ...unique.map((account) => account.profileId)])].slice(0, 100);
       if (mergedIds.length < new Set([...pinnedAccountIds, ...unique.map((account) => account.profileId)]).size) throw new Error("最多支持 100 个埋点账号");
       const existingIds = new Set(allPinAccounts.map((account) => account.profileId));
@@ -2557,7 +2597,8 @@ export default function Home() {
                   {visiblePinAccounts.map((account) => {
                     const pinned = pinnedAccountIds.includes(account.profileId);
                     return (
-                      <div className="pin-account" key={account.profileId}>
+                      <div className="pin-account" key={account.profileId}
+                        onContextMenu={(event) => { event.preventDefault(); setPinContextAccountId(account.profileId); }}>
                         <a className="pin-identity" href={account.profileUrl} target="_blank" rel="noreferrer" title="打开账号主页">
                           <span className="pin-avatar" aria-hidden="true">
                             {account.avatarLocalPath
@@ -2572,6 +2613,9 @@ export default function Home() {
                           onClick={() => account.status === "pending_verification" && pinned ? removePendingPin(account.profileId) : toggleAccountPin(account.profileId)}>
                           {account.status === "pending_verification" && pinned ? <><span className="pending-label">待验证</span><span className="pending-cancel">取消埋点</span></> : pinned ? "取消埋点" : "埋点"}
                         </button>
+                        {pinContextAccountId === account.profileId && <div className="pin-account-menu" onClick={(event) => event.stopPropagation()}>
+                          <button type="button" onClick={() => void deletePinAccount(account)}>删除账号</button>
+                        </div>}
                       </div>
                     );
                   })}

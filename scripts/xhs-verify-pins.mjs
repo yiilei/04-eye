@@ -60,6 +60,7 @@ function slugFor(account, post) {
 async function persistVerifiedManualAccounts(pins, verifiedRecords, now) {
   const preferences = await readJson(preferencesPath, null);
   if (!preferences) return;
+  const deletedProfileIds = new Set((preferences.deletedPinAccountIds || []).map(String));
   const starterPins = await readJson(starterPinsPath, { accounts: [] });
   const starterProfileIds = new Set((starterPins.accounts || []).map((account) => profileIdFrom(account)).filter(Boolean));
   const manualAccounts = new Map((preferences.manualPinAccounts || [])
@@ -70,8 +71,11 @@ async function persistVerifiedManualAccounts(pins, verifiedRecords, now) {
       manualAccounts.set(profileId, { ...manualAccounts.get(profileId), ...record });
     }
   }
-  for (const [profileId, record] of verifiedRecords) manualAccounts.set(profileId, { ...manualAccounts.get(profileId), ...record });
-  preferences.pinnedAccountIds = [...new Set([...(preferences.pinnedAccountIds || []), ...verifiedRecords.keys()])];
+  for (const [profileId, record] of verifiedRecords) {
+    if (!deletedProfileIds.has(profileId)) manualAccounts.set(profileId, { ...manualAccounts.get(profileId), ...record });
+  }
+  preferences.pinnedAccountIds = [...new Set([...(preferences.pinnedAccountIds || []),
+    ...[...verifiedRecords.keys()].filter((profileId) => !deletedProfileIds.has(profileId))])];
   preferences.manualPinAccounts = [...manualAccounts.values()];
   preferences.updatedAt = now;
   await atomicJson(preferencesPath, preferences);
@@ -99,13 +103,22 @@ function validateIdentity(pending, identity, profileId) {
 export async function verifyPendingPins(options = {}) {
   const pins = await readJson(pinsPath, { version: 1, accounts: [] });
   const appPending = await readJson(appPendingPath, { schemaVersion: 1, accounts: [] });
+  const preferences = await readJson(preferencesPath, {});
+  const deletedProfileIds = new Set((preferences.deletedPinAccountIds || []).map(String));
+  pins.accounts = (pins.accounts || []).filter((account) => !deletedProfileIds.has(profileIdFrom(account)));
+  const undeletedPending = (appPending.accounts || []).filter((account) => !deletedProfileIds.has(profileIdFrom(account)));
   const pendingById = new Map();
-  for (const account of appPending.accounts || []) {
+  for (const account of undeletedPending) {
     const profileId = profileIdFrom(account);
-    if (profileId && account.status === "pending_verification") pendingById.set(profileId, { ...account, profileId });
+    if (profileId && account.status === "pending_verification" && !deletedProfileIds.has(profileId)) pendingById.set(profileId, { ...account, profileId });
   }
   if (!pendingById.size) {
-    if (options.write) await persistVerifiedManualAccounts(pins, new Map(), new Date().toISOString());
+    if (options.write) {
+      const now = new Date().toISOString();
+      await atomicJson(pinsPath, { ...pins, updatedAt: now });
+      await atomicJson(appPendingPath, { ...appPending, accounts: undeletedPending, updatedAt: now });
+      await persistVerifiedManualAccounts(pins, new Map(), now);
+    }
     return { ok: true, checked: 0, verified: 0, failed: 0, queued: 0, results: [] };
   }
 

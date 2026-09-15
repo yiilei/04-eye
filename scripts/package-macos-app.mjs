@@ -184,7 +184,7 @@ for (const entry of ["desktop", "dist", "starter"]) await cp(path.join(root, ent
 // desktop/server.mjs imports shared runtime modules. Keep every imported
 // script in the app-only bundle as well as in the complete source bundle.
 await mkdir(path.join(packagedApp, "scripts"), { recursive: true });
-for (const script of ["review-cache-cleanup.mjs", "review-state-store.mjs", "capture-time-policy.mjs"]) {
+for (const script of ["review-cache-cleanup.mjs", "review-state-store.mjs", "capture-time-policy.mjs", "pin-account-lifecycle.mjs"]) {
   await cp(path.join(root, "scripts", script), path.join(packagedApp, "scripts", script));
 }
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });

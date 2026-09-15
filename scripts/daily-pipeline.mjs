@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import os from "node:os";
 import { classifyH5Failure, clearH5Retry, h5TaskIsDue, transitionH5Failure } from "./h5-retry-policy.mjs";
-import { clearNoteFailure, noteTaskIsDue, transitionNoteFailure } from "./note-capture-policy.mjs";
+import { clearNoteFailure, MAX_NOTE_ATTEMPTS, noteTaskIsDue, reconcileNoteTaskAccount, transitionNoteFailure } from "./note-capture-policy.mjs";
 
 const root = process.cwd();
 const dataHome = path.resolve(process.env.SHARP_EYE_HOME || path.join(os.homedir(), "Library", "Application Support", "采光"));
@@ -13,6 +13,7 @@ const queuePath = path.join(dataDir, "xhs-capture-queue.json");
 const pinsPath = path.join(dataDir, "xhs-account-pins.json");
 const policyPath = path.join(dataDir, "xhs-media-policy.json");
 const appPendingPinsPath = path.join(dataHome, "data", "xhs-pending-pins.json");
+const preferencesPath = path.join(dataDir, "user-preferences.json");
 const registryPath = path.join(dataHome, "data", "generated-review-items.json");
 const reportsDir = path.join(dataDir, "reports");
 const diagnosticsDir = path.join(dataHome, "logs", "xhs");
@@ -53,7 +54,7 @@ const captureDiagnostics = (error) => [error?.stdout, error?.stderr, error insta
 const safeTaskId = (value) => String(value || "task").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 100);
 const writeCaptureDiagnostics = async (task, error) => {
   await mkdir(diagnosticsDir, { recursive: true });
-  const attempt = Number(task.attempts || 0) + 1;
+  const attempt = Math.min(MAX_NOTE_ATTEMPTS, Number(task.attempts || 0) + 1);
   const filename = `${today}-${safeTaskId(task.id)}-attempt-${attempt}.log`;
   const target = path.join(diagnosticsDir, filename);
   await writeFile(target, `${captureDiagnostics(error)}\n`);
@@ -115,7 +116,29 @@ async function main() {
   const pins = await readJson(pinsPath);
   const policy = await readJson(policyPath);
   const pendingPins = await readJson(appPendingPinsPath).catch(() => ({ accounts: [] }));
+  const preferences = await readJson(preferencesPath).catch(() => ({}));
+  const activeProfileIds = Array.isArray(preferences.pinnedAccountIds)
+    ? new Set(preferences.pinnedAccountIds.map(String))
+    : null;
   validateConfiguration(queue, pins, policy);
+  const pendingAccountFor = (key) => (pendingPins.accounts || []).find((account) =>
+    [account.searchKey, account.xiaohongshuId, account.profileId].includes(key));
+  const accountStateChanges = [];
+  let accountQueueChanged = false;
+  for (const task of queue.tasks) {
+    if (task.type !== "note") continue;
+    const account = accountFor(pins, task.accountKey);
+    const pendingAccount = pendingAccountFor(task.accountKey);
+    const identity = account || pendingAccount;
+    const enabled = activeProfileIds === null || !identity || activeProfileIds.has(String(identity.profileId || ""));
+    const transition = reconcileNoteTaskAccount(task, account, pendingAccount, now, { enabled });
+    if (transition.changed) accountQueueChanged = true;
+    if (transition.changed && transition.action && transition.action !== "reopened") {
+      accountStateChanges.push({ id: task.id, type: task.type, title: task.title, error: transition.message,
+        failureType: transition.category, status: task.status });
+    }
+  }
+  if (accountQueueChanged) await atomicJson(queuePath, queue);
   const browserCaptureTasks = queue.tasks.filter((task) => task.status === "needs_browser_capture");
   const userActionTasks = queue.tasks.filter((task) => task.status === "user_action_required");
   const report = { schemaVersion: 1, date: today, startedAt: nowIso, mode: dryRun ? "dry-run" : "run",
@@ -130,16 +153,27 @@ async function main() {
       id: task.id, type: task.type, title: task.title,
       error: task.error || task.lastError || "需要重新登录或完成网页验证后再试",
       failureType: task.failureType || "user_action_required",
-    })) : [], skipped: [], validation: "not_run", build: "not_run" };
+    })) : [], skipped: accountStateChanges, validation: "not_run", build: "not_run" };
 
   if (!dryRun) {
     for (const task of queue.tasks.filter((item) => item.type === "h5_event"
       ? creatorH5CaptureEnabled && h5TaskIsDue(item, now, { manual: manualCapture })
-      : noteTaskIsDue(item, now))) {
+      : noteTaskIsDue(item, now, { manual: manualCapture }))) {
       try {
         if (task.type === "note") {
           const account = accountFor(pins, task.accountKey);
-          if (!account || account.status !== "verified") throw new Error(`账号埋点不可用：${task.accountKey}`);
+          const pendingAccount = pendingAccountFor(task.accountKey);
+          const identity = account || pendingAccount;
+          const enabled = activeProfileIds === null || !identity || activeProfileIds.has(String(identity.profileId || ""));
+          if (!enabled || !account || account.status !== "verified") {
+            const transition = reconcileNoteTaskAccount(task, account, pendingAccount, new Date(), { enabled });
+            if (transition.changed && !report.skipped.some((item) => item.id === task.id)) {
+              report.skipped.push({ id: task.id, type: task.type, title: task.title, error: transition.message,
+                failureType: transition.category, status: task.status });
+            }
+            await atomicJson(queuePath, queue);
+            continue;
+          }
           const output = run(path.join(root, "vendor", "XHS-Downloader", ".venv", "bin", "python"), noteArguments(task, account));
           const result = JSON.parse(output.split("\n").at(-1));
           if (!result.ok) throw new Error(result.error || "帖子抓取失败");
@@ -245,7 +279,8 @@ async function main() {
 
   report.pending = queue.tasks.filter((task) => ["pending", "needs_h5_capture", "retry_pending", "fallback_pending", "deferred_next_day",
     "content_not_published", "manual_only", "rule_changed", "auth_required", "verification_required", "risk_paused",
-    "needs_browser_capture", "user_action_required", "failed"].includes(task.status)).length;
+    "needs_browser_capture", "user_action_required", "failed", "waiting_for_account_verification", "account_unavailable"].includes(task.status)).length;
+  report.paused = queue.tasks.filter((task) => task.status === "account_paused").length;
   report.finishedAt = new Date().toISOString();
   report.registryItems = await readJson(registryPath).then((items) => items.length).catch(() => 0);
   const duplicateTitleCounts = report.completed.reduce((counts, item) => {
@@ -272,6 +307,7 @@ async function main() {
     ...(report.retrying.length ? ["", "## 自动重试", "", ...report.retrying.map((item) => `- ${item.title}：第 ${item.attempts} 次失败，将在 ${item.nextAttemptAt} 后自动重试`)] : []),
     ...(report.fallbacks.length ? ["", "## 活动正文获取失败（兜底记录）", "", ...report.fallbacks.map((item) => `- ${item.title}：${item.error}。已保留封面、失败原因和创作服务中心入口；当前不是完整素材，不会导入 Eagle。${item.nextEligibleDate ? `将在 ${item.nextEligibleDate} 的正式任务中只检查一次。` : "自动重试已停止，可手动重试；活动入口变化时也会自动恢复。"}`)] : []),
     ...(report.browserCapture.length ? ["", "## 等待浏览器兜底", "", ...report.browserCapture.map((item) => `- ${item.title}：${item.failureType}。自动解析未取得完整素材，需在已授权的小红书页面继续提取；完成前不会进入批阅或 Eagle。`)] : []),
+    ...(report.skipped.length ? ["", "## 已安全暂停", "", ...report.skipped.map((item) => `- ${item.title}：${item.error}。原任务记录和原链接仍保留，不会继续循环请求。`)] : []),
     ...(report.failed.length ? ["", "## 需要用户处理", "", ...report.failed.map((item) => `- ${item.title}：${item.error}`)] : []), ""].join("\n");
   await writeFile(`${reportBase}.md`, markdown);
   const ok = report.failed.length === 0 && report.browserCapture.length === 0 && report.retrying.length === 0;

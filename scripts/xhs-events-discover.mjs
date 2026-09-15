@@ -86,9 +86,25 @@ export function migrateTaskUrls(tasks, events) {
   return tasks;
 }
 
+export function browserDiscoveryFailure(error) {
+  const stdout = String(error?.stdout || "");
+  for (const line of stdout.split("\n").map((value) => value.trim()).filter(Boolean).reverse()) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && parsed.ok === false) return { status: parsed.status || "discovery_failed", error: parsed.error || parsed.message || parsed.status || "创作活动发现失败" };
+    } catch { /* keep searching structured browser output */ }
+  }
+  const lines = [error?.stderr, error instanceof Error ? error.message : error]
+    .flatMap((value) => String(value || "").split("\n")).map((value) => value.trim()).filter(Boolean)
+    .filter((line) => !/temporary read-only Chrome fallback/i.test(line));
+  const timedOut = error?.code === "ETIMEDOUT" || lines.some((line) => /ETIMEDOUT|timed?\s*out/i.test(line));
+  return { status: timedOut ? "discovery_timeout" : "discovery_failed",
+    error: timedOut ? "创作服务中心响应超时，已保留原基线，下次可继续重试" : (lines.at(-1) || "创作活动发现失败") };
+}
+
 function runBrowser() {
   const output = execFileSync(python, [browserScript], {
-    cwd: root, encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"],
+    cwd: root, encoding: "utf8", timeout: 180_000, stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       PYTHONPATH: [xhsRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
@@ -105,20 +121,23 @@ export async function discoverEvents(options = {}) {
   const state = await readJson(statePath, { schemaVersion: 1, initializedAt: null, knownEventIds: [] });
   const checkedAt = new Date().toISOString();
   let result;
+  const recordFailure = async (status, error, diagnostics) => {
+    if (options.write) {
+      queue.checkedAccounts = [...queue.checkedAccounts.filter((item) => item.accountKey !== "creator-events"),
+        { accountKey: "creator-events", checkedAt, status, latestPostId: state.latestEventId || "", error }];
+      await atomicJson(queuePath, queue);
+    }
+    return { ok: false, status, checked: 0, added: 0, error, ...(diagnostics ? { diagnostics } : {}) };
+  };
   try {
     result = options.fixture ? await readJson(path.resolve(root, options.fixture), null) : runBrowser();
   } catch (error) {
-    const message = error instanceof Error ? error.message.split("\n").filter(Boolean).at(-1) : String(error);
-    if (options.write) {
-      queue.checkedAccounts = [...queue.checkedAccounts.filter((item) => item.accountKey !== "creator-events"),
-        { accountKey: "creator-events", checkedAt, status: "discovery_failed", latestPostId: state.latestEventId || "", error: message }];
-      await atomicJson(queuePath, queue);
-    }
-    return { ok: false, status: "discovery_failed", checked: 0, added: 0, error: message };
+    const failure = browserDiscoveryFailure(error);
+    return recordFailure(failure.status, failure.error);
   }
-  if (!result?.ok) return { ok: false, status: result?.status || "discovery_failed", checked: 0, added: 0 };
+  if (!result?.ok) return recordFailure(result?.status || "discovery_failed", result?.error || result?.message || "创作活动发现失败", result?.diagnostics);
   if (!Array.isArray(result.events) || result.events.length === 0) {
-    return { ok: false, status: "empty", checked: 0, added: 0, error: "创作服务中心没有返回可识别活动，未更新基线", diagnostics: result.diagnostics };
+    return recordFailure("empty", "创作服务中心没有返回可识别活动，未更新基线", result.diagnostics);
   }
 
   const previousCreatorCheck = queue.checkedAccounts.find((item) => item.accountKey === "creator-events");
