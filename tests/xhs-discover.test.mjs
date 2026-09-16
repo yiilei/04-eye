@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { accountCapturePolicy, captureCandidates, diffPosts, discoveryCommandTimeoutMs, isSafetyStopError, latestPostOnly, mergeBacklogPosts, mergeDiscoveredTasks, nextBacklogScan, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, retryableAccountKeys, selectAccounts } from "../scripts/xhs-discover.mjs";
+import { accountCapturePolicy, captureCandidates, diffPosts, discoveryCommandTimeoutMs, isSafetyStopError, latestPostOnly, mergeBacklogPosts, mergeDiscoveredTasks, nextBacklogScan, normalizePosts, postIdTimestamp, profileIdentity, profileIdentityFromPosts, rebaselineAfterResume, retryableAccountKeys, selectAccounts } from "../scripts/xhs-discover.mjs";
 
 const account = { searchKey: "63044481856", xiaohongshuId: "63044481856" };
 
@@ -89,6 +93,57 @@ test("first capture takes exactly the latest non-pinned post", () => {
   ]);
   assert.equal(result.status, "verified");
   assert.deepEqual(result.newPosts.map((post) => post.id), ["6a9000020000000000000000"]);
+});
+
+test("resuming a paused account advances to latest without backfilling paused posts", () => {
+  const result = rebaselineAfterResume([
+    { id: "6a9000030000000000000000", pinned: true },
+    { id: "6a9000020000000000000000" },
+    { id: "6a8000000000000000000000" },
+  ], "6a7000000000000000000000");
+  assert.equal(result.status, "verified");
+  assert.equal(result.latestPostId, "6a9000020000000000000000");
+  assert.deepEqual(result.newPosts, []);
+  assert.equal(result.resumedFromPause, true);
+});
+
+test("pause resume checkpoint is committed once and later posts are discovered normally", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "caiguang-resume-"));
+  const data = path.join(home, "data");
+  await mkdir(data, { recursive: true });
+  const profileId = "profile-resumed";
+  const searchKey = "red-resumed";
+  const oldId = "6a7000000000000000000000";
+  const resumedLatestId = "6a9000020000000000000000";
+  const futureId = "6aa000020000000000000000";
+  const pinsPath = path.join(data, "xhs-account-pins.json");
+  const queuePath = path.join(data, "xhs-capture-queue.json");
+  const preferencesPath = path.join(data, "user-preferences.json");
+  const fixturePath = path.join(home, "fixture.json");
+  await writeFile(pinsPath, JSON.stringify({ accounts: [{
+    profileId, profileUrl: `https://www.xiaohongshu.com/user/profile/${profileId}`,
+    searchKey, xiaohongshuId: searchKey, displayName: "恢复账号", status: "verified", lastSeenPostId: oldId,
+  }] }));
+  await writeFile(queuePath, JSON.stringify({ checkedAccounts: [], tasks: [] }));
+  await writeFile(preferencesPath, JSON.stringify({ pinnedAccountIds: [profileId], rebaselineOnResumeProfileIds: [profileId] }));
+  const fixture = (ids) => ({ [searchKey]: {
+    profile: { userPageData: { basicInfo: { nickname: "恢复账号", redId: searchKey, userId: profileId } } },
+    posts: { notes: ids.map((id) => ({ id, noteCard: { displayTitle: id } })) },
+  } });
+  await writeFile(fixturePath, JSON.stringify(fixture([resumedLatestId, oldId])));
+  const run = () => spawnSync(process.execPath, [path.resolve("scripts/xhs-discover.mjs"), "--write", "--fixture", fixturePath], {
+    cwd: path.resolve("."), encoding: "utf8", env: { ...process.env, SHARP_EYE_HOME: home },
+  });
+  const resumed = run();
+  assert.equal(resumed.status, 0, resumed.stderr || resumed.stdout);
+  assert.equal(JSON.parse(await readFile(queuePath, "utf8")).tasks.length, 0);
+  assert.equal(JSON.parse(await readFile(pinsPath, "utf8")).accounts[0].lastSeenPostId, resumedLatestId);
+  assert.deepEqual(JSON.parse(await readFile(preferencesPath, "utf8")).rebaselineOnResumeProfileIds, []);
+
+  await writeFile(fixturePath, JSON.stringify(fixture([futureId, resumedLatestId, oldId])));
+  const future = run();
+  assert.equal(future.status, 0, future.stderr || future.stdout);
+  assert.deepEqual(JSON.parse(await readFile(queuePath, "utf8")).tasks.map((task) => task.id), [`note-${futureId}`]);
 });
 
 test("checks only accounts selected in the app while explicit checks still work", () => {

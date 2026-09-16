@@ -479,7 +479,10 @@ app.whenReady().then(async () => {
       env: { ...process.env, SHARP_EYE_HOME: app.getPath("userData") },
     }, () => resolve()));
   }
-  const icon = nativeImage.createFromPath(path.join(appRoot, "assets", "app-icon.png"));
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "caiguang.icns")
+    : path.join(appRoot, "assets", "app-icon.png");
+  const icon = nativeImage.createFromPath(iconPath);
   if (process.platform === "darwin" && !icon.isEmpty()) app.dock.setIcon(icon);
   await createWindow();
 }).catch((error) => dialog.showErrorBox("采光启动失败", error instanceof Error ? error.message : String(error)));

@@ -48,6 +48,9 @@ async function validate(relativeManifest) {
       if (!info.size) errors.push(`空图片：${image.path}`);
       const actual = imageSize(file);
       if (actual.width !== image.width || actual.height !== image.height) errors.push(`${image.path} 尺寸 ${actual.width}×${actual.height}，清单为 ${image.width}×${image.height}`);
+      if (data.sourceType === "h5_event" && (actual.width < 240 || actual.height < Math.max(240, Math.round(actual.width * 0.25)))) {
+        errors.push(`${image.path} H5 长图尺寸异常：${actual.width}×${actual.height}`);
+      }
       const hash = createHash("sha256").update(await readFile(file)).digest("hex");
       if (hashes.has(hash)) errors.push(`${image.path} 与 ${hashes.get(hash)} 内容重复`);
       hashes.set(hash, image.path);

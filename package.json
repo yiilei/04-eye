@@ -1,6 +1,6 @@
 {
   "name": "caiguang",
-  "version": "0.3.56",
+  "version": "0.3.57",
   "private": false,
   "main": "desktop/main.mjs",
   "engines": {

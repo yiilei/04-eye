@@ -8,7 +8,7 @@ import worker from "../dist/server/index.js";
 import { seedStarterData } from "./starter-data.mjs";
 import { recoverReviewOperationUnlocked, withReviewStateLock } from "../scripts/review-state-store.mjs";
 import { ensureDailyCaptureSchedule, initializeCapturePreferences } from "../scripts/capture-time-policy.mjs";
-import { deletePinAccountState } from "../scripts/pin-account-lifecycle.mjs";
+import { deletePinAccountState, resumedVerifiedAccountIds } from "../scripts/pin-account-lifecycle.mjs";
 
 const mime = new Map([
   [".css", "text/css; charset=utf-8"], [".html", "text/html; charset=utf-8"],
@@ -532,6 +532,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           return Readable.fromWeb(response.body).pipe(outgoing);
         }
         const existing = await readJson(preferencesPath, {});
+        const pins = await readJson(accountPinsPath, { accounts: [] });
+        const pinnedAccountIds = payload.pinnedAccountIds.map(String);
         await atomicJson(preferencesPath, {
           ...existing,
           schemaVersion: 1,
@@ -539,7 +541,8 @@ export async function startDesktopServer(appRoot, userDataRoot) {
           creatorH5CaptureEnabled: payload.creatorH5CaptureEnabled,
           captureTime: payload.captureTime,
           pushTime: payload.pushTime,
-          pinnedAccountIds: payload.pinnedAccountIds.map(String),
+          pinnedAccountIds,
+          rebaselineOnResumeProfileIds: resumedVerifiedAccountIds(existing, pinnedAccountIds, pins.accounts),
           manualPinAccounts: payload.manualPinAccounts,
           deletedPinAccountIds: payload.deletedPinAccountIds.map(String),
           updatedAt: new Date().toISOString(),

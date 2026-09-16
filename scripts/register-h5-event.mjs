@@ -51,6 +51,9 @@ const dimensions = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight"
 const width = Number(dimensions.match(/pixelWidth: (\d+)/)?.[1]);
 const height = Number(dimensions.match(/pixelHeight: (\d+)/)?.[1]);
 if (!width || !height) throw new Error("无法读取 H5 长图尺寸");
+if (width < 240 || height < Math.max(240, Math.round(width * 0.25))) {
+  throw new Error(`H5 长图尺寸异常：${width}×${height}px，已阻止空白或截断素材进入批阅`);
+}
 const imageBytes = await readFile(sourceImagePath);
 if (hasVideo) {
   const videoBytes = await readFile(sourceVideoPath);

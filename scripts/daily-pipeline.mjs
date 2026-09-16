@@ -247,8 +247,11 @@ async function main() {
         report.failed.push({ id: check.accountKey, type: "account_check", title: check.accountKey, error: "账号埋点不存在" });
         continue;
       }
-      const unfinishedForAccount = queue.tasks.some((task) => task.accountKey === check.accountKey && task.status !== "completed");
-      if (check.status === "verified" && !unfinishedForAccount) {
+      // Discovery commits every newly found post to the durable queue before
+      // this checkpoint is applied. A single download failure must not hold
+      // the whole account at an old baseline and make later manual runs scan
+      // the same history again; failed files remain independently retryable.
+      if (check.status === "verified") {
         if (check.latestPostId) account.lastSeenPostId = check.latestPostId;
         account.lastCheckedAt = check.checkedAt || new Date().toISOString();
         account.status = "verified";

@@ -166,11 +166,16 @@ test("H5 capture rejects visible lazy-image placeholders and prefers rendered sw
   assert.match(capture, /\.onix-image\[data-src\]/);
   assert.match(capture, /candidate\.srcset = source/);
   assert.match(capture, /const richest = slides\.sort/);
+  assert.match(capture, /Do not rewrite Swiper geometry here/);
+  assert.doesNotMatch(capture, /slide\.style\.setProperty\('position'/);
   assert.match(capture, /const contentWidth = appRect\.width/);
   assert.match(capture, /capture_stitched_page/);
   assert.match(capture, /fallback_reasons/);
+  assert.match(capture, /capture_dimensions_are_plausible/);
   assert.doesNotMatch(capture, /fallback_reasons\.append\(f"\{preflight\['unloadedImages'\]\}/);
   assert.match(runner, /result\.brokenImages\?\.length/);
+  const register = await readFile(new URL("../scripts/register-h5-event.mjs", import.meta.url), "utf8");
+  assert.match(register, /H5 长图尺寸异常/);
 });
 
 test("H5 stitched fallback is isolated as a plugin and only runs for risky pages", async () => {

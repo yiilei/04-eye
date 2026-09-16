@@ -275,6 +275,12 @@ test("desktop app bundle includes every shared module imported by the server", a
   assert.match(packager, /releaseExcluded = new Set\(\["install-local-recovery-fix\.mjs"\]\)/);
 });
 
+test("packaged app loads its Dock icon from the bundled icns", async () => {
+  const source = await readFile(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  assert.match(source, /app\.isPackaged/);
+  assert.match(source, /process\.resourcesPath, "caiguang\.icns"/);
+});
+
 test("capture timeout recovery is explicit and retries only unfinished accounts", async () => {
   const [page, server, scheduler, discovery, auto] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

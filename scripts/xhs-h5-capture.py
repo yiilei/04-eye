@@ -87,6 +87,10 @@ def capture_covers_content(actual_height: int, content_height: float, scale: flo
     return actual_height >= expected_height * 0.92
 
 
+def capture_dimensions_are_plausible(width: float, height: float) -> bool:
+    return width >= 240 and height >= max(240, width * 0.25)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-url", required=True)
@@ -196,17 +200,29 @@ def main() -> int:
         for _ in range(3):
             metrics = page.evaluate(
                 """(selectors) => {
-                  const app = document.querySelector('#app')
-                    || document.querySelector('[data-v-app]')
-                    || document.querySelector('main')
-                    || [...document.body.children].sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
-                    || document.body;
+                  const app = [document.querySelector('#app'), document.querySelector('[data-v-app]'),
+                    document.querySelector('main'), ...document.body.children, document.body]
+                    .filter(Boolean).sort((a, b) =>
+                      Math.max(b.scrollHeight, b.getBoundingClientRect().height) - Math.max(a.scrollHeight, a.getBoundingClientRect().height)
+                    )[0] || document.body;
                   const notesTitle = [...document.querySelectorAll('*')]
                     .find(el => el.children.length === 0 && el.textContent.trim() === '精选笔记');
                   const notes = selectors.map(s => document.querySelector(s)).find(Boolean)
                     || notesTitle?.closest('.onix-wrapper') || notesTitle?.closest('.container');
                   const appRect = app.getBoundingClientRect();
-                  const end = notes ? notes.getBoundingClientRect().top - appRect.top : app.scrollHeight;
+                  const visualBottom = [...document.querySelectorAll('body *')].reduce((bottom, element) => {
+                    const rect = element.getBoundingClientRect();
+                    const style = getComputedStyle(element);
+                    if (rect.width < 24 || rect.height < 1 || style.display === 'none' || style.visibility === 'hidden') return bottom;
+                    return Math.max(bottom, rect.bottom);
+                  }, appRect.bottom);
+                  const fullEnd = Math.max(
+                    app.scrollHeight, appRect.height, visualBottom - appRect.top,
+                    document.body.scrollHeight, document.documentElement.scrollHeight,
+                  );
+                  const notesEnd = notes ? notes.getBoundingClientRect().top - appRect.top : 0;
+                  const validNotesBoundary = notesEnd >= Math.max(240, appRect.width * 0.25) && notesEnd <= fullEnd;
+                  const end = validNotesBoundary ? notesEnd : fullEnd;
                   return { end, viewport: innerHeight };
                 }""",
                 NOTES_SELECTORS,
@@ -277,11 +293,11 @@ def main() -> int:
             page.evaluate("async () => { if (document.fonts?.ready) await document.fonts.ready; }")
             fingerprint = page.evaluate(
                 """() => {
-                  const app = document.querySelector('#app')
-                    || document.querySelector('[data-v-app]')
-                    || document.querySelector('main')
-                    || [...document.body.children].sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
-                    || document.body;
+                  const app = [document.querySelector('#app'), document.querySelector('[data-v-app]'),
+                    document.querySelector('main'), ...document.body.children, document.body]
+                    .filter(Boolean).sort((a, b) =>
+                      Math.max(b.scrollHeight, b.getBoundingClientRect().height) - Math.max(a.scrollHeight, a.getBoundingClientRect().height)
+                    )[0] || document.body;
                   const text = app?.innerText || '';
                   const images = [...document.images].map(image =>
                     `${image.currentSrc || image.src}:${image.naturalWidth}x${image.naturalHeight}:${image.complete}`
@@ -373,17 +389,29 @@ def main() -> int:
                     pass
         capture = page.evaluate(
             r"""(selectors) => {
-              const app = document.querySelector('#app')
-                || document.querySelector('[data-v-app]')
-                || document.querySelector('main')
-                || [...document.body.children].sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
-                || document.body;
+              const app = [document.querySelector('#app'), document.querySelector('[data-v-app]'),
+                document.querySelector('main'), ...document.body.children, document.body]
+                .filter(Boolean).sort((a, b) =>
+                  Math.max(b.scrollHeight, b.getBoundingClientRect().height) - Math.max(a.scrollHeight, a.getBoundingClientRect().height)
+                )[0] || document.body;
               const notesTitle = [...document.querySelectorAll('*')]
                 .find(el => el.children.length === 0 && el.textContent.trim() === '精选笔记');
               const notes = selectors.map(s => document.querySelector(s)).find(Boolean)
                 || notesTitle?.closest('.onix-wrapper') || notesTitle?.closest('.container');
               const appRect = app.getBoundingClientRect();
-              const end = notes ? notes.getBoundingClientRect().top - appRect.top : app.scrollHeight;
+              const visualBottom = [...document.querySelectorAll('body *')].reduce((bottom, element) => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                if (rect.width < 24 || rect.height < 1 || style.display === 'none' || style.visibility === 'hidden') return bottom;
+                return Math.max(bottom, rect.bottom);
+              }, appRect.bottom);
+              const fullEnd = Math.max(
+                app.scrollHeight, appRect.height, visualBottom - appRect.top,
+                document.body.scrollHeight, document.documentElement.scrollHeight,
+              );
+              const notesEnd = notes ? notes.getBoundingClientRect().top - appRect.top : 0;
+              const validNotesBoundary = notesEnd >= Math.max(240, appRect.width * 0.25) && notesEnd <= fullEnd;
+              const end = validNotesBoundary ? notesEnd : fullEnd;
               const videos = [...document.querySelectorAll('video')]
                 .map(v => v.currentSrc || v.src).filter(Boolean);
               const resources = performance.getEntriesByType('resource')
@@ -395,12 +423,12 @@ def main() -> int:
               const canvasCount = document.querySelectorAll('canvas').length;
               for (const element of document.querySelectorAll('.template-h5-mask')) element.style.display = 'none';
               if (notes) notes.style.display = 'none';
-              // Swiper renders carousel cards on separate 3D compositor layers.
-              // Those layers may disappear when Chrome captures beyond the
-              // viewport, leaving a large white block in an otherwise valid
-              // activity archive. Flatten only the currently visible slide
-              // for the static long image; the original animation file is
-              // still preserved separately.
+              // Do not rewrite Swiper geometry here. Some creator activities
+              // are built entirely from stacked swipers; changing transforms,
+              // visibility or positioning collapses a 20k-pixel page to 1px.
+              // Keep the browser-rendered active state and only hydrate its
+              // lazy images. The separate animation extractor still preserves
+              // original motion resources.
               for (const swiper of document.querySelectorAll('.swiper')) {
                 const slides = [...swiper.querySelectorAll('.swiper-slide')];
                 const score = slide => {
@@ -416,23 +444,9 @@ def main() -> int:
                   || swiper.querySelector('.swiper-slide:not(.swiper-slide-duplicate)')
                   || swiper.querySelector('.swiper-slide');
                 if (!active) continue;
-                const wrapper = swiper.querySelector('.swiper-wrapper');
-                if (wrapper) wrapper.style.setProperty('transform', 'none', 'important');
-                for (const slide of swiper.querySelectorAll('.swiper-slide')) {
-                  const visible = slide === active;
-                  slide.style.setProperty('visibility', visible ? 'visible' : 'hidden', 'important');
-                  slide.style.setProperty('opacity', visible ? '1' : '0', 'important');
-                  slide.style.setProperty('transform', 'none', 'important');
-                  if (visible) {
-                    slide.style.setProperty('position', 'absolute', 'important');
-                    slide.style.setProperty('inset', '0', 'important');
-                    for (const image of slide.querySelectorAll('img')) {
-                      const lazySource = image.dataset.src || image.dataset.lazySrc;
-                      if (lazySource && !image.currentSrc) image.src = lazySource;
-                      image.style.setProperty('visibility', 'visible', 'important');
-                      image.style.setProperty('opacity', '1', 'important');
-                    }
-                  }
+                for (const image of active.querySelectorAll('img')) {
+                  const lazySource = image.dataset.src || image.dataset.lazySrc;
+                  if (lazySource && !image.currentSrc) image.src = lazySource;
                 }
               }
               const contentWidth = appRect.width;
@@ -470,7 +484,7 @@ def main() -> int:
                 // already ends at its own content. When one exists, the
                 // screenshot is cut before it and the container is hidden.
                 excludedRecommendations: true,
-                recommendationBoundaryFound: Boolean(notes),
+                recommendationBoundaryFound: validNotesBoundary,
                 brokenImages,
                 hiddenPublishCtas: 0,
                 deviceScaleFactor: devicePixelRatio,
@@ -479,6 +493,10 @@ def main() -> int:
             NOTES_SELECTORS,
         )
         capture["hiddenPublishCtas"] = hidden_floating_ctas
+        if not capture_dimensions_are_plausible(capture["contentWidth"], capture["contentHeight"]):
+            raise RuntimeError(
+                f"H5 页面范围异常：仅 {capture['contentWidth']:.0f}×{capture['contentHeight']:.0f}px，已阻止空白长图进入批阅"
+            )
         capture["canvasAnimated"] = page.evaluate(
             """async () => {
               const canvases = [...document.querySelectorAll('canvas')];

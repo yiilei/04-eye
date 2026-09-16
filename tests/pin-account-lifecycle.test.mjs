@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deletePinAccountState } from "../scripts/pin-account-lifecycle.mjs";
+import { deletePinAccountState, resumedVerifiedAccountIds } from "../scripts/pin-account-lifecycle.mjs";
+
+test("only an explicit resume of an existing verified account requests a fresh baseline", () => {
+  const accounts = [
+    { profileId: "profile-a", status: "verified" },
+    { profileId: "profile-b", status: "verified" },
+    { profileId: "profile-pending", status: "pending_verification" },
+  ];
+  assert.deepEqual(resumedVerifiedAccountIds({}, ["profile-a"], accounts), []);
+  assert.deepEqual(resumedVerifiedAccountIds({ pinnedAccountIds: ["profile-a"] }, ["profile-a", "profile-b"], accounts), ["profile-b"]);
+  assert.deepEqual(resumedVerifiedAccountIds({ pinnedAccountIds: ["profile-a"] }, ["profile-a", "profile-pending"], accounts), []);
+  assert.deepEqual(resumedVerifiedAccountIds({ pinnedAccountIds: ["profile-a"], rebaselineOnResumeProfileIds: ["profile-b"] }, ["profile-a"], accounts), ["profile-b"]);
+});
 
 test("deleting an account removes its configuration and unfinished tasks but preserves history", () => {
   const account = { profileId: "profile-a", searchKey: "red-a", xiaohongshuId: "red-a" };
   const result = deletePinAccountState({
-    preferences: { pinnedAccountIds: ["profile-a", "profile-b"], manualPinAccounts: [account] },
+    preferences: { pinnedAccountIds: ["profile-a", "profile-b"], rebaselineOnResumeProfileIds: ["profile-a"], manualPinAccounts: [account] },
     pins: { version: 1, accounts: [account, { profileId: "profile-b", searchKey: "red-b" }] },
     pending: { schemaVersion: 1, accounts: [{ ...account, status: "pending_verification" }] },
     queue: { version: 1, tasks: [
@@ -15,6 +27,7 @@ test("deleting an account removes its configuration and unfinished tasks but pre
     ] },
   }, "profile-a");
   assert.deepEqual(result.preferences.pinnedAccountIds, ["profile-b"]);
+  assert.deepEqual(result.preferences.rebaselineOnResumeProfileIds, []);
   assert.deepEqual(result.preferences.manualPinAccounts, []);
   assert.deepEqual(result.preferences.deletedPinAccountIds, ["profile-a"]);
   assert.deepEqual(result.pins.accounts.map((item) => item.profileId), ["profile-b"]);

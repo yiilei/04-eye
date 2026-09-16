@@ -116,6 +116,13 @@ export function latestPostOnly(posts) {
   return latest ? { status: "verified", latestPostId: latest.id, newPosts: [latest] } : { status: "empty", latestPostId: "", newPosts: [] };
 }
 
+export function rebaselineAfterResume(posts, lastSeenPostId = "") {
+  const latest = latestPostOnly(posts);
+  return latest.status === "verified"
+    ? { status: "verified", latestPostId: latest.latestPostId, newPosts: [], resumedFromPause: true }
+    : { status: latest.status, latestPostId: lastSeenPostId, newPosts: [], resumedFromPause: true };
+}
+
 export function mergeDiscoveredTasks(existingTasks, discoveredTasks) {
   const discoveredById = new Map(discoveredTasks.map((task) => [task.id, task]));
   const merged = existingTasks.map((task) => {
@@ -248,6 +255,7 @@ export async function discover(options = {}) {
   const pins = await readJson(pinsPath);
   const queue = await readJson(queuePath);
   const preferences = await readJson(preferencesPath).catch(() => null);
+  const resumeRebaselineIds = new Set((preferences?.rebaselineOnResumeProfileIds || []).map(String));
   const backlog = await readJson(backlogPath).catch(() => ({ schemaVersion: 1, accounts: {} }));
   backlog.accounts ||= {};
   let selected = selectAccounts(pins.accounts, options.accountKeys, preferences?.pinnedAccountIds)
@@ -298,8 +306,11 @@ export async function discover(options = {}) {
         continue;
       }
       let posts = normalizePosts(postsPayload, account);
-      let difference = options.firstLatest ? latestPostOnly(posts) : diffPosts(posts, account.lastSeenPostId);
-      if (!options.firstLatest && account.lastSeenPostId && difference.status === "baseline_missing") {
+      const resumingAfterPause = resumeRebaselineIds.has(String(account.profileId));
+      let difference = resumingAfterPause
+        ? rebaselineAfterResume(posts, account.lastSeenPostId)
+        : options.firstLatest ? latestPostOnly(posts) : diffPosts(posts, account.lastSeenPostId);
+      if (!resumingAfterPause && !options.firstLatest && account.lastSeenPostId && difference.status === "baseline_missing") {
         const previousBacklog = backlog.accounts[account.searchKey];
         const plan = nextBacklogScan(previousBacklog, account.lastSeenPostId, { manual: options.continueBacklog === true });
         if (plan.scan) {
@@ -345,6 +356,7 @@ export async function discover(options = {}) {
       // must not discard earlier scanning work from this run.
       if (options.write) await atomicJson(backlogPath, { ...backlog, schemaVersion: 1, updatedAt: checkedAt });
       checks.push({ accountKey: account.searchKey, checkedAt, status: difference.status, latestPostId: difference.latestPostId,
+        ...(resumingAfterPause ? { resumedFromPause: true } : {}),
         ...(["baseline_missing", "backlog_incomplete", "baseline_unresolved"].includes(difference.status)
           ? { error: backlog.accounts[account.searchKey]?.reason || "补抓尚未完成；本轮不推进基线" } : {}) });
       for (const post of captureCandidates(posts, difference.newPosts, queue.tasks, account.searchKey)) {
@@ -396,6 +408,32 @@ export async function discover(options = {}) {
     liveQueue.tasks = mergeDiscoveredTasks(liveQueue.tasks, pendingTasks);
     await atomicJson(queuePath, liveQueue);
     await atomicJson(backlogPath, { ...backlog, schemaVersion: 1, updatedAt: checkedAt });
+    const completedResumeKeys = new Set(checks
+      .filter((check) => check.resumedFromPause && check.status === "verified")
+      .map((check) => check.accountKey));
+    if (completedResumeKeys.size) {
+      // Advance this baseline here instead of waiting for the capture phase.
+      // Old queued work may still exist for the account and must not prevent a
+      // successful pause/resume calibration from being committed.
+      const livePins = await readJson(pinsPath);
+      const completedProfileIds = new Set();
+      for (const account of livePins.accounts || []) {
+        if (!completedResumeKeys.has(account.searchKey)) continue;
+        const check = checks.find((item) => item.accountKey === account.searchKey && item.resumedFromPause && item.status === "verified");
+        if (!check?.latestPostId) continue;
+        account.lastSeenPostId = check.latestPostId;
+        account.lastCheckedAt = check.checkedAt || checkedAt;
+        account.status = "verified";
+        completedProfileIds.add(String(account.profileId));
+      }
+      livePins.updatedAt = checkedAt;
+      await atomicJson(pinsPath, livePins);
+      const livePreferences = await readJson(preferencesPath).catch(() => ({}));
+      livePreferences.rebaselineOnResumeProfileIds = (livePreferences.rebaselineOnResumeProfileIds || [])
+        .map(String).filter((profileId) => !completedProfileIds.has(profileId));
+      livePreferences.updatedAt = new Date().toISOString();
+      await atomicJson(preferencesPath, livePreferences);
+    }
   }
   const deferredStatuses = new Set(["deferred_safety_stop", "deferred_transient_timeout"]);
   return { ok: checks.every((check) => check.status === "verified"), status: options.write ? "written" : "dry_run",

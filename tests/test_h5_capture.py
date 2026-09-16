@@ -41,6 +41,11 @@ class H5CaptureTests(unittest.TestCase):
         self.assertFalse(MODULE.capture_covers_content(2109, 6066.875, 2.34375))
         self.assertTrue(MODULE.capture_covers_content(14200, 6066.875, 2.34375))
 
+    def test_rejects_tiny_activity_roots_before_they_become_blank_review_items(self):
+        self.assertFalse(MODULE.capture_dimensions_are_plausible(480, 2))
+        self.assertFalse(MODULE.capture_dimensions_are_plausible(100, 900))
+        self.assertTrue(MODULE.capture_dimensions_are_plausible(480, 900))
+
     def test_reads_jpeg_dimensions_without_optional_image_packages(self):
         payload = b"\xff\xd8\xff\xc0\x00\x11\x08" + (2109).to_bytes(2, "big") + (1125).to_bytes(2, "big") + b"\x03" + (b"\x00" * 10)
         self.assertEqual(MODULE.jpeg_dimensions(payload), (1125, 2109))
