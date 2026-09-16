@@ -20,6 +20,9 @@ if ! mv "$staging" "$target"; then
   [[ -d "$backup" ]] && mv "$backup" "$target"
   exit 1
 fi
+touch "$target"
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+[[ -x "$lsregister" ]] && "$lsregister" -f "$target" >/dev/null 2>&1 || true
 open "$target"
 rm -rf "$backup"
 

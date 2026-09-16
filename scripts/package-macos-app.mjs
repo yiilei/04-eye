@@ -190,6 +190,7 @@ for (const script of ["review-cache-cleanup.mjs", "review-state-store.mjs", "cap
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });
 await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "caiguang", version, type: "module", main: "desktop/main.mjs" }, null, 2));
 await cp(iconFile, path.join(resources, "caiguang.icns"));
+await cp(path.join(root, "assets", "app-icon.png"), path.join(resources, "caiguang.png"));
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");
 const macOSDir = path.join(appPath, "Contents", "MacOS");

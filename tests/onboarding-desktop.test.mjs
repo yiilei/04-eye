@@ -275,10 +275,14 @@ test("desktop app bundle includes every shared module imported by the server", a
   assert.match(packager, /releaseExcluded = new Set\(\["install-local-recovery-fix\.mjs"\]\)/);
 });
 
-test("packaged app loads its Dock icon from the bundled icns", async () => {
+test("packaged app keeps ICNS metadata and loads a PNG for the live Dock icon", async () => {
   const source = await readFile(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const packager = await readFile(new URL("../scripts/package-macos-app.mjs", import.meta.url), "utf8");
+  const installer = await readFile(new URL("../packaging/开始安装.command", import.meta.url), "utf8");
   assert.match(source, /app\.isPackaged/);
-  assert.match(source, /process\.resourcesPath, "caiguang\.icns"/);
+  assert.match(source, /process\.resourcesPath, "caiguang\.png"/);
+  assert.match(packager, /app-icon\.png"\), path\.join\(resources, "caiguang\.png"\)/);
+  assert.match(installer, /lsregister" -f "\$target"/);
 });
 
 test("capture timeout recovery is explicit and retries only unfinished accounts", async () => {

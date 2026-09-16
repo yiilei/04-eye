@@ -480,7 +480,9 @@ app.whenReady().then(async () => {
     }, () => resolve()));
   }
   const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "caiguang.icns")
+    // Electron's nativeImage always decodes PNG reliably. Keep the ICNS for
+    // Finder/LaunchServices, and use the bundled PNG for the live Dock tile.
+    ? path.join(process.resourcesPath, "caiguang.png")
     : path.join(appRoot, "assets", "app-icon.png");
   const icon = nativeImage.createFromPath(iconPath);
   if (process.platform === "darwin" && !icon.isEmpty()) app.dock.setIcon(icon);
