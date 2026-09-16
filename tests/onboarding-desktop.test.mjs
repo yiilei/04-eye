@@ -281,7 +281,8 @@ test("packaged app keeps ICNS metadata and loads a PNG for the live Dock icon", 
   const installer = await readFile(new URL("../packaging/开始安装.command", import.meta.url), "utf8");
   assert.match(source, /app\.isPackaged/);
   assert.match(source, /process\.resourcesPath, "caiguang\.png"/);
-  assert.match(packager, /app-icon\.png"\), path\.join\(resources, "caiguang\.png"\)/);
+  assert.match(packager, /app-icon-dock\.svg/);
+  assert.match(packager, /dockIconSource, path\.join\(resources, "caiguang\.png"\)/);
   assert.match(installer, /lsregister" -f "\$target"/);
 });
 

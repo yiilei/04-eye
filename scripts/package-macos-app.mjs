@@ -25,8 +25,10 @@ const packagedRuntimeProject = path.join(packagedRuntime, "project");
 const bundledPythonRoot = process.env.CAIGUANG_PYTHON_ROOT
   || path.join(os.homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "python");
 const iconSvg = path.join(root, "assets", "app-icon.svg");
+const dockIconSvg = path.join(root, "assets", "app-icon-dock.svg");
 const iconset = path.join(releaseRoot, "caiguang.iconset");
 const iconSource = path.join(releaseRoot, "caiguang-1024.png");
+const dockIconSource = path.join(releaseRoot, "caiguang-dock-1024.png");
 const iconFile = path.join(releaseRoot, "caiguang.icns");
 
 if (!existsSync(electronApp)) throw new Error("未找到 Electron 外壳；请先安装采光或重新安装依赖。");
@@ -34,6 +36,7 @@ if (!existsSync(electronApp)) throw new Error("未找到 Electron 外壳；请�
 async function createMacIcon() {
   await mkdir(iconset, { recursive: true });
   await exec("sips", ["-s", "format", "png", iconSvg, "--out", iconSource]);
+  await exec("sips", ["-s", "format", "png", dockIconSvg, "--out", dockIconSource]);
   const sizes = [
     [16, "icon_16x16.png"], [32, "icon_16x16@2x.png"],
     [32, "icon_32x32.png"], [64, "icon_32x32@2x.png"],
@@ -190,7 +193,7 @@ for (const script of ["review-cache-cleanup.mjs", "review-state-store.mjs", "cap
 await rm(path.join(packagedApp, "dist", "client", "review"), { recursive: true, force: true });
 await writeFile(path.join(packagedApp, "package.json"), JSON.stringify({ name: "caiguang", version, type: "module", main: "desktop/main.mjs" }, null, 2));
 await cp(iconFile, path.join(resources, "caiguang.icns"));
-await cp(path.join(root, "assets", "app-icon.png"), path.join(resources, "caiguang.png"));
+await cp(dockIconSource, path.join(resources, "caiguang.png"));
 
 const plistPath = path.join(appPath, "Contents", "Info.plist");
 const macOSDir = path.join(appPath, "Contents", "MacOS");
